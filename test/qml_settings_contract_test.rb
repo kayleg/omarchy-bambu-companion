@@ -1,0 +1,377 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "json"
+
+class QmlSettingsContractTest < Minitest::Test
+  def setup
+    @root = File.expand_path("..", __dir__)
+    @path = File.join(@root, "BambuSettingsView.qml")
+  end
+
+  def test_dedicated_component_exposes_a_small_parent_interface
+    source = settings_source
+
+    assert_includes source, "signal backRequested()"
+    assert_includes source, "signal saveRequested(var draft, string accessCode)"
+    assert_includes source, "property bool allowBack: true"
+    assert_includes source, "property bool requireAccessCode: false"
+    assert_includes source, 'text: "SETTINGS"'
+    refute_includes source, "OMARCHY QUATTRO // CONFIG"
+    assert_includes source, "signal forgetCodeRequested()"
+    assert_includes source, "signal inputFocusReleased()"
+    assert_includes source, "function load(draft)"
+    assert_includes source, "function clearAccessCode()"
+    assert_includes source, "readonly property bool inputActive:"
+    assert_match(/Keys\.onEscapePressed:.*inputFocusReleased\(\)/m, source)
+  end
+
+  def test_secret_status_is_explicit_and_replacement_never_reads_the_saved_code
+    source = settings_source
+
+    assert_includes source, '"● CODE SAVED IN GNOME KEYRING"'
+    assert_includes source, '"● CODE ACTIVE FOR THIS SESSION"'
+    assert_includes source, '"○ NO LAN CODE SAVED"'
+    assert_includes source, '"Leave blank to keep the current code"'
+    assert_includes source, "password: true"
+    assert_includes source, "maximumLength: 256"
+    assert_match(/saveRequested\(draft, String\(accessCodeInput\.text \|\| ""\)\)/, source)
+    refute_match(/accessCodeInput\.text\s*=\s*(?:root\.)?(?:secret|accessCode)/, source)
+  end
+
+  def test_address_is_free_form_while_ports_are_bounded
+    source = settings_source
+
+    assert_match(/var nextHost = String\(hostInput\.text \|\| ""\)\.trim\(\)/, source)
+    assert_match(/nextHost\.length > 255/, source)
+    assert_match(%r{/\[\\x00-\\x1f\\x7f\]/\.test\(nextHost\)}, source)
+    refute_match(/(?:IPv4|IPv6|ipAddress|octet).*test\(nextHost\)/i, source)
+    assert_match(/number < 1 \|\| number > 65535/, source)
+    assert_match(/!\/\^\\d\+\$\/\.test\(raw\)/, source)
+  end
+
+  def test_form_is_sectionless_and_uses_a_logical_field_order
+    source = settings_source
+
+    refute_includes source, "advancedOpen"
+    refute_includes source, "component DrawerSection"
+    refute_includes source, 'objectName: "NETWORK"'
+    refute_includes source, 'objectName: "ADVANCED"'
+    ids = %w[printerNameInput hostInput serialInput mqttPortInput ftpsPortInput
+             usernameInput accessCodeInput maxSegmentsInput accentColorInput
+             barSummarySwitch]
+    ids.each do |id|
+      assert_match(/id:\s*#{Regexp.escape(id)}\b/, source)
+    end
+    positions = ids.map { |id| source.index("id: #{id}") }
+    assert_equal positions.sort, positions
+    assert_match(/id: networkGrid.*id: mqttPortInput.*id: ftpsPortInput.*id: usernameInput/m,
+                 source)
+    assert_match(/function load\(draft\).*usernameInput\.text = String\(values\.username \|\| "bblp"\)/m,
+                 source)
+    assert_match(/id: usernameInput.*placeholderText: "bblp"/m, source)
+    refute_includes source, "demoToggle"
+    refute_match(/demoMode|Offline demo/i, source)
+    assert_match(/id:\s*serialInput\b/, source)
+    assert_match(/nextSegments < 1000 \|\| nextSegments > 100000/, source)
+    assert_match(/accentColor:\s*nextAccentColor/, source)
+    assert_match(/\^#\[0-9A-Fa-f\]\{6\}\$/, source)
+    assert_match(/function load\(draft\).*printerNameInput\.text = String\(values\.printerName \|\| "3D Printer"\)/m,
+                 source)
+  end
+
+  def test_settings_copy_and_controls_are_width_bound
+    source = settings_source
+
+    assert_includes source, "clip: true"
+    assert_match(/id: settingsScroll\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*contentHeight: settingsContent\.implicitHeight/m,
+                 source)
+    assert_match(/id: settingsHeader\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*id: settingsClose.*text: "CLOSE".*bordered: false/m,
+                 source)
+    refute_includes source, 'text: "×"'
+    assert_match(/BambuTextField\s*\{.*id: hostInput/m, source)
+    assert_match(/BambuButton\s*\{.*id: settingsClose/m, source)
+    assert_match(/component FieldLabel: Text \{.*width: parent \? parent\.width : implicitWidth/m, source)
+    assert_includes source, "wrapMode: Text.Wrap"
+    assert_match(/form\.secretRequired \? "○ NO LAN CODE SAVED"/m, source)
+    assert_match(/id: networkGrid\s*width: parent\.width.*columns: width >= Style\.space\(420\) \? 3 : \(width >= Style\.space\(260\) \? 2 : 1\).*readonly property real cellWidth:/m,
+                 source)
+    assert_operator source.scan(/TextField\s*\{.*?clip: true/m).length, :>=, 7
+    assert_match(/id: accessCodeRow.*id: accessCodeInput.*id: forgetCodeInline.*text: "FORGET CODE"/m,
+                 source)
+    assert_match(/id: preferencesGrid.*id: maxSegmentsInput.*id: accentColorInput/m,
+                 source)
+    assert_match(/id: preferencesGrid.*id: barSummaryColumn.*id: barSummarySwitch/m,
+                 source)
+    assert_match(/id: settingsFooter.*text: "SAVE & CONNECT"/m, source)
+    refute_match(/id: settingsFooter.*ToggleSwitch/m, source)
+    refute_match(/parent\.width - \(form\.allowBack \? parent\.spacing \+ Style\.space\(70\) : 0\)/m, source)
+  end
+
+  def test_widget_forces_first_run_setup_and_waits_for_a_confirmed_connection
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, "property bool connectionVerified: false"
+    assert_match(/function nextIdleView\(\).*if \(root\.requiresSetupConfirmation\) return "setup".*if \(root\.connectionVerified\) return "status".*return "connecting"/m,
+                 source)
+    assert_match(/function handleState\(message\).*connected = printer\.connected === true.*var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*var hasFreshReport = connected && printer\.stale === false\s*&& reportUpdate !== "".*if \(hasFreshReport\).*connectionVerified = true.*root\.viewMode === "connecting".*viewMode = "status"/m,
+                 source)
+    assert_match(/function resetOperationalState\(\).*connectionVerified = false/m, source)
+    assert_includes source, "property bool initialViewResolved: false"
+    assert_match(/function resolveInitialView\(\).*if \(root\.initialViewResolved\) return.*initialViewResolved = true.*viewMode = nextIdleView\(\).*if \(viewMode === "setup"\).*settingsView\.load\(settingsDraft\(\)\).*root\.popupOpen = true/m,
+                 source)
+    assert_match(/Component\.onCompleted:.*componentReady = true.*Qt\.callLater\(root\.resolveInitialView\)/m,
+                 source)
+    refute_match(/Component\.onCompleted:.*viewMode = nextIdleView\(\)/m, source)
+    assert_match(/function backToStatus\(\).*if \(!root\.connectionVerified\).*enterConnecting\(\).*return.*viewMode = "status"/m,
+                 source)
+  end
+
+  def test_late_quattro_settings_injection_and_runtime_resets_cannot_show_stale_status
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/function open\(\).*popupOpen = true.*if \(root\.viewMode !== "settings"\) viewMode = nextIdleView\(\)/m,
+                 source)
+    assert_match(/function resetOperationalState\(\).*connectionVerified = false.*if \(root\.viewMode !== "settings".*viewMode = nextIdleView\(\)/m,
+                 source)
+    assert_match(/onBackendConfigurationFingerprintChanged:.*resetOperationalState\(\).*sendConfiguration\(\)/m,
+                 source)
+  end
+
+  def test_connecting_view_has_a_real_loader_and_every_panel_view_is_bounded
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/id: connectionSpinner\s*width: Style\.space\(48\).*RotationAnimator on rotation.*loops: Animation\.Infinite.*running: root\.popupOpen && root\.viewMode === "connecting"/m,
+                 source)
+    assert_match(/contentWidth: fittedContentWidth\(Style\.space\(860\)\)/m,
+                 source)
+    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
+                 source)
+    assert_match(/id: connectingOverlay.*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
+                 source)
+    assert_match(/BambuTelemetryPane\s*{.*width: dashboard\.wideLayout.*Style\.space\(300\).*onSettingsRequested: root\.toggleSettings\(\)/m,
+                 source)
+    assert_match(/BambuModelViewport\s*{.*width: dashboard\.wideLayout.*dashboard\.width - telemetryPane\.width/m,
+                 source)
+    assert_match(/BambuSettingsView\s*{.*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
+                 source)
+  end
+
+  def test_identity_fields_are_rejected_before_persistence_if_backend_would_reject_them
+    source = settings_source
+
+    assert_match(%r{!/\^\[A-Za-z0-9_-\]\+\$/\.test\(nextSerial\)}, source)
+    assert_match(%r{!/\^\[A-Za-z0-9_\.:-\]\+\$/\.test\(nextUsername\)}, source)
+    assert_match(/nextSerial\.length > 128/, source)
+    assert_match(/nextUsername\.length > 128/, source)
+  end
+
+  def test_manifest_persists_no_secret_setting
+    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
+    bar_widget = manifest.fetch("barWidget")
+    keys = bar_widget.fetch("schema").map { |entry| entry.fetch("key") }
+
+    refute(keys.any? { |key| key.match?(/access|code|password|secret/i) })
+    refute secret_values(bar_widget).any?
+  end
+
+  def test_widget_integrates_navigation_and_atomic_quattro_persistence
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, 'property string viewMode: "setup"'
+    assert_includes source, "readonly property bool hasConnectionTarget:"
+    assert_includes source, 'visible: root.viewMode === "connecting"'
+    assert_includes source, 'visible: root.viewMode === "setup" || root.viewMode === "settings"'
+    assert_match(/function openSettings\(\).*settingsView\.load\(settingsDraft\(\)\).*viewMode = "settings"/m,
+                 source)
+    assert_match(/function openSettings\(\).*panelScroll\.contentY = 0/m, source)
+    assert_match(/function close\(\).*settingsView\.clearAccessCode\(\).*viewMode = nextIdleView\(\)/m,
+                 source)
+    assert_match(/function persistSettings\(draft\).*var entry = \{ id: root\.moduleName \}.*root\.settings = entry.*updateEntryInline\(root\.moduleName, entry\)/m,
+                 source)
+    assert_match(/function saveSettings\(draft, accessCode\).*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*enterConnecting\(\)/m,
+                 source)
+    assert_match(/BambuSettingsView\s*\{.*id: settingsView.*onSaveRequested: function\(draft, accessCode\)/m,
+                 source)
+    assert_match(/blocked: settingsView\.inputActive/, source)
+    assert_match(/onInputFocusReleased: keyCatcher\.forceActiveFocus\(\)/, source)
+    refute_match(/entry\[[^\]]*(?:secret|accessCode|password)/i, source)
+  end
+
+  def test_telemetry_settings_button_toggles_the_settings_panel
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/function toggleSettings\(\).*if \(root\.viewMode === "settings"\).*root\.backToStatus\(\).*return.*root\.openSettings\(\)/m,
+                 source)
+    assert_match(/BambuTelemetryPane\s*\{.*onSettingsRequested: root\.toggleSettings\(\)/m,
+                 source)
+  end
+
+  def test_settings_form_has_no_decorative_section_separators
+    source = settings_source
+
+    refute_includes source, "component DrawerSection"
+    refute_includes source, 'objectName: "NETWORK"'
+    refute_includes source, 'objectName: "ADVANCED"'
+  end
+
+  def test_network_contains_compact_inline_lan_authentication
+    source = settings_source
+
+    refute_includes source, 'DrawerSection { objectName: "LAN AUTHENTICATION" }'
+    assert_match(/id: networkGrid.*id: usernameInput.*id: accessCodeRow.*id: accessCodeInput.*id: forgetCodeInline/m,
+                 source)
+  end
+
+  def test_in_form_summary_switch_applies_immediately_without_save
+    source = settings_source
+
+    assert_includes source, "property bool showBarSummary: true"
+    assert_includes source, "signal barSummaryToggled(bool enabled)"
+    assert_match(/function load\(draft\).*showBarSummary = values\.showBarSummary !== false/m,
+                 source)
+    assert_match(/var draft = \{.*showBarSummary: form\.showBarSummary/m,
+                 source)
+    assert_match(/id: settingsContent.*id: preferencesGrid.*id: barSummaryColumn.*text: "BAR SUMMARY".*ToggleSwitch\s*\{.*checked: form\.showBarSummary.*onToggled:.*form\.showBarSummary = !form\.showBarSummary.*form\.barSummaryToggled\(form\.showBarSummary\).*id: settingsFooter.*text: "SAVE & CONNECT"/m,
+                 source)
+
+    widget = File.read(File.join(@root, "BambuWidget.qml"))
+    assert_match(/function persistBarSummary\(enabled\).*entry\.showBarSummary = enabled === true.*root\.settings = entry.*updateEntryInline\(root\.moduleName, entry\).*return true/m,
+                 widget)
+    assert_match(/BambuSettingsView\s*\{.*onBarSummaryToggled: function\(enabled\).*root\.persistBarSummary\(enabled\)/m,
+                 widget)
+  end
+
+  def test_bar_summary_is_a_plain_native_toggle_under_its_label
+    source = settings_source
+
+    assert_match(/id: preferencesGrid.*columns: width >= Style\.space\(260\) \? 2 : 1.*id: accentColorInput.*id: barSummaryColumn\s*width: preferencesGrid\.cellWidth.*text: "BAR SUMMARY".*Item \{\s*width: parent\.width\s*height: accentColorInput\.height.*ToggleSwitch \{\s*id: barSummarySwitch.*anchors\.left: parent\.left.*anchors\.verticalCenter: parent\.verticalCenter/m,
+                 source)
+    assert_match(/id: barSummarySwitch.*cursorPad: Math\.max\(0, Math\.min\(6,\s*\(parent\.height - trackHeight\) \/ 2\)\)/m,
+                 source)
+    refute_includes source, "id: barSummaryRow"
+    refute_includes source, "id: barSummaryField"
+    refute_includes source, 'text: form.showBarSummary ? "SHOWN" : "HIDDEN"'
+  end
+
+  def test_settings_chrome_matches_the_dashboard_proportions
+    settings = settings_source
+    viewport = File.read(File.join(@root, "BambuModelViewport.qml"))
+    telemetry = File.read(File.join(@root, "BambuTelemetryPane.qml"))
+
+    assert_match(/id: viewportHeader.*height: Style\.space\(36\).*id: viewportTitle.*font\.pixelSize: Style\.font\.caption/m,
+                 viewport)
+    assert_match(/id: settingsHeader.*height: Style\.space\(36\).*text: "SETTINGS".*font\.pixelSize: Style\.font\.caption/m,
+                 settings)
+
+    assert_match(/id: settingsButton.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,
+                 telemetry)
+    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*BambuButton \{.*anchors\.left: parent\.left.*anchors\.right: parent\.right.*anchors\.bottom: parent\.bottom.*anchors\.margins: Style\.space\(12\).*height: Style\.space\(36\).*text: "SAVE & CONNECT"/m,
+                 settings)
+  end
+
+  def test_new_plugin_install_forces_confirmation_before_connecting
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, 'readonly property string storedInstallationId: String(setting("installationId", ""))'
+    assert_match(/readonly property bool requiresSetupConfirmation:.*installationIdentified.*storedInstallationId !== root\.installationId/m,
+                 source)
+    assert_match(/function nextIdleView\(\).*requiresSetupConfirmation.*return "setup"/m,
+                 source)
+    assert_match(/message\.event === "hello".*installationId = String\(message\.installationId \|\| ""\).*installationIdentified = installationId !== "".*if \(root\.requiresSetupConfirmation\).*openSettings\(\).*popupOpen = true.*sendConfiguration\(\).*return/m,
+                 source)
+    assert_match(/function persistSettings\(draft\).*entry\.installationId = root\.installationId/m,
+                 source)
+    assert_match(/function saveSettings\(draft, accessCode\).*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*if \(backendChanged\) sendConfiguration\(\)/m,
+                 source)
+    assert_match(/function persistSettings\(draft\).*persistingSettings = true.*root\.settings = entry.*updateEntryInline.*persistingSettings = false/m,
+                 source)
+    assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return/m,
+                 source)
+  end
+
+  def test_empty_code_preserves_secret_and_non_empty_code_is_sent_after_config
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/function setSecret\(value\).*String\(value \|\| ""\).*"op": "set_secret"/m,
+                 source)
+    assert_includes source, "readonly property bool hasUsableSecret:"
+    assert_match(/function saveSettings\(draft, accessCode\).*var replacement = String\(accessCode \|\| ""\).*if \(!replacement && !root\.hasUsableSecret\).*Enter the LAN access code.*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*Qt\.callLater.*setSecret\(replacement\)/m,
+                 source)
+    body = source[/function saveSettings\(draft, accessCode\) \{.*?\n  \}/m]
+    refute_nil body
+    assert_operator body.index("Enter the LAN access code"), :<, body.index("persistSettings(draft)")
+    assert_operator body.downcase.index("backend is not ready"), :<,
+                    body.index("persistSettings(draft)")
+    assert_operator body.index("pendingSecretWrite = !!replacement"), :<,
+                    body.index("persistSettings(draft)")
+    assert_match(/if \(!persistSettings\(draft\)\).*pendingSecretWrite = false.*Settings could not be saved/m,
+                 body)
+    assert_match(/requireAccessCode: !root\.hasUsableSecret/, source)
+  end
+
+  def test_accent_only_save_does_not_restart_the_backend_runtime
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/function backendSettingsChanged\(draft\).*host.*mqttPort.*ftpsPort.*serial.*username.*maxSegments/m,
+                 source)
+    refute_match(/function backendSettingsChanged\(draft\).*accentColor/m, source)
+    assert_match(/function saveSettings\(draft, accessCode\).*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*if \(backendChanged\) sendConfiguration\(\)/m,
+                 source)
+  end
+
+  def test_failed_lan_code_write_forces_the_settings_form_back_open
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/function recoverSecretWrite\(message\).*if \(!root\.pendingSecretWrite\) return false.*pendingSecretWrite = false.*openSettings\(\).*settingsView\.reportError\(message\).*popupOpen = true.*return true/m,
+                 source)
+    assert_match(/function saveSettings\(draft, accessCode\).*if \(!setSecret\(replacement\)\).*recoverSecretWrite\(/m,
+                 source)
+    assert_match(/function handleProcessRunningChanged\(\).*if \(sessionProcess\.running\).*return.*daemonReady = false.*resetOperationalState\(\).*recoverSecretWrite\(/m,
+                 source)
+    assert_match(/message\.event === "error".*reportProcessError\(message\.message\).*recoverSecretWrite\(/m,
+                 source)
+    assert_match(/message\.event === "secret_status".*pendingSecretWrite = false/m,
+                 source)
+  end
+
+  def test_mqtt_authentication_rejection_always_forces_the_settings_form_open
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_match(/function handleAuthenticationFailure\(message\).*if \(root\.pendingSecretWrite\) return false.*pendingSecretWrite = false.*secretRequired = true.*secretStored = false.*secretStatusKnown = true.*openSettings\(\).*reportError\(message\).*popupOpen = true.*return true/m,
+                 source)
+    assert_match(/message\.event === "error".*message\.scope === "mqtt".*message\.code === "authentication".*handleAuthenticationFailure/m,
+                 source)
+  end
+
+  def test_readme_documents_the_dedicated_settings_and_secret_replacement_flow
+    readme = File.read(File.join(@root, "README.md"))
+
+    assert_match(/first load.*automatically opens.*setup panel/im, readme)
+    assert_match(/address.*serial.*LAN access code/im, readme)
+    assert_match(/connection loader.*first fresh status\s+report/im, readme)
+    assert_match(/reflow.*inside the panel margins/im, readme)
+    assert_match(/leave.*code.*blank.*keep/im, readme)
+    assert_match(/replace/im, readme)
+  end
+
+  private
+
+  def settings_source
+    assert File.file?(@path), "expected a dedicated settings component at #{@path}"
+    File.read(@path)
+  end
+
+  def secret_values(value, secret_context = false)
+    case value
+    when Hash
+      value.flat_map do |key, child|
+        secret_values(child, secret_context || key.match?(/access|code|password|secret/i))
+      end
+    when Array
+      value.flat_map { |child| secret_values(child, secret_context) }
+    else
+      secret_context ? [value] : []
+    end
+  end
+end

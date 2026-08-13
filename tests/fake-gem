@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_GEM_LOG:?}"
+[[ "${1:-}" == "install" ]] || exit 2
+(( ${FAKE_GEM_INSTALL_EXIT:-0} == 0 )) || exit "${FAKE_GEM_INSTALL_EXIT}"
+
+bindir=""
+while (( $# > 0 )); do
+  if [[ "$1" == "--bindir" && $# -ge 2 ]]; then
+    bindir="$2"
+    break
+  fi
+  shift
+done
+[[ -n "$bindir" ]]
+
+/usr/bin/mkdir -p -- "$bindir"
+/usr/bin/cp -- "${FAKE_BUNDLE_SOURCE:?}" "$bindir/bundle"
+/usr/bin/chmod 700 -- "$bindir/bundle"

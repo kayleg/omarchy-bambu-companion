@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+for command_name in ruby bundle node qmllint rubocop shellcheck; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    if [[ "$command_name" == node ]]; then
+      echo "Bambu Companion checks require Node.js for the development-only Canvas harness." >&2
+    else
+      echo "Bambu Companion checks require the development command: $command_name" >&2
+    fi
+    exit 127
+  fi
+done
+
+if ! minitest_lib="$(ruby -e 'spec = Gem::Specification.find_by_name("minitest"); puts spec.full_require_paths.first')"; then
+  echo "Bambu Companion checks require the development-only minitest gem." >&2
+  exit 127
+fi
+
+bundle check
+bundle exec ruby -I"$minitest_lib" -Itest \
+  -e 'Dir["test/**/*_test.rb"].sort.each { |file| require_relative file }'
+tests/test-wrapper
+ruby -rjson -e 'JSON.parse(File.read("manifest.json"))'
+
+while IFS= read -r -d '' ruby_file; do
+  ruby -c "$ruby_file"
+done < <(find lib test -name '*.rb' -print0)
+ruby -c daemon.rb
+bash -n bambu-companion tests/test-wrapper tests/fake-bundle tests/test-all
+rubocop --cache false daemon.rb lib test
+shellcheck bambu-companion tests/test-wrapper tests/fake-bundle tests/fake-gem tests/test-all
+qmllint ./*.qml
+
+echo "All local Bambu Companion checks passed."

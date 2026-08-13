@@ -1,0 +1,6 @@
+.bundle/
+.ruby-lsp/
+.superpowers/
+coverage/
+*.log
+*.tmp

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.ypmrg.bambu-companion",
+  "name": "Bambu Companion",
+  "version": "0.1.0",
+  "author": "Matthieu G.C.",
+  "license": "MIT",
+  "description": "Local Bambu Lab printer monitoring with a rotating G-code wireframe",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BambuWidget.qml" },
+  "barWidget": {
+    "displayName": "Bambu Companion",
+    "description": "Status, temperatures, progress, and local G-code visualization",
+    "category": "Hardware",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "printerName": "3D Printer",
+      "host": "",
+      "mqttPort": 8883,
+      "ftpsPort": 990,
+      "serial": "",
+      "username": "bblp",
+      "maxSegments": 40000,
+      "accentColor": "#39FF88",
+      "showBarSummary": true
+    },
+    "schema": [
+      { "key": "printerName", "type": "string", "label": "Printer name", "defaultValue": "3D Printer" },
+      { "key": "host", "type": "string", "label": "Printer address", "defaultValue": "" },
+      { "key": "mqttPort", "type": "integer", "label": "MQTT TLS port", "min": 1, "max": 65535, "defaultValue": 8883 },
+      { "key": "ftpsPort", "type": "integer", "label": "Implicit FTPS port", "min": 1, "max": 65535, "defaultValue": 990 },
+      { "key": "serial", "type": "string", "label": "Printer serial", "defaultValue": "" },
+      { "key": "username", "type": "string", "label": "LAN username", "defaultValue": "bblp" },
+      { "key": "maxSegments", "type": "integer", "label": "Wireframe segment limit", "min": 1000, "max": 100000, "step": 1000, "defaultValue": 40000 },
+      { "key": "accentColor", "type": "string", "label": "Accent color (#RRGGBB)", "defaultValue": "#39FF88" },
+      { "key": "showBarSummary", "type": "boolean", "label": "Show bar summary", "defaultValue": true }
+    ]
+  }
+}

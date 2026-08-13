@@ -1,0 +1,100 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+launcher_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+plugin_dir="$(cd -- "$(dirname -- "$launcher_path")" && pwd)"
+if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+  data_root="$XDG_DATA_HOME/io.github.ypmrg.bambu-companion"
+elif [[ -n "${HOME:-}" ]]; then
+  data_root="$HOME/.local/share/io.github.ypmrg.bambu-companion"
+else
+  echo "bambu-companion: XDG_DATA_HOME or HOME must be set" >&2
+  exit 1
+fi
+bundle_path="$data_root/bundle"
+bundle_cache_path="$bundle_path/cache"
+bundler_user_home="$data_root/bundler-user"
+bundler_user_cache="$bundler_user_home/cache"
+lock_path="$data_root/bundle-install.lock"
+daemon_path="$plugin_dir/daemon.rb"
+lockfile_path="$plugin_dir/Gemfile.lock"
+
+for variable_name in "${!BUNDLE_@}"; do
+  unset "$variable_name"
+done
+
+for command_name in ruby gem flock; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "bambu-companion: required command not found: $command_name" >&2
+    exit 127
+  fi
+done
+if [[ ! -f "$daemon_path" ]]; then
+  echo "bambu-companion: daemon is missing: $daemon_path" >&2
+  exit 1
+fi
+if [[ ! -f "$lockfile_path" ]]; then
+  echo "bambu-companion: dependency lockfile is missing: $lockfile_path" >&2
+  exit 1
+fi
+
+bundler_version=""
+found_bundler_version=0
+while IFS= read -r lockfile_line; do
+  if (( found_bundler_version )); then
+    bundler_version="${lockfile_line//[[:space:]]/}"
+    break
+  fi
+  [[ "$lockfile_line" == "BUNDLED WITH" ]] && found_bundler_version=1
+done <"$lockfile_path"
+if [[ ! "$bundler_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "bambu-companion: dependency lockfile has no supported Bundler version" >&2
+  exit 1
+fi
+
+bundler_runtime="$data_root/bundler-runtime/$bundler_version"
+bundler_bin="$data_root/bundler-bin/$bundler_version"
+local_bundle="$bundler_bin/bundle"
+bundle_command="$(command -v bundle || true)"
+
+mkdir -p "$bundle_cache_path" "$bundler_user_cache" "$bundler_runtime" "$bundler_bin"
+chmod 700 "$data_root" "$bundle_path" "$bundle_cache_path" "$bundler_user_home" \
+  "$bundler_user_cache" "$bundler_runtime" "$bundler_bin"
+export BUNDLE_GEMFILE="$plugin_dir/Gemfile"
+export BUNDLE_PATH="$bundle_path"
+export BUNDLE_CACHE_PATH="$bundle_cache_path"
+export BUNDLE_USER_HOME="$bundler_user_home"
+export BUNDLE_USER_CACHE="$bundler_user_cache"
+export BUNDLE_IGNORE_CONFIG=true
+export BUNDLE_FROZEN=true
+export BUNDLE_WITHOUT=development
+
+exec 9>"$lock_path"
+flock 9
+if [[ -z "$bundle_command" ]]; then
+  if [[ ! -x "$local_bundle" ]]; then
+    echo "bambu-companion: installing Bundler $bundler_version..." >&2
+    if ! GEM_HOME="$bundler_runtime" GEM_PATH="$bundler_runtime" \
+      gem install --config-file /dev/null --clear-sources --source https://rubygems.org \
+        --install-dir "$bundler_runtime" --bindir "$bundler_bin" \
+        --no-document bundler -v "$bundler_version" >/dev/null 2>&1; then
+      echo "bambu-companion: Bundler installation failed." >&2
+      exit 1
+    fi
+  fi
+  export GEM_HOME="$bundler_runtime"
+  export GEM_PATH="$bundler_runtime"
+  bundle_command="$local_bundle"
+fi
+if ! "$bundle_command" check >/dev/null 2>&1; then
+  echo "bambu-companion: installing locked Ruby dependencies..." >&2
+  if ! "$bundle_command" install --jobs 2 --retry 2 >/dev/null 2>&1; then
+    echo "bambu-companion: dependency installation failed." >&2
+    exit 1
+  fi
+fi
+flock -u 9
+exec 9>&-
+
+exec "$bundle_command" exec ruby "$daemon_path"

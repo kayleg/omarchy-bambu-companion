@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_BUNDLE_LOG:?}"
+
+log_bundle_environment() {
+  printf 'BUNDLE_GEMFILE=%s\n' "${BUNDLE_GEMFILE:-}"
+  printf 'BUNDLE_PATH=%s\n' "${BUNDLE_PATH:-}"
+  printf 'BUNDLE_CACHE_PATH=%s\n' "${BUNDLE_CACHE_PATH:-}"
+  printf 'BUNDLE_USER_HOME=%s\n' "${BUNDLE_USER_HOME:-}"
+  printf 'BUNDLE_USER_CACHE=%s\n' "${BUNDLE_USER_CACHE:-}"
+  printf 'BUNDLE_IGNORE_CONFIG=%s\n' "${BUNDLE_IGNORE_CONFIG:-}"
+  printf 'BUNDLE_PATH__SYSTEM=%s\n' "${BUNDLE_PATH__SYSTEM:-}"
+  printf 'GEM_HOME=%s\n' "${GEM_HOME:-}"
+  printf 'GEM_PATH=%s\n' "${GEM_PATH:-}"
+}
+
+if [[ -n "${FAKE_BUNDLE_ENV_LOG:-}" ]]; then
+  log_bundle_environment >>"$FAKE_BUNDLE_ENV_LOG"
+fi
+case "${1:-}" in
+check)
+  exit "${FAKE_BUNDLE_CHECK_EXIT:-0}"
+  ;;
+install)
+  exit "${FAKE_BUNDLE_INSTALL_EXIT:-0}"
+  ;;
+exec)
+  if [[ "${FAKE_BUNDLE_ASSERT_FD9_CLOSED:-}" == 1 && -e /proc/self/fd/9 ]]; then
+    echo "fake-bundle: launcher leaked file descriptor 9" >&2
+    exit 3
+  fi
+  printf '%s\n' "${BUNDLE_GEMFILE:-}" "${BUNDLE_PATH:-}" "${*:2}"
+  ;;
+*)
+  exit 2
+  ;;
+esac

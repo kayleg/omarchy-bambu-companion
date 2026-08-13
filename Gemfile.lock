@@ -1,0 +1,41 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    bigdecimal (4.1.2)
+    date (3.5.1)
+    logger (1.7.0)
+    mqtt (0.7.0)
+      logger
+    net-ftp (0.3.9)
+      net-protocol
+      time
+    net-protocol (0.2.2)
+      timeout
+    rubyzip (3.4.1)
+    time (0.4.2)
+      date
+    timeout (0.6.1)
+
+PLATFORMS
+  ruby
+  x86_64-linux
+
+DEPENDENCIES
+  bigdecimal (= 4.1.2)
+  mqtt (= 0.7.0)
+  net-ftp (= 0.3.9)
+  rubyzip (= 3.4.1)
+
+CHECKSUMS
+  bigdecimal (4.1.2) sha256=53d217666027eab4280346fba98e7d5b66baaae1b9c3c1c0ffe89d48188a3fbd
+  date (3.5.1) sha256=750d06384d7b9c15d562c76291407d89e368dda4d4fff957eb94962d325a0dc0
+  logger (1.7.0) sha256=196edec7cc44b66cfb40f9755ce11b392f21f7967696af15d274dde7edff0203
+  mqtt (0.7.0) sha256=52c139253b738408133a68ab8d19144a17a5934ad8c0ba6d906f899a9737de3b
+  net-ftp (0.3.9) sha256=307817ccf7f428f79d083f7e36dbb46a9d1d375e0d23027824de1866f0b13b65
+  net-protocol (0.2.2) sha256=aa73e0cba6a125369de9837b8d8ef82a61849360eba0521900e2c3713aa162a8
+  rubyzip (3.4.1) sha256=0a79e745b5c25872ebd148457df5665da8530ed8626c993b01457128f173ca02
+  time (0.4.2) sha256=f324e498c3bde9471d45a7d18f874c27980e9867aa5cfca61bebf52262bc3dab
+  timeout (0.6.1) sha256=78f57368a7e7bbadec56971f78a3f5ecbcfb59b7fcbb0a3ed6ddc08a5094accb
+
+BUNDLED WITH
+  4.0.4

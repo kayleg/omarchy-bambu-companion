@@ -1,0 +1,293 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "stringio"
+require "bambu_companion/gcode_parser"
+require "bambu_companion/ipc"
+require "bambu_companion/model_worker"
+
+class GcodeParserTest < Minitest::Test
+  class LineOnlyIo
+    def initialize(lines)
+      @lines = lines
+    end
+
+    def each_line = @lines.each
+    def read(*) = raise("parser attempted a whole-file read")
+  end
+
+  def test_parses_three_outer_wall_dialects_and_coordinate_modes
+    parser = BambuCompanion::GcodeParser.new(max_segments: 100)
+    path = File.join(__dir__, "fixtures", "outer-walls.gcode")
+    geometry = File.open(path, "rb") { |io| parser.parse(io) }
+
+    refute_respond_to geometry, :source_segment_count
+    assert_equal 6, geometry.segments.length
+    assert_equal [0.2, 0.4, 0.6], geometry.layer_z
+    assert_equal 0.0, geometry.bounds.fetch(:min_x)
+    assert_equal 10.0, geometry.bounds.fetch(:max_x)
+    assert_equal 0.2, geometry.bounds.fetch(:min_z)
+    assert_equal 0.6, geometry.bounds.fetch(:max_z)
+    assert_equal 0.6, geometry.segments.fetch(4).fetch(5)
+  end
+
+  def test_ignores_travel_retraction_and_non_outer_moves
+    gcode = <<~GCODE
+      G90
+      M82
+      ; FEATURE: Outer wall
+      G1 X0 Y0 Z0.2
+      G1 X1 Y0
+      G1 X2 Y0 E1
+      G1 X3 Y0 E0.5
+      ; FEATURE: Inner wall
+      G1 X4 Y0 E2
+    GCODE
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+    assert_equal 1, geometry.segments.length
+    assert_equal [1.0, 0.0, 0.2, 2.0, 0.0, 0.2], geometry.segments.fetch(0)
+  end
+
+  def test_decimation_is_deterministic_and_strictly_bounded
+    lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0.2"]
+    100.times { |index| lines << "G1 X#{index + 1} Y0 E1" }
+    source = lines.join("\n")
+    parser = BambuCompanion::GcodeParser.new(max_segments: 10)
+
+    first = parser.parse(StringIO.new(source))
+    second = parser.parse(StringIO.new(source))
+    assert_operator first.segments.length, :<=, 10
+    assert_equal first.segments, second.segments
+  end
+
+  def test_rejects_files_without_known_outer_wall_markers
+    error = assert_raises(BambuCompanion::GcodeError) do
+      BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new("G1 X1 Y1 E1\n"))
+    end
+    assert_equal "no_outer_walls", error.code
+  end
+
+  def test_defaults_to_forty_thousand_segments
+    assert_equal 40_000, BambuCompanion::GcodeParser::DEFAULT_MAX_SEGMENTS
+
+    lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0.2"]
+    30_001.times { |index| lines << "G1 X#{index + 1} Y0 E1" }
+
+    geometry = BambuCompanion::GcodeParser.new.parse(StringIO.new(lines.join("\n")))
+
+    assert_equal 30_001, geometry.segments.length
+  end
+
+  def test_ignores_commands_with_non_finite_values
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G1 X1e999 Y0 E1
+      G1 X1 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal 1, geometry.segments.length
+    assert geometry.segments.flatten.all?(&:finite?)
+    assert geometry.bounds.values.all?(&:finite?)
+  end
+
+  def test_accepts_zero_padded_g1_commands
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G01 X1 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [[0.0, 0.0, 0.2, 1.0, 0.0, 0.2]], geometry.segments
+  end
+
+  def test_ignores_moves_whose_coordinate_math_overflows
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G91
+      G1 X1e308 Y0 E1
+      G1 X1e308 Y0 E1
+      G1 X-1e308 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal 2, geometry.segments.length
+    assert geometry.segments.flatten.all?(&:finite?)
+    assert geometry.bounds.values.all?(&:finite?)
+  end
+
+  def test_raises_stable_cancelled_error
+    error = assert_raises(BambuCompanion::GcodeError) do
+      BambuCompanion::GcodeParser.new.parse(
+        StringIO.new("G1 X1 Y1 E1\n"), cancelled: -> { true }
+      )
+    end
+
+    assert_equal "cancelled", error.code
+  end
+
+  def test_consumes_line_oriented_io_without_reading_the_whole_source
+    io = LineOnlyIo.new([
+      ";TYPE:WALL-OUTER\n",
+      "G1 X0 Y0 Z0.2\n",
+      "G1 X1 Y0 E1\n"
+    ])
+
+    geometry = BambuCompanion::GcodeParser.new.parse(io)
+
+    assert_equal 1, geometry.segments.length
+  end
+
+  def test_ignores_g0_even_when_it_extrudes
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G0 X1 Y0 E1
+      G1 X2 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [[1.0, 0.0, 0.2, 2.0, 0.0, 0.2]], geometry.segments
+  end
+
+  def test_preserves_all_layer_values_when_segments_are_decimated
+    lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0"]
+    100.times { |index| lines << "G1 X#{index + 1} Y0 Z#{index + 1} E1" }
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(lines.join("\n")))
+
+    assert_operator geometry.segments.length, :<=, 10
+    assert_equal (0..100).map(&:to_f), geometry.layer_z
+  end
+
+  def test_single_segment_limit_remains_bounded_for_large_sources
+    lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0.2"]
+    10_000.times { |index| lines << "G1 X#{index + 1} Y0 E1" }
+
+    parser = BambuCompanion::GcodeParser.new(max_segments: 1)
+    geometry = parser.parse(StringIO.new(lines.join("\n")))
+
+    assert_equal 1, geometry.segments.length
+    assert_operator parser.instance_variable_get(:@sample_stride), :<=, 16_384
+  end
+
+  def test_preserves_gcode_z_precision_without_fixed_quantization
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.200001
+      G1 X1 Y0 Z0.200002 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [0.200001, 0.200002], geometry.layer_z
+    assert_equal 0.200001, geometry.bounds.fetch(:min_z)
+    assert_equal 0.200002, geometry.bounds.fetch(:max_z)
+    assert_equal [0.0, 0.0, 0.200001, 1.0, 0.0, 0.200002], geometry.segments.fetch(0)
+  end
+
+  def test_layer_values_remain_unique_after_float_conversion
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.20000000000000000
+      G1 X1 Y0 Z0.20000000000000001 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [0.2], geometry.layer_z
+  end
+
+  def test_layer_metadata_is_bounded_and_representative_without_changing_segments
+    lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0"]
+    25_000.times { |index| lines << "G1 X#{index + 1} Y0 Z#{index + 1} E1" }
+    source = lines.join("\n")
+    parser = BambuCompanion::GcodeParser.new(max_segments: 8)
+
+    geometry = parser.parse(StringIO.new(source))
+    repeated = parser.parse(StringIO.new(source))
+
+    assert_operator geometry.layer_z.length, :<=,
+                    BambuCompanion::GcodeParser::DEFAULT_MAX_LAYER_VALUES
+    assert_operator parser.instance_variable_get(:@layers).length, :<=,
+                    BambuCompanion::GcodeParser::DEFAULT_MAX_LAYER_VALUES
+    assert_equal geometry.layer_z, repeated.layer_z
+    assert_equal geometry.segments, repeated.segments
+    refute geometry.layer_z_exact
+    assert_equal geometry.layer_z.sort, geometry.layer_z
+    assert_equal 0.0, geometry.layer_z.first
+    assert_equal 25_000.0, geometry.layer_z.last
+    assert_equal [
+      [0.0, 0.0, 0.0, 1.0, 0.0, 1.0],
+      [4096.0, 0.0, 4096.0, 4097.0, 0.0, 4097.0],
+      [8192.0, 0.0, 8192.0, 8193.0, 0.0, 8193.0],
+      [12_288.0, 0.0, 12_288.0, 12_289.0, 0.0, 12_289.0],
+      [16_384.0, 0.0, 16_384.0, 16_385.0, 0.0, 16_385.0],
+      [20_480.0, 0.0, 20_480.0, 20_481.0, 0.0, 20_481.0],
+      [24_576.0, 0.0, 24_576.0, 24_577.0, 0.0, 24_577.0]
+    ], geometry.segments
+
+    midpoint, mode = BambuCompanion::ZProgress.calculate(
+      geometry, layer: geometry.layer_z.length / 2, percent: 50
+    )
+    assert_equal "estimated", mode
+    assert_in_delta 12_500.0, midpoint, 2.0
+  end
+
+  def test_normal_layer_metadata_remains_exact
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(
+      StringIO.new(<<~GCODE)
+        G90
+        M83
+        ;TYPE:WALL-OUTER
+        G1 X0 Y0 Z0.2
+        G1 X1 Y0 Z0.4 E1
+      GCODE
+    )
+
+    assert geometry.layer_z_exact
+    assert_equal [0.2, 0.4], geometry.layer_z
+  end
+
+  def test_maximum_layer_metadata_fits_the_qml_ipc_line_limit
+    value = -Float::MAX
+    layers = Array.new(BambuCompanion::GcodeParser::DEFAULT_MAX_LAYER_VALUES) do
+      current = value
+      value = value.next_float
+      current
+    end
+    line = BambuCompanion::IpcEmitter.new(io: StringIO.new).line_for(
+      "geometry_begin",
+      generation: 1,
+      segmentCount: BambuCompanion::GcodeParser::DEFAULT_MAX_SEGMENTS,
+      bounds: {
+        minX: -Float::MAX, maxX: Float::MAX,
+        minY: -Float::MAX, maxY: Float::MAX,
+        minZ: -Float::MAX, maxZ: Float::MAX
+      },
+      layerZ: layers
+    )
+
+    assert_equal layers.length, layers.uniq.length
+    assert_operator line.length, :<, 1_048_576
+  end
+end

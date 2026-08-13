@@ -1,0 +1,1177 @@
+import QtQuick
+import QtQuick.Effects
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import qs.Ui
+
+BarWidget {
+  id: root
+  moduleName: "io.github.ypmrg.bambu-companion"
+
+  property bool popupOpen: false
+  readonly property bool opened: popupOpen
+  property string viewMode: "setup"
+  property bool componentReady: false
+  property bool initialViewResolved: false
+  property bool installationIdentified: false
+  property string installationId: ""
+  property bool daemonReady: false
+  property bool connected: false
+  property bool connectionVerified: false
+  property bool stale: true
+  property bool secretRequired: false
+  property bool secretStored: false
+  property bool secretStatusKnown: false
+  readonly property bool hasUsableSecret: root.secretStored
+    || (root.secretStatusKnown && !root.secretRequired)
+  property string gcodeState: "OFFLINE"
+  property bool finishGraceExpired: false
+  readonly property string displayGcodeState:
+    root.finishGraceExpired && root.isFinishedState(root.gcodeState)
+      ? "READY" : root.gcodeState
+  property string subtaskName: ""
+  property int percent: 0
+  property real nozzleTemp: NaN
+  property real nozzleTargetTemp: NaN
+  property real bedTemp: NaN
+  property real bedTargetTemp: NaN
+  property int currentLayer: 0
+  property int totalLayers: 0
+  property int remainingMinutes: -1
+  property int speedLevel: 0
+  property int speedMagnitude: 0
+  property string wifiSignal: ""
+  property real coolingFanSpeed: NaN
+  property real heatbreakFanSpeed: NaN
+  property string lastUpdate: ""
+  property string modelStatus: "idle"
+  property string modelError: ""
+  property real zCurrent: NaN
+  property string zMode: "unknown"
+  property string processError: ""
+  property string processErrorReportUpdate: ""
+  property int restartDelay: 1000
+  property bool restartScheduled: false
+  property bool pendingSecretWrite: false
+  property bool persistingSettings: false
+  readonly property int maxIpcLineChars: 1048576
+  property string stdoutBuffer: ""
+  property bool stdoutDiscarding: false
+  property string stderrBuffer: ""
+  property bool stderrDiscarding: false
+
+  property var activeSegments: []
+  property var activeBounds: ({})
+  property int modelGeneration: -1
+  property var pendingSegments: []
+  property var pendingBounds: ({})
+  property int pendingGeneration: -1
+  property int pendingExpectedSegments: 0
+  property int pendingExpectedChunks: -1
+  property int pendingReceivedChunks: 0
+  property int pendingNextChunk: 0
+
+  readonly property string printerName: String(setting("printerName", "3D Printer"))
+  readonly property string host: String(setting("host", ""))
+  readonly property int mqttPort: Number(setting("mqttPort", 8883))
+  readonly property int ftpsPort: Number(setting("ftpsPort", 990))
+  readonly property string serial: String(setting("serial", ""))
+  readonly property string username: String(setting("username", "bblp"))
+  readonly property int maxSegments: Number(setting("maxSegments", 40000))
+  readonly property string accentColor: String(setting("accentColor", "#39FF88"))
+  readonly property bool showBarSummary: setting("showBarSummary", true) !== false
+  readonly property string storedInstallationId: String(setting("installationId", ""))
+  readonly property bool hasConnectionTarget: String(root.host).trim() !== ""
+    && String(root.serial).trim() !== ""
+  readonly property bool requiresSetupConfirmation: !root.hasConnectionTarget
+    || (root.installationIdentified
+        && root.storedInstallationId !== root.installationId)
+  readonly property string displayName: {
+    var name = String(root.printerName || "").trim()
+    return name || "3D Printer"
+  }
+  readonly property string backendConfigurationFingerprint: JSON.stringify(root.configuration())
+  readonly property url printerIconSource: Qt.resolvedUrl("assets/printer-open-frame.svg")
+  readonly property string backendPath: decodeURIComponent(
+    String(Qt.resolvedUrl("bambu-companion")).replace(/^file:\/\//, "")
+  )
+  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color accent: bar ? bar.urgent : Color.accent
+  readonly property color errorColor: "#ff5f56"
+  readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
+  readonly property color neon: root.validAccentColor(root.accentColor)
+    ? root.accentColor : "#39FF88"
+  readonly property bool errorActive: root.printerHasError()
+    || root.processError !== ""
+  readonly property bool modelErrorActive: root.modelStatus === "error"
+    && root.modelError !== ""
+  readonly property color printerIconColor: root.errorActive ? root.errorColor
+    : (!root.connectionVerified
+    || !root.connected || root.stale
+    ? root.dim : (root.gcodeState === "RUNNING" ? root.neon : root.foreground))
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+
+  function open() {
+    popupOpen = true
+    if (root.viewMode !== "settings") viewMode = nextIdleView()
+    if (root.requiresSetupConfirmation) {
+      viewMode = "setup"
+      if (componentReady) settingsView.load(settingsDraft())
+    }
+  }
+
+  function close() {
+    if (root.requiresSetupConfirmation) {
+      popupOpen = true
+      return
+    }
+    popupOpen = false
+    if (componentReady) settingsView.clearAccessCode()
+    viewMode = nextIdleView()
+  }
+
+  function nextIdleView() {
+    if (root.requiresSetupConfirmation) return "setup"
+    if (root.connectionVerified) return "status"
+    return "connecting"
+  }
+
+  // Quattro injects BarWidget.settings from Loader.onLoaded, after this
+  // component's Component.onCompleted handler. Defer the first decision so a
+  // persisted printer is never mistaken for an unconfigured installation.
+  function resolveInitialView() {
+    if (root.initialViewResolved) return
+    initialViewResolved = true
+    viewMode = nextIdleView()
+    if (viewMode === "setup") {
+      settingsView.load(settingsDraft())
+      root.popupOpen = true
+      panelScroll.contentY = 0
+    }
+  }
+
+  function enterConnecting() {
+    settingsView.clearAccessCode()
+    viewMode = root.hasConnectionTarget ? "connecting" : "setup"
+    Qt.callLater(function() {
+      panelScroll.contentY = 0
+      keyCatcher.forceActiveFocus()
+    })
+  }
+
+  function settingsDraft() {
+    return {
+      printerName: root.printerName,
+      host: root.host,
+      mqttPort: root.mqttPort,
+      ftpsPort: root.ftpsPort,
+      serial: root.serial,
+      username: root.username,
+      maxSegments: root.maxSegments,
+      accentColor: root.validAccentColor(root.accentColor)
+        ? root.accentColor : "#39FF88",
+      showBarSummary: root.showBarSummary
+    }
+  }
+
+  function openSettings() {
+    settingsView.load(settingsDraft())
+    viewMode = "settings"
+    Qt.callLater(function() {
+      panelScroll.contentY = 0
+      keyCatcher.forceActiveFocus()
+    })
+  }
+
+  function toggleSettings() {
+    if (root.viewMode === "settings") {
+      root.backToStatus()
+      return
+    }
+    root.openSettings()
+  }
+
+  function backToStatus() {
+    if (root.requiresSetupConfirmation) {
+      viewMode = "setup"
+      popupOpen = true
+      Qt.callLater(function() {
+        panelScroll.contentY = 0
+        keyCatcher.forceActiveFocus()
+      })
+      return
+    }
+    if (!root.connectionVerified) {
+      enterConnecting()
+      return
+    }
+    settingsView.clearAccessCode()
+    viewMode = "status"
+    Qt.callLater(function() {
+      panelScroll.contentY = 0
+      keyCatcher.forceActiveFocus()
+    })
+  }
+
+  function persistSettings(draft) {
+    if (!root.bar || !root.bar.shell
+        || typeof root.bar.shell.updateEntryInline !== "function") return false
+    var entry = { id: root.moduleName }
+    entry.printerName = draft.printerName
+    entry.host = draft.host
+    entry.mqttPort = draft.mqttPort
+    entry.ftpsPort = draft.ftpsPort
+    entry.serial = draft.serial
+    entry.username = draft.username
+    entry.maxSegments = draft.maxSegments
+    entry.accentColor = draft.accentColor
+    entry.showBarSummary = draft.showBarSummary
+    entry.installationId = root.installationId
+    persistingSettings = true
+    root.settings = entry
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    persistingSettings = false
+    return true
+  }
+
+  // The bar-only preference is intentionally independent from the connection
+  // form: changing it must not save partially edited printer credentials.
+  function persistBarSummary(enabled) {
+    if (!root.bar || !root.bar.shell
+        || typeof root.bar.shell.updateEntryInline !== "function") return false
+    var current = root.settings && typeof root.settings === "object"
+      ? root.settings : ({})
+    var entry = { id: root.moduleName }
+    for (var key in current) {
+      if (key !== "id") entry[key] = current[key]
+    }
+    entry.showBarSummary = enabled === true
+    persistingSettings = true
+    root.settings = entry
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    persistingSettings = false
+    return true
+  }
+
+  function backendSettingsChanged(draft) {
+    return String(draft.host) !== root.host
+      || Number(draft.mqttPort) !== root.mqttPort
+      || Number(draft.ftpsPort) !== root.ftpsPort
+      || String(draft.serial) !== root.serial
+      || String(draft.username) !== root.username
+      || Number(draft.maxSegments) !== root.segmentLimit()
+  }
+
+  function saveSettings(draft, accessCode) {
+    var replacement = String(accessCode || "")
+    var backendChanged = backendSettingsChanged(draft)
+    if (!replacement && !root.hasUsableSecret) {
+      settingsView.reportError("Enter the LAN access code to connect")
+      return
+    }
+    if (replacement && (!root.daemonReady || !sessionProcess.running)) {
+      settingsView.reportError("Backend is not ready for the LAN code")
+      return
+    }
+    pendingSecretWrite = !!replacement
+    if (!persistSettings(draft)) {
+      pendingSecretWrite = false
+      settingsView.reportError("Settings could not be saved by Omarchy Shell")
+      return
+    }
+    if (!backendChanged && !replacement) {
+      settingsView.clearAccessCode()
+      viewMode = nextIdleView()
+      Qt.callLater(function() {
+        panelScroll.contentY = 0
+        keyCatcher.forceActiveFocus()
+      })
+      return
+    }
+    enterConnecting()
+    if (backendChanged) sendConfiguration()
+    if (!replacement) return
+    Qt.callLater(function() {
+      if (!setSecret(replacement)) {
+        recoverSecretWrite("LAN code could not be sent. Enter it again")
+      }
+    })
+  }
+
+  // The non-secret address/identity settings remain useful when a printer is
+  // temporarily offline. If the secret handoff itself fails, return to those
+  // saved values and require the user to enter the code again.
+  function recoverSecretWrite(message) {
+    if (!root.pendingSecretWrite) return false
+    pendingSecretWrite = false
+    openSettings()
+    settingsView.reportError(message)
+    popupOpen = true
+    return true
+  }
+
+  function handleAuthenticationFailure(message) {
+    // A rejection from the previous session may arrive while a replacement is
+    // already queued. Let that write complete; a rejection from the restarted
+    // session will arrive after secret_status and reopen the form if necessary.
+    if (root.pendingSecretWrite) return false
+    pendingSecretWrite = false
+    secretRequired = true
+    secretStored = false
+    secretStatusKnown = true
+    openSettings()
+    settingsView.reportError(message)
+    popupOpen = true
+    return true
+  }
+
+  function objectOrEmpty(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : ({})
+  }
+
+  function finiteNumber(value, fallback) {
+    if (value === null || value === undefined || value === "") return fallback
+    var number = Number(value)
+    return isFinite(number) ? number : fallback
+  }
+
+  function isNonNegativeInteger(value) {
+    return typeof value === "number" && isFinite(value)
+      && value >= 0 && Math.floor(value) === value
+  }
+
+  function isValidSegment(segment) {
+    if (!Array.isArray(segment) || segment.length !== 6) return false
+    for (var index = 0; index < segment.length; index++) {
+      if (typeof segment[index] !== "number" || !isFinite(segment[index])) return false
+    }
+    return true
+  }
+
+  function validAccentColor(value) {
+    return /^#[0-9A-Fa-f]{6}$/.test(String(value || ""))
+  }
+
+  function isFinishedState(state) {
+    var value = String(state || "").toUpperCase()
+    return value === "FINISH" || value === "FINISHED"
+      || value === "COMPLETE" || value === "COMPLETED"
+  }
+
+  function printerHasError() {
+    var state = String(root.gcodeState || "").toUpperCase()
+    return state === "ERROR" || state === "FAILED" || state.indexOf("ERROR") >= 0
+  }
+
+  function segmentLimit() {
+    var configured = finiteNumber(root.maxSegments, 40000)
+    return Math.max(0, Math.min(100000, Math.floor(configured)))
+  }
+
+  function formatTemp(value) {
+    return isFinite(Number(value)) ? Math.round(Number(value)) + "°" : "--°"
+  }
+
+  function formatTempPair(current, target) {
+    var currentText = root.formatTemp(current)
+    if (!isFinite(Number(target))) return currentText
+    return currentText + " / " + root.formatTemp(target)
+  }
+
+  function formatDuration(minutes) {
+    var value = Math.floor(root.finiteNumber(minutes, -1))
+    if (value < 0) return "--"
+    var hours = Math.floor(value / 60)
+    var rest = value % 60
+    if (hours <= 0) return rest + " min"
+    return hours + " h " + (rest < 10 ? "0" : "") + rest + " min"
+  }
+
+  function speedLabel() {
+    var labels = ["UNKNOWN", "SILENT", "STANDARD", "SPORT", "LUDICROUS"]
+    var level = Math.floor(root.finiteNumber(root.speedLevel, 0))
+    var label = level >= 1 && level <= 4 ? labels[level] : "CUSTOM"
+    return label + (root.speedMagnitude > 0 ? " · " + root.speedMagnitude + "%" : "")
+  }
+
+  function formatFan(value) {
+    var level = root.finiteNumber(value, NaN)
+    if (!isFinite(level)) return "--"
+    return Math.round(Math.max(0, Math.min(15, level)) / 15 * 100) + "%"
+  }
+
+  function formatLastUpdate() {
+    if (!root.lastUpdate) return "--"
+    var timestamp = new Date(root.lastUpdate)
+    return isNaN(timestamp.getTime()) ? root.lastUpdate
+      : Qt.formatDateTime(timestamp, "HH:mm:ss")
+  }
+
+  function formatDimensions() {
+    var bounds = root.activeBounds || ({})
+    var width = root.finiteNumber(bounds.maxX, NaN) - root.finiteNumber(bounds.minX, NaN)
+    var depth = root.finiteNumber(bounds.maxY, NaN) - root.finiteNumber(bounds.minY, NaN)
+    var height = root.finiteNumber(bounds.maxZ, NaN) - root.finiteNumber(bounds.minZ, NaN)
+    if (![width, depth, height].every(function(value) { return isFinite(value) && value >= 0 }))
+      return "--"
+    return width.toFixed(1) + " × " + depth.toFixed(1) + " × " + height.toFixed(1) + " mm"
+  }
+
+  function compactLabel() {
+    if (!root.hasConnectionTarget) return "SETUP"
+    if (!root.connectionVerified) return "WAIT"
+    var state = root.connected ? root.displayGcodeState : "OFFLINE"
+    return state + " " + root.percent + "% "
+      + root.formatTemp(root.nozzleTemp) + "/" + root.formatTemp(root.bedTemp)
+  }
+
+  function configuration() {
+    return {
+      "host": root.host, "mqttPort": root.mqttPort,
+      "ftpsPort": root.ftpsPort, "serial": root.serial,
+      "username": root.username, "maxSegments": root.segmentLimit()
+    }
+  }
+
+  function reportProcessError(message) {
+    processError = String(message || "")
+    processErrorReportUpdate = processError === "" ? "" : lastUpdate
+  }
+
+  function writeCommand(command) {
+    if (!daemonReady || !sessionProcess.running) return false
+    try {
+      sessionProcess.write(JSON.stringify(command) + "\n")
+      return true
+    } catch (error) {
+      reportProcessError("Backend command failed")
+      return false
+    }
+  }
+
+  function sendConfiguration() {
+    if (!daemonReady || !root.hasConnectionTarget) return
+    writeCommand({ "op": "configure", "protocol": 1, "config": configuration() })
+  }
+
+  function setSecret(value) {
+    var replacement = String(value || "")
+    if (!replacement) return false
+    return writeCommand({
+      "op": "set_secret", "accessCode": replacement, "persist": true
+    })
+  }
+
+  function clearSecret() {
+    if (writeCommand({ "op": "clear_secret" })) settingsView.clearAccessCode()
+  }
+
+  function refreshModel() {
+    writeCommand({ "op": "refresh_model" })
+  }
+
+  function consumeStdoutChunk(chunk) {
+    consumeStreamChunk(chunk, true)
+  }
+
+  function resetStreamBuffers() {
+    stdoutBuffer = ""
+    stdoutDiscarding = false
+    stderrBuffer = ""
+    stderrDiscarding = false
+  }
+
+  function handleProcessRunningChanged() {
+    if (sessionProcess.running) {
+      restartScheduled = false
+      return
+    }
+    daemonReady = false
+    resetOperationalState()
+    resetStreamBuffers()
+    recoverSecretWrite("Backend stopped before accepting the LAN code. Enter it again")
+    if (restartScheduled) return
+    restartScheduled = true
+    sessionRestart.interval = restartDelay
+    restartDelay = Math.min(60000, restartDelay * 2)
+    sessionRestart.restart()
+  }
+
+  function consumeStderrChunk(chunk) {
+    consumeStreamChunk(chunk, false)
+  }
+
+  function consumeStreamChunk(chunk, stdoutStream) {
+    var buffer = stdoutStream ? stdoutBuffer : stderrBuffer
+    var discarding = stdoutStream ? stdoutDiscarding : stderrDiscarding
+    var text = String(chunk === null || chunk === undefined ? "" : chunk)
+    var offset = 0
+    while (offset < text.length) {
+      var newlineIndex = text.indexOf("\n", offset)
+      var end = newlineIndex < 0 ? text.length : newlineIndex
+      var part = text.slice(offset, end)
+      if (!discarding) {
+        if (buffer.length + part.length > root.maxIpcLineChars) {
+          buffer = ""
+          discarding = true
+        } else {
+          buffer += part
+        }
+      }
+      if (newlineIndex < 0) break
+      if (!discarding) {
+        var line = buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer
+        if (stdoutStream) handleLine(line)
+        else handleErrorLine(line)
+      }
+      buffer = ""
+      discarding = false
+      offset = newlineIndex + 1
+    }
+    if (stdoutStream) {
+      stdoutBuffer = buffer
+      stdoutDiscarding = discarding
+    } else {
+      stderrBuffer = buffer
+      stderrDiscarding = discarding
+    }
+  }
+
+  function handleErrorLine(line) {
+    var message = String(line || "").trim()
+    if (message) reportProcessError(message)
+  }
+
+  function handleState(message) {
+    message = objectOrEmpty(message)
+    var printer = objectOrEmpty(message.printer)
+    var model = objectOrEmpty(message.model)
+    var nextGeneration = isNonNegativeInteger(model.generation) ? model.generation : -1
+    if (nextGeneration !== modelGeneration) {
+      activeSegments = []
+      activeBounds = ({})
+      resetPendingGeometry()
+      modelGeneration = nextGeneration
+    }
+    connected = printer.connected === true
+    stale = printer.stale !== false
+    var reportUpdate = String(printer.lastUpdate || "")
+    var hasFreshReport = connected && printer.stale === false
+      && reportUpdate !== ""
+    if (hasFreshReport) {
+      connectionVerified = true
+      if (processError !== "" && reportUpdate !== processErrorReportUpdate) {
+        processError = ""
+        processErrorReportUpdate = ""
+      }
+      if (root.viewMode === "connecting") viewMode = "status"
+    }
+    gcodeState = String(printer.gcodeState || (connected ? "IDLE" : "OFFLINE"))
+    subtaskName = String(printer.subtaskName || "")
+    percent = Math.max(0, Math.min(100, Math.floor(finiteNumber(printer.percent, 0))))
+    nozzleTemp = finiteNumber(printer.nozzleTemp, NaN)
+    nozzleTargetTemp = finiteNumber(printer.nozzleTargetTemp, NaN)
+    bedTemp = finiteNumber(printer.bedTemp, NaN)
+    bedTargetTemp = finiteNumber(printer.bedTargetTemp, NaN)
+    currentLayer = Math.max(0, Math.floor(finiteNumber(printer.layer, 0)))
+    totalLayers = Math.max(0, Math.floor(finiteNumber(printer.totalLayers, 0)))
+    remainingMinutes = Math.floor(finiteNumber(printer.remainingMinutes, -1))
+    speedLevel = Math.max(0, Math.floor(finiteNumber(printer.speedLevel, 0)))
+    speedMagnitude = Math.max(0, Math.floor(finiteNumber(printer.speedMagnitude, 0)))
+    wifiSignal = String(printer.wifiSignal || "")
+    coolingFanSpeed = finiteNumber(printer.coolingFanSpeed, NaN)
+    heatbreakFanSpeed = finiteNumber(printer.heatbreakFanSpeed, NaN)
+    lastUpdate = reportUpdate
+    modelStatus = String(model.status || "idle")
+    zCurrent = finiteNumber(model.zCurrent, NaN)
+    zMode = String(model.zMode || "unknown")
+    var error = objectOrEmpty(model.error)
+    modelError = error.message === null || error.message === undefined
+      ? "" : String(error.message)
+  }
+
+  function resetPendingGeometry() {
+    pendingGeneration = -1
+    pendingSegments = []
+    pendingBounds = ({})
+    pendingExpectedSegments = 0
+    pendingExpectedChunks = -1
+    pendingReceivedChunks = 0
+    pendingNextChunk = 0
+  }
+
+  function resetOperationalState() {
+    finishReadyTimer.stop()
+    finishGraceExpired = false
+    connected = false
+    connectionVerified = false
+    stale = true
+    gcodeState = "OFFLINE"
+    subtaskName = ""
+    percent = 0
+    nozzleTemp = NaN
+    nozzleTargetTemp = NaN
+    bedTemp = NaN
+    bedTargetTemp = NaN
+    currentLayer = 0
+    totalLayers = 0
+    remainingMinutes = -1
+    speedLevel = 0
+    speedMagnitude = 0
+    wifiSignal = ""
+    coolingFanSpeed = NaN
+    heatbreakFanSpeed = NaN
+    lastUpdate = ""
+    modelStatus = "idle"
+    modelError = ""
+    zCurrent = NaN
+    zMode = "unknown"
+    processError = ""
+    processErrorReportUpdate = ""
+    secretRequired = false
+    secretStored = false
+    secretStatusKnown = false
+    modelGeneration = -1
+    activeSegments = []
+    activeBounds = ({})
+    resetPendingGeometry()
+    if (root.viewMode !== "settings"
+        && (root.viewMode !== "setup" || root.hasConnectionTarget)) {
+      viewMode = nextIdleView()
+    }
+  }
+
+  function handleGeometry(message) {
+    message = objectOrEmpty(message)
+    var event = String(message.event || "")
+    if (!isNonNegativeInteger(message.generation)) return
+    var generation = message.generation
+    if (generation !== modelGeneration) return
+    if (event === "geometry_begin") {
+      var expectedSegments = message.segmentCount
+      if (!isNonNegativeInteger(message.segmentCount)
+          || expectedSegments > root.segmentLimit()) {
+        resetPendingGeometry()
+        return
+      }
+      pendingGeneration = generation
+      pendingSegments = []
+      pendingBounds = objectOrEmpty(message.bounds)
+      pendingExpectedSegments = expectedSegments
+      pendingExpectedChunks = -1
+      pendingReceivedChunks = 0
+      pendingNextChunk = 0
+      return
+    }
+    if (pendingGeneration < 0 || generation !== pendingGeneration) return
+    if (event === "geometry_chunk") {
+      var chunk = message.segments
+      if (!isNonNegativeInteger(message.index)
+          || message.index !== pendingNextChunk || !Array.isArray(chunk)
+          || chunk.length === 0
+          || pendingSegments.length + chunk.length > pendingExpectedSegments
+          || pendingSegments.length + chunk.length > root.segmentLimit()) {
+        resetPendingGeometry()
+        return
+      }
+      for (var segmentIndex = 0; segmentIndex < chunk.length; segmentIndex++) {
+        if (!isValidSegment(chunk[segmentIndex])) {
+          resetPendingGeometry()
+          return
+        }
+      }
+      pendingSegments = pendingSegments.concat(chunk)
+      pendingReceivedChunks += 1
+      pendingNextChunk += 1
+      return
+    }
+    if (event === "geometry_end") {
+      var expectedChunks = message.chunks
+      pendingExpectedChunks = expectedChunks
+      if (isNonNegativeInteger(message.chunks)
+          && pendingSegments.length === pendingExpectedSegments
+          && pendingReceivedChunks === expectedChunks) {
+        activeSegments = pendingSegments.slice(0)
+        activeBounds = pendingBounds
+      }
+      resetPendingGeometry()
+    }
+  }
+
+  function handleLine(line) {
+    var message
+    try {
+      message = JSON.parse(String(line || ""))
+    } catch (error) {
+      return
+    }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return
+    if (message.event === "hello") {
+      daemonReady = Number(message.protocol) === 1
+      installationId = String(message.installationId || "")
+      installationIdentified = installationId !== ""
+      resetPendingGeometry()
+      if (!daemonReady || !installationIdentified) {
+        resetOperationalState()
+        processError = "Unsupported backend protocol"
+        return
+      }
+      restartDelay = 1000
+      processError = ""
+      processErrorReportUpdate = ""
+      if (root.requiresSetupConfirmation) {
+        openSettings()
+        popupOpen = true
+        sendConfiguration()
+        return
+      }
+      sendConfiguration()
+      return
+    }
+    if (!daemonReady) return
+    if (message.event === "secret_required") {
+      secretRequired = true
+      secretStored = false
+      secretStatusKnown = false
+      if (!root.pendingSecretWrite && root.viewMode === "connecting") {
+        openSettings()
+        settingsView.reportError("Enter the LAN access code to connect")
+      }
+    } else if (message.event === "secret_status") {
+      pendingSecretWrite = false
+      secretRequired = false
+      secretStored = message.stored === true
+      secretStatusKnown = true
+    } else if (message.event === "state") {
+      handleState(message)
+    } else if (String(message.event || "").indexOf("geometry_") === 0) {
+      handleGeometry(message)
+    } else if (message.event === "error") {
+      reportProcessError(message.message)
+      if (message.scope === "mqtt" && message.code === "authentication") {
+        handleAuthenticationFailure("LAN access code was rejected. Enter it again")
+      } else {
+        recoverSecretWrite("LAN code was rejected. Enter it again")
+      }
+    }
+  }
+
+  onPopupOpenChanged: {
+    if (!componentReady) return
+    if (!popupOpen) {
+      if (root.requiresSetupConfirmation) {
+        popupOpen = true
+        return
+      }
+      settingsView.clearAccessCode()
+      viewMode = nextIdleView()
+    }
+  }
+  onGcodeStateChanged: {
+    if (root.isFinishedState(root.gcodeState)) {
+      if (!finishReadyTimer.running && !root.finishGraceExpired)
+        finishReadyTimer.start()
+      return
+    }
+    finishReadyTimer.stop()
+    finishGraceExpired = false
+  }
+  onBackendConfigurationFingerprintChanged: {
+    if (!componentReady || persistingSettings) return
+    resetOperationalState()
+    sendConfiguration()
+  }
+  Component.onCompleted: {
+    componentReady = true
+    Qt.callLater(root.resolveInitialView)
+  }
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  Process {
+    id: sessionProcess
+    command: [root.backendPath]
+    stdinEnabled: true
+    running: true
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.consumeStdoutChunk(chunk) }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.consumeStderrChunk(chunk) }
+    }
+    onRunningChanged: root.handleProcessRunningChanged()
+  }
+
+  Timer {
+    id: finishReadyTimer
+    interval: 60000
+    repeat: false
+    onTriggered: {
+      if (root.isFinishedState(root.gcodeState))
+        root.finishGraceExpired = true
+    }
+  }
+
+  Timer {
+    id: sessionRestart
+    interval: 1000
+    repeat: false
+    onTriggered: {
+      root.restartScheduled = false
+      if (!sessionProcess.running) sessionProcess.running = true
+    }
+  }
+
+  component PrinterIcon: Item {
+    id: iconRoot
+
+    property color tintColor: root.foreground
+
+    implicitWidth: Style.bar.iconCanvas
+    implicitHeight: Style.bar.iconCanvas
+
+    Image {
+      id: printerIconImage
+      anchors.fill: parent
+      source: root.printerIconSource
+      fillMode: Image.PreserveAspectFit
+      visible: false
+      layer.enabled: true
+    }
+
+    MultiEffect {
+      anchors.fill: printerIconImage
+      source: printerIconImage
+      colorization: 1.0
+      colorizationColor: iconRoot.tintColor
+    }
+  }
+
+  WidgetButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    text: ""
+    labelVisible: false
+    hasVisualContent: true
+    fixedWidth: root.vertical ? barSize : buttonContent.implicitWidth + scaledHorizontalMargin * 2
+    fixedHeight: barSize
+    foreground: root.printerIconColor
+    activeColor: root.neon
+    active: root.popupOpen
+    fontFamily: root.fontFamily
+    fontSize: Style.font.caption
+    tooltipText: root.displayName + " · "
+      + (!root.hasConnectionTarget ? "SETUP"
+        : (!root.connectionVerified ? "CONNECTING"
+          : ((root.connected ? root.displayGcodeState : "OFFLINE") + " · " + root.percent + "% · "
+            + root.formatTemp(root.nozzleTemp) + "/" + root.formatTemp(root.bedTemp))))
+    onPressed: root.popupOpen = !root.popupOpen
+
+    Row {
+      id: buttonContent
+      anchors.centerIn: parent
+      height: button.fixedHeight
+      spacing: Style.space(5)
+
+      PrinterIcon {
+        anchors.verticalCenter: parent.verticalCenter
+        tintColor: root.printerIconColor
+      }
+
+      Text {
+        height: parent.height
+        verticalAlignment: Text.AlignVCenter
+        visible: !root.vertical && root.showBarSummary
+        width: Math.min(implicitWidth, Style.space(220))
+        text: root.compactLabel()
+        color: root.printerIconColor
+        elide: Text.ElideRight
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        renderType: Text.NativeRendering
+      }
+    }
+  }
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.popupOpen
+    focusTarget: keyCatcher
+    padding: 0
+    contentWidth: fittedContentWidth(Style.space(860))
+    contentHeight: fittedContentHeight(Style.space(520), Style.space(620))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      clip: true
+      blocked: settingsView.inputActive
+
+      Rectangle {
+        id: panelBackdrop
+        anchors.fill: parent
+        readonly property color baseColor: Color.popups.background
+        color: Qt.rgba(
+          baseColor.r * 0.94 + root.foreground.r * 0.06,
+          baseColor.g * 0.94 + root.foreground.g * 0.06,
+          baseColor.b * 0.94 + root.foreground.b * 0.06,
+          1.0)
+        border.width: 1
+        border.color: Qt.rgba(root.foreground.r, root.foreground.g,
+                              root.foreground.b, 0.18)
+      }
+
+      onCloseRequested: {
+        if (root.requiresSetupConfirmation) root.popupOpen = true
+        else if (root.viewMode === "settings" && root.hasConnectionTarget) root.backToStatus()
+        else root.close()
+      }
+
+      Flickable {
+        id: panelScroll
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: dashboard.height
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: !dashboard.wideLayout
+        clip: true
+
+        Item {
+          id: dashboard
+          width: panelScroll.width
+          height: wideLayout ? panelScroll.height
+            : telemetryPane.height + dashboardLayout.spacing + modelPane.height
+          readonly property bool wideLayout: width >= Style.space(640)
+          readonly property real overlayX: wideLayout
+            ? telemetryPane.width + dashboardLayout.spacing : 0
+          readonly property real overlayY: wideLayout ? 0 : panelScroll.contentY
+          readonly property real overlayWidth: wideLayout
+            ? Math.max(0, width - overlayX) : width
+          readonly property real overlayHeight: panelScroll.height
+
+          Grid {
+            id: dashboardLayout
+            anchors.fill: parent
+            columns: dashboard.wideLayout ? 2 : 1
+            spacing: 1
+
+            BambuTelemetryPane {
+              id: telemetryPane
+              width: dashboard.wideLayout
+                ? Style.space(300)
+                : dashboard.width
+              height: dashboard.wideLayout ? dashboard.height : Style.space(500)
+              foreground: root.foreground
+              accent: root.accent
+              dim: root.dim
+              neon: root.neon
+              errorColor: root.errorColor
+              errorActive: root.errorActive
+              modelErrorActive: root.modelErrorActive
+              fontFamily: root.fontFamily
+              printerIconSource: root.printerIconSource
+              iconColor: root.printerIconColor
+              printerName: root.displayName
+              online: root.connected && !root.stale
+              printerState: root.displayGcodeState
+              jobName: root.subtaskName || "NO ACTIVE PRINT"
+              percent: root.percent
+              remainingValue: root.formatDuration(root.remainingMinutes)
+              nozzleValue: root.formatTempPair(root.nozzleTemp, root.nozzleTargetTemp)
+              bedValue: root.formatTempPair(root.bedTemp, root.bedTargetTemp)
+              layerValue: (root.currentLayer || "--") + " / " + (root.totalLayers || "--")
+              zValue: isFinite(root.zCurrent) ? root.zCurrent.toFixed(2) + " mm"
+                + (root.zMode === "estimated" ? " EST." : "") : "--"
+              speedValue: root.speedLabel()
+              fanValue: "PART " + root.formatFan(root.coolingFanSpeed)
+                + " · HOTEND " + root.formatFan(root.heatbreakFanSpeed)
+              hostValue: root.host || "--"
+              portsValue: "MQTT " + root.mqttPort + " · FTPS " + root.ftpsPort
+              wifiValue: root.wifiSignal || "--"
+              reportValue: root.formatLastUpdate()
+              segmentValue: root.activeSegments.length.toLocaleString(Qt.locale(), "f", 0)
+                + " SEGMENTS"
+              modelState: root.modelStatus.toUpperCase()
+              dimensionsValue: root.formatDimensions()
+              onSettingsRequested: root.toggleSettings()
+            }
+
+            BambuModelViewport {
+              id: modelPane
+              width: dashboard.wideLayout
+                ? Math.max(0, dashboard.width - telemetryPane.width - dashboardLayout.spacing)
+                : dashboard.width
+              height: dashboard.wideLayout ? dashboard.height : Style.space(500)
+              foreground: root.foreground
+              accent: root.accent
+              dim: root.dim
+              neon: root.neon
+              errorColor: root.errorColor
+              errorActive: root.errorActive || root.modelErrorActive
+              fontFamily: root.fontFamily
+              panelActive: root.popupOpen && root.viewMode === "status"
+              daemonReady: root.daemonReady && sessionProcess.running
+              printing: root.connected && root.gcodeState === "RUNNING"
+              activeSegments: root.activeSegments
+              activeBounds: root.activeBounds
+              zCurrent: root.zCurrent
+              modelStatus: root.modelStatus
+              modelError: root.modelError || root.processError
+              onReloadRequested: root.refreshModel()
+            }
+          }
+
+          Rectangle {
+            visible: dashboard.wideLayout
+            x: telemetryPane.width
+            y: 0
+            width: 1
+            height: dashboard.height
+            color: Qt.rgba(root.foreground.r, root.foreground.g,
+                           root.foreground.b, 0.12)
+          }
+
+          Rectangle {
+            id: settingsScrim
+            visible: root.viewMode === "setup" || root.viewMode === "settings"
+            x: dashboard.overlayX
+            y: dashboard.overlayY
+            width: dashboard.overlayWidth
+            height: dashboard.overlayHeight
+            z: 20
+            color: panelBackdrop.color
+          }
+
+          BambuSettingsView {
+            id: settingsView
+            visible: root.viewMode === "setup" || root.viewMode === "settings"
+            x: dashboard.overlayX
+            y: dashboard.overlayY
+            width: dashboard.overlayWidth
+            height: dashboard.overlayHeight
+            z: 21
+            foreground: root.foreground
+            accent: root.accent
+            errorColor: root.errorColor
+            dim: root.dim
+            fontFamily: root.fontFamily
+            daemonReady: root.daemonReady && sessionProcess.running
+            allowBack: root.viewMode === "settings" && root.hasConnectionTarget
+              && !root.requiresSetupConfirmation
+            requireAccessCode: !root.hasUsableSecret
+            secretRequired: root.secretRequired
+            secretStored: root.secretStored
+            secretStatusKnown: root.secretStatusKnown
+            onBackRequested: root.backToStatus()
+            onBarSummaryToggled: function(enabled) {
+              if (!root.persistBarSummary(enabled)) {
+                settingsView.showBarSummary = root.showBarSummary
+                settingsView.reportError("Bar summary setting could not be saved")
+              }
+            }
+            onForgetCodeRequested: root.clearSecret()
+            onInputFocusReleased: keyCatcher.forceActiveFocus()
+            onSaveRequested: function(draft, accessCode) {
+              root.saveSettings(draft, accessCode)
+            }
+          }
+
+          Item {
+            id: connectingOverlay
+            visible: root.viewMode === "connecting"
+            x: dashboard.overlayX
+            y: dashboard.overlayY
+            width: dashboard.overlayWidth
+            height: dashboard.overlayHeight
+            z: 22
+
+            Rectangle {
+              anchors.fill: parent
+              color: panelBackdrop.color
+            }
+
+            Column {
+              anchors.centerIn: parent
+              width: Math.min(parent.width - Style.space(32), Style.space(320))
+              spacing: Style.space(10)
+
+              Item {
+                id: connectionSpinner
+                width: Style.space(48)
+                height: width
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                PrinterIcon {
+                  anchors.fill: parent
+                  tintColor: root.foreground
+                }
+
+                RotationAnimator on rotation {
+                  from: 0
+                  to: 360
+                  duration: 900
+                  loops: Animation.Infinite
+                  running: root.popupOpen && root.viewMode === "connecting"
+                }
+              }
+
+              Text {
+                width: parent.width
+                text: "CONNECTING TO " + root.displayName.toUpperCase()
+                color: root.foreground
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+              }
+
+              Text {
+                width: parent.width
+                text: root.processError || "Waiting for a fresh printer report…"
+                color: root.processError ? root.errorColor : root.dim
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              BambuButton {
+                width: parent.width
+                height: Style.space(34)
+                clip: true
+                text: "EDIT CONFIGURATION"
+                foreground: root.foreground
+                accent: root.accent
+                bordered: true
+                onClicked: root.openSettings()
+              }
+            }
+          }
+
+          BambuButton {
+            visible: root.secretRequired && root.viewMode === "status"
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Style.space(54)
+            z: 24
+            width: Math.min(parent.width - Style.space(24), Style.space(320))
+            text: "ENTER LAN CODE IN SETTINGS"
+            foreground: root.foreground
+            accent: root.accent
+            bordered: true
+            onClicked: root.openSettings()
+          }
+        }
+      }
+    }
+  }
+}
