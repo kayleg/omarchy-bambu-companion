@@ -14,6 +14,8 @@ class ConfigTest < Minitest::Test
     assert_equal "0309C123456789", config.serial
     assert_equal "bblp", config.username
     assert_equal 40_000, config.max_segments
+    assert_equal "11" * 32, config.mqtt_tls_fingerprint
+    assert_equal "22" * 32, config.ftps_tls_fingerprint
     refute_respond_to config, :to_h
     refute_respond_to config, :demo_mode
   end
@@ -49,6 +51,33 @@ class ConfigTest < Minitest::Test
   def test_accepts_free_form_network_addresses
     ["printer.local", "fe80::54%enp1s0", "[fd00::54]"].each do |host|
       assert_equal host, test_printer_config("host" => host).host
+    end
+  end
+
+  def test_normalizes_optional_tls_fingerprints
+    config = test_printer_config(
+      "mqttTlsFingerprint" => Array.new(32, "ab").join(":"),
+      "ftpsTlsFingerprint" => "cd" * 32
+    )
+
+    assert_equal "AB" * 32, config.mqtt_tls_fingerprint
+    assert_equal "CD" * 32, config.ftps_tls_fingerprint
+    refute BambuCompanion::Config.from_h(
+      printer_config(
+        "mqttTlsFingerprint" => "", "ftpsTlsFingerprint" => nil
+      )
+    ).trusted_tls?
+    assert config.trusted_tls?
+  end
+
+  def test_rejects_malformed_tls_fingerprints
+    %w[AA invalid].each do |fingerprint|
+      assert_raises(BambuCompanion::ConfigError) do
+        test_printer_config("mqttTlsFingerprint" => fingerprint)
+      end
+      assert_raises(BambuCompanion::ConfigError) do
+        test_printer_config("ftpsTlsFingerprint" => fingerprint)
+      end
     end
   end
 

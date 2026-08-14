@@ -3,6 +3,7 @@
 require "json"
 require "mqtt"
 require "openssl"
+require_relative "tls_certificate"
 
 module BambuCompanion
   class MqttSession
@@ -61,6 +62,8 @@ module BambuCompanion
           failures = 0 if connected
           @on_connection.call(false, error)
           @on_error.call(error)
+          break if error.is_a?(TlsCertificateError)
+
           wait(self.class.backoff(failures) + @jitter.call)
           failures += 1
         end
@@ -107,6 +110,8 @@ module BambuCompanion
 
       start_reader << true
       reader.value
+    rescue OpenSSL::SSL::SSLError => error
+      TlsCertificate.raise_if_pin_rejected!(client.ssl_context, error)
     ensure
       prior_error = $!
       begin
@@ -169,7 +174,9 @@ module BambuCompanion
         client_id: MQTT::Client.generate_client_id("bambu-companion-", 8),
         username: config.username, password: secret
       ).tap do |client|
-        client.ssl_context.verify_mode = OpenSSL::SSL::VERIFY_NONE
+        TlsCertificate.configure_pinned_context(
+          client.ssl_context, config.mqtt_tls_fingerprint
+        )
       end
     end
   end

@@ -8,7 +8,7 @@ require "stringio"
 require "tmpdir"
 
 class SecretStoreTest < Minitest::Test
-  Result = Struct.new(:stdout, :stderr, :success?, keyword_init: true)
+  Result = Struct.new(:stdout, :stderr, :success?, :stdout_present?, keyword_init: true)
 
   class FakeWaiter
     attr_reader :join_timeouts, :pid, :value_calls
@@ -79,9 +79,11 @@ class SecretStoreTest < Minitest::Test
     assert_includes argv, "SERIAL1"
   end
 
-  def test_lookup_clear_and_unavailable_storage
+  def test_lookup_clear_all_and_unavailable_storage
     responses = [
       Result.new(stdout: "stored-code\n", stderr: "", success?: true),
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: true),
+      Result.new(stdout: "", stderr: "", success?: true),
       Result.new(stdout: "", stderr: "", success?: true)
     ]
     store = BambuCompanion::SecretStore.new(
@@ -90,7 +92,7 @@ class SecretStoreTest < Minitest::Test
     )
 
     assert_equal "stored-code", store.lookup("SERIAL1")
-    assert store.clear("SERIAL1")
+    assert store.clear_all
 
     missing = BambuCompanion::SecretStore.new(
       runner: ->(*) { raise "must not run" },
@@ -99,6 +101,116 @@ class SecretStoreTest < Minitest::Test
     refute missing.available?
     assert_nil missing.lookup("SERIAL1")
     refute missing.store("SERIAL1", "x")
+    refute missing.clear_all
+  end
+
+  def test_clear_all_unlocks_then_deletes_every_plugin_credential
+    calls = []
+    responses = [
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: true),
+      Result.new(stdout: "", stderr: "", success?: true),
+      Result.new(stdout: "", stderr: "", success?: true)
+    ]
+    store = BambuCompanion::SecretStore.new(
+      runner: lambda { |argv, stdin_data: "", capture_stdout: true|
+        calls << [argv, stdin_data, capture_stdout]
+        responses.shift
+      },
+      executable_resolver: ->(_name) { "/usr/bin/secret-tool" }
+    )
+
+    assert_respond_to store, :clear_all
+    assert store.clear_all
+    plugin_filter = ["application", BambuCompanion::SecretStore::PLUGIN_ID]
+    assert_equal ["/usr/bin/secret-tool", "search", "--all", "--unlock", *plugin_filter], calls[0][0]
+    assert_equal "", calls[0][1]
+    assert_equal false, calls[0][2]
+    assert_equal ["/usr/bin/secret-tool", "clear", *plugin_filter], calls[1][0]
+    assert_equal "", calls[1][1]
+    assert_equal 3, calls.length
+    assert_equal ["/usr/bin/secret-tool", "search", "--all", *plugin_filter], calls[2][0]
+    assert_equal false, calls[2][2]
+  end
+
+  def test_clear_all_does_not_claim_success_when_locked_items_cannot_be_removed
+    calls = []
+    responses = [
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: true),
+      Result.new(stdout: "", stderr: "", success?: false)
+    ]
+    store = BambuCompanion::SecretStore.new(
+      runner: lambda { |argv, **|
+        calls << argv
+        responses.shift
+      },
+      executable_resolver: ->(_name) { "/usr/bin/secret-tool" }
+    )
+
+    refute store.clear_all
+    assert_equal 2, calls.length
+    assert_equal "search", calls.first.fetch(1)
+    assert_equal "clear", calls.last.fetch(1)
+  end
+
+  def test_clear_all_detects_a_locked_credential_remaining_after_partial_clear
+    calls = []
+    responses = [
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: true),
+      Result.new(stdout: "", stderr: "", success?: true),
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: true)
+    ]
+    store = BambuCompanion::SecretStore.new(
+      runner: lambda { |argv, **|
+        calls << argv
+        responses.shift
+      },
+      executable_resolver: ->(_name) { "/usr/bin/secret-tool" }
+    )
+
+    refute store.clear_all
+    operations = calls.map { |argv| argv.fetch(1) }
+    assert_equal %w[search clear search], operations
+    refute_includes calls.last, "--unlock"
+  end
+
+  def test_clear_all_succeeds_without_delete_when_no_credentials_exist
+    calls = []
+    responses = [
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: false),
+      Result.new(stdout: "", stderr: "", success?: false)
+    ]
+    store = BambuCompanion::SecretStore.new(
+      runner: lambda { |argv, **|
+        calls << argv
+        responses.shift
+      },
+      executable_resolver: ->(_name) { "/usr/bin/secret-tool" }
+    )
+
+    assert store.clear_all
+    assert_equal 1, calls.length
+  end
+
+  def test_runner_can_drain_stdout_without_retaining_secrets
+    parameters = BambuCompanion::SecretStore.instance_method(:run_command).parameters
+    assert_includes parameters, [:key, :capture_stdout]
+
+    process_stdout = StringIO.new("secret-that-must-not-be-retained")
+    store = BambuCompanion::SecretStore.new(
+      executable_resolver: ->(_name) { "/usr/bin/secret-tool" },
+      process_spawner: lambda do |_argv|
+        status = Result.new(stdout: "", stderr: "", success?: true)
+        [StringIO.new, process_stdout, StringIO.new,
+         FakeWaiter.new(join_results: [true], status: status)]
+      end
+    )
+
+    result = store.send(:run_command, ["secret-tool"], stdin_data: "", capture_stdout: false)
+
+    assert result.success?
+    assert_empty result.stdout
+    assert result.stdout_present?
+    assert_equal process_stdout.size, process_stdout.pos
   end
 
   def test_rejects_oversized_secrets_from_lookup_and_store
@@ -161,11 +273,13 @@ class SecretStoreTest < Minitest::Test
     responses = [
       Result.new(stdout: "stored-code\n", stderr: "", success?: true),
       Result.new(stdout: "", stderr: "", success?: true),
+      Result.new(stdout: "", stderr: "", success?: true, stdout_present?: true),
+      Result.new(stdout: "", stderr: "", success?: true),
       Result.new(stdout: "", stderr: "", success?: true)
     ]
     path = "/custom/bin/secret-tool"
     store = BambuCompanion::SecretStore.new(
-      runner: lambda { |argv, stdin_data: ""|
+      runner: lambda { |argv, stdin_data: "", **|
         calls << [argv, stdin_data]
         responses.shift
       },
@@ -174,8 +288,8 @@ class SecretStoreTest < Minitest::Test
 
     assert_equal "stored-code", store.lookup("SERIAL1")
     assert store.store("SERIAL1", "secret-value")
-    assert store.clear("SERIAL1")
-    assert_equal([path, path, path], calls.map { |argv, _stdin_data| argv.first })
+    assert store.clear_all
+    assert_equal([path, path, path, path, path], calls.map { |argv, _stdin_data| argv.first })
     assert_equal 1, resolver_calls
   end
 

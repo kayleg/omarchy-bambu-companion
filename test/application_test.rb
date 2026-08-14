@@ -14,14 +14,14 @@ class ApplicationTest < Minitest::Test
   OLD_SECRET = "previous-secret-sentinel"
 
   class Secrets
-    attr_reader :lookups, :stored, :cleared, :available_calls
+    attr_reader :lookups, :stored, :clear_all_calls, :available_calls
 
     def initialize(values = {}, available: true)
-      @values = values
+      @values = values.dup
       @available = available
       @lookups = []
       @stored = []
-      @cleared = []
+      @clear_all_calls = 0
       @available_calls = 0
     end
 
@@ -40,8 +40,9 @@ class ApplicationTest < Minitest::Test
       @available
     end
 
-    def clear(serial)
-      @cleared << serial
+    def clear_all
+      @clear_all_calls += 1
+      @values.clear
       true
     end
   end
@@ -50,7 +51,7 @@ class ApplicationTest < Minitest::Test
     def available? = raise("must not query keyring")
     def lookup(*) = raise("must not query keyring")
     def store(*) = raise("must not query keyring")
-    def clear(*) = raise("must not query keyring")
+    def clear_all = raise("must not query keyring")
   end
 
   class Session
@@ -91,6 +92,41 @@ class ApplicationTest < Minitest::Test
     def run
       raise MQTT::ProtocolException, "Connection refused: not authorised"
     end
+  end
+
+  class TlsProbeFake
+    attr_reader :calls
+
+    def initialize(result = nil)
+      @result = result || {
+        "mqtt" => tls_identity("AA"),
+        "ftps" => tls_identity("BB")
+      }
+      @calls = Queue.new
+    end
+
+    def probe(**arguments)
+      @calls << arguments
+      @result
+    end
+
+    def self.tls_identity(byte)
+      {
+        "fingerprint" => byte * 32,
+        "commonName" => "SERIAL_1",
+        "issuer" => "CN=BBL CA",
+        "notBefore" => "2025-01-01T00:00:00Z",
+        "notAfter" => "2035-01-01T00:00:00Z"
+      }
+    end
+
+    class << self
+      private :tls_identity
+    end
+
+    private
+
+    def tls_identity(byte) = self.class.send(:tls_identity, byte)
   end
 
   class Worker
@@ -350,6 +386,94 @@ class ApplicationTest < Minitest::Test
     assert sessions.first.stopped
     assert workers.first.stopped
     refute_includes output.string, SECRET
+  end
+
+  def test_unpinned_legacy_configuration_never_starts_authenticated_transports
+    config = printer_config(
+      "mqttTlsFingerprint" => "", "ftpsTlsFingerprint" => ""
+    )
+    app, output, sessions, workers = build_app(
+      input: StringIO.new,
+      secrets: Secrets.new({ "0309C123456789" => SECRET })
+    )
+
+    app.handle("op" => "configure", "protocol" => 1, "config" => config)
+    app.send(:shutdown)
+
+    assert_empty sessions
+    assert_empty workers
+    assert(parsed_events(output).any? { |event| event["event"] == "tls_required" })
+    assert(parsed_events(output).any? do |event|
+      event["event"] == "secret_status" && event["stored"] == true
+    end)
+  end
+
+  def test_tls_probe_is_async_secret_free_and_returns_bounded_identities
+    probe = TlsProbeFake.new
+    config = printer_config(
+      "mqttTlsFingerprint" => "", "ftpsTlsFingerprint" => ""
+    )
+    app, output, = build_app(
+      input: StringIO.new, secrets: ForbiddenSecrets.new, tls_probe: probe
+    )
+
+    app.handle(
+      "op" => "probe_tls", "protocol" => 1, "requestId" => 7,
+      "config" => config
+    )
+    arguments = Timeout.timeout(1) { probe.calls.pop }
+    Timeout.timeout(1) do
+      Thread.pass while app.instance_variable_get(:@tls_probe_thread)&.alive?
+    end
+    app.send(:shutdown)
+
+    assert_equal "192.168.1.50", arguments.fetch(:host)
+    assert_equal 8883, arguments.fetch(:mqtt_port)
+    assert_equal 990, arguments.fetch(:ftps_port)
+    refute arguments.key?(:secret)
+    identity = parsed_events(output).find { |event| event["event"] == "tls_identity" }
+    refute_nil identity
+    assert_equal 7, identity.fetch("requestId")
+    assert_equal "AA" * 32, identity.dig("mqtt", "fingerprint")
+    refute_includes output.string, SECRET
+  end
+
+  def test_tls_probe_publication_uses_one_generation_gate
+    app, output, = build_app(input: StringIO.new, secrets: ForbiddenSecrets.new)
+    called = false
+
+    assert_includes app.private_methods, :publish_tls_probe
+    published = app.send(:publish_tls_probe, -1) { called = true }
+
+    refute published
+    refute called
+    refute(parsed_events(output).any? { |event| event["event"] == "tls_identity" })
+  ensure
+    app&.send(:shutdown)
+  end
+
+  def test_mqtt_certificate_change_is_a_non_retryable_tls_error
+    sessions = []
+    app, output, = build_app(
+      input: StringIO.new,
+      secrets: Secrets.new({ "0309C123456789" => SECRET }),
+      session_factory: lambda { |**arguments| sessions << Session.new(arguments); sessions.last }
+    )
+    app.handle("op" => "configure", "protocol" => 1, "config" => printer_config)
+
+    sessions.first.fail_with(
+      BambuCompanion::TlsCertificateError.new(
+        "certificate_changed", "Printer TLS certificate changed"
+      )
+    )
+    app.send(:shutdown)
+
+    error = parsed_events(output).find do |event|
+      event["event"] == "error" && event["scope"] == "tls"
+    end
+    refute_nil error
+    assert_equal "certificate_changed", error.fetch("code")
+    assert_equal false, error.fetch("retryable")
   end
 
   def test_installation_identity_is_stable_per_checkout_and_differs_for_a_reinstall
@@ -1197,14 +1321,14 @@ class ApplicationTest < Minitest::Test
 
   def test_clear_secret_false_reports_failure_without_claiming_storage_was_cleared
     secrets = Secrets.new({ "0309C123456789" => SECRET })
-    secrets.define_singleton_method(:clear) do |serial|
-      @cleared << serial
+    secrets.define_singleton_method(:clear_all) do
+      @clear_all_calls += 1
       false
     end
     app, output, sessions, workers = build_app(
       input: commands(
         { op: "configure", protocol: 1, config: printer_config },
-        { op: "clear_secret" },
+        { op: "clear_secret", requestId: 41 },
         { op: "shutdown" }
       ),
       secrets: secrets
@@ -1219,9 +1343,44 @@ class ApplicationTest < Minitest::Test
     failure = events.find { |event| event["code"] == "clear_failed" }
     refute_nil failure
     assert_equal "Unable to clear stored LAN access code", failure.fetch("message")
-    assert(events.any? { |event| event["event"] == "secret_required" })
+    assert_equal 41, failure.fetch("requestId")
+    required = events.find { |event| event["event"] == "secret_required" }
+    assert_equal 41, required.fetch("requestId")
     assert sessions.first.stopped
     assert workers.first.stopped
+  end
+
+  def test_clear_secret_rejects_an_invalid_request_id_without_clearing
+    secrets = Secrets.new({ "0309C123456789" => SECRET })
+    app, output, = build_app(
+      input: commands(
+        { op: "configure", protocol: 1, config: printer_config },
+        { op: "clear_secret", requestId: "41" },
+        { op: "shutdown" }
+      ),
+      secrets: secrets
+    )
+
+    app.run
+
+    error = parsed_events(output).find { |event| event["code"] == "invalid_config" }
+    assert_equal "requestId is invalid", error.fetch("message")
+    assert_equal 0, secrets.clear_all_calls
+  end
+
+  def test_clear_secret_invalid_state_echoes_the_request_id
+    app, output, = build_app(
+      input: commands(
+        { op: "clear_secret", requestId: 44 },
+        { op: "shutdown" }
+      )
+    )
+
+    app.run
+
+    error = parsed_events(output).find { |event| event["code"] == "invalid_state" }
+    assert_equal 44, error.fetch("requestId")
+    refute(parsed_events(output).any? { |event| event["event"] == "secret_required" })
   end
 
   private
@@ -1320,13 +1479,13 @@ class ApplicationTest < Minitest::Test
 
   def test_clear_secret_exception_is_generic_and_still_requests_a_secret
     secrets = Secrets.new({ "0309C123456789" => SECRET })
-    secrets.define_singleton_method(:clear) do |_serial|
+    secrets.define_singleton_method(:clear_all) do
       raise "keyring exposed #{SECRET}"
     end
     app, output, = build_app(
       input: commands(
         { op: "configure", protocol: 1, config: printer_config },
-        { op: "clear_secret" },
+        { op: "clear_secret", requestId: 42 },
         { op: "shutdown" }
       ),
       secrets: secrets
@@ -1340,7 +1499,9 @@ class ApplicationTest < Minitest::Test
     end)
     failure = events.find { |event| event["code"] == "clear_failed" }
     assert_equal "Unable to clear stored LAN access code", failure.fetch("message")
-    assert(events.any? { |event| event["event"] == "secret_required" })
+    assert_equal 42, failure.fetch("requestId")
+    required = events.find { |event| event["event"] == "secret_required" }
+    assert_equal 42, required.fetch("requestId")
     refute_includes output.string, SECRET
   end
 
@@ -1349,7 +1510,7 @@ class ApplicationTest < Minitest::Test
     app, output, = build_app(
       input: commands(
         { op: "configure", protocol: 1, config: printer_config },
-        { op: "clear_secret" },
+        { op: "clear_secret", requestId: 43 },
         { op: "shutdown" }
       ),
       secrets: secrets
@@ -1360,9 +1521,32 @@ class ApplicationTest < Minitest::Test
     events = parsed_events(output)
     statuses = events.select { |event| event["event"] == "secret_status" }
     assert_equal([true, false], statuses.map { |event| event.fetch("stored") })
+    assert_equal 43, statuses.last.fetch("requestId")
     refute(events.any? { |event| event["code"] == "clear_failed" })
-    assert(events.any? { |event| event["event"] == "secret_required" })
-    assert_equal ["0309C123456789"], secrets.cleared
+    required = events.find { |event| event["event"] == "secret_required" }
+    assert_equal 43, required.fetch("requestId")
+    assert_equal 1, secrets.clear_all_calls
+  end
+
+  def test_disconnect_clears_credentials_for_current_and_previous_serials
+    first_serial = "0309C123456789"
+    second_serial = "SECOND_SERIAL"
+    secrets = Secrets.new({ first_serial => OLD_SECRET, second_serial => SECRET })
+    app, = build_app(
+      input: commands(
+        { op: "configure", protocol: 1, config: printer_config("serial" => first_serial) },
+        { op: "configure", protocol: 1, config: printer_config("serial" => second_serial) },
+        { op: "clear_secret", requestId: 45 },
+        { op: "shutdown" }
+      ),
+      secrets: secrets
+    )
+
+    app.run
+
+    assert_equal 1, secrets.clear_all_calls
+    assert_nil secrets.lookup(first_serial)
+    assert_nil secrets.lookup(second_serial)
   end
 
   def test_malformed_unknown_and_wrong_protocol_commands_emit_stable_errors_and_continue

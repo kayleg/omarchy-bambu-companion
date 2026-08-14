@@ -16,14 +16,142 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes source, "signal saveRequested(var draft, string accessCode)"
     assert_includes source, "property bool allowBack: true"
     assert_includes source, "property bool requireAccessCode: false"
+    assert_includes source, "property bool canDisconnect: false"
     assert_includes source, 'text: "SETTINGS"'
     refute_includes source, "OMARCHY QUATTRO // CONFIG"
     assert_includes source, "signal forgetCodeRequested()"
     assert_includes source, "signal inputFocusReleased()"
+    assert_includes source, "signal trustRequested(var draft, string accessCode)"
+    assert_includes source, "signal disconnectRequested()"
     assert_includes source, "function load(draft)"
     assert_includes source, "function clearAccessCode()"
     assert_includes source, "readonly property bool inputActive:"
     assert_match(/Keys\.onEscapePressed:.*inputFocusReleased\(\)/m, source)
+  end
+
+  def test_security_dialog_is_centered_bounded_and_modal
+    path = File.join(@root, "BambuSecurityDialog.qml")
+
+    assert File.exist?(path), "BambuSecurityDialog.qml must exist"
+    source = File.read(path)
+    assert_includes source, 'property string mode: ""'
+    assert_includes source, "property bool probing: false"
+    assert_includes source, "property bool processing: false"
+    assert_includes source, "signal cancelRequested()"
+    assert_includes source, "signal trustRequested()"
+    assert_includes source, "signal disconnectRequested()"
+    assert_match(/Keys\.onEscapePressed:.*cancelRequested\(\).*event\.accepted = true/m,
+                 source)
+    assert_match(/id: modalScrim.*anchors\.fill: parent.*onClicked: dialog\.cancelRequested\(\)/m,
+                 source)
+    assert_match(/id: dialogCard.*anchors\.centerIn: parent.*width: Math\.min\(.*parent\.width.*height: Math\.min\(.*parent\.height/m,
+                 source)
+    assert_match(/id: dialogBody.*Flickable\.VerticalFlick.*clip: true/m, source)
+    assert_match(/id: cardInputBlocker.*anchors\.fill: parent.*onClicked: function\(mouse\).*mouse\.accepted = true/m,
+                 source)
+    assert_includes source,
+                    'text: dialog.certificateMode ? "TRUST & CONNECT" : "DISCONNECT"'
+    assert_includes source, "identity: dialog.mqttIdentity"
+    assert_includes source, "identity: dialog.ftpsIdentity"
+    assert_match(/Keys\.onEscapePressed:.*if \(!dialog\.processing\) cancelRequested\(\)/m,
+                 source)
+    assert_match(/id: modalScrim.*if \(!dialog\.processing\) dialog\.cancelRequested\(\)/m,
+                 source)
+    assert_match(/id: actionButton.*visible: !dialog\.probing && !dialog\.processing/m,
+                 source)
+  end
+
+  def test_tls_identity_requires_an_explicit_trust_action
+    settings = settings_source
+    widget = File.read(File.join(@root, "BambuWidget.qml"))
+
+    refute_includes settings, "tlsIdentityPanel"
+    refute_includes settings, 'text: "PRINTER CERTIFICATE"'
+    assert_match(/trustCertificate === true.*trustRequested\(draft, String\(accessCodeInput\.text \|\| ""\)\)/m,
+                 settings)
+
+    assert_includes widget, 'property string mqttTlsFingerprint:'
+    assert_includes widget, 'property string ftpsTlsFingerprint:'
+    assert_match(/function beginTlsProbe\(draft\).*"op": "probe_tls".*"requestId":.*"config":/m,
+                 widget)
+    probe_body = widget[/function beginTlsProbe\(draft\) \{.*?\n  \}/m]
+    refute_nil probe_body
+    refute_match(/accessCode|password|secret/i, probe_body)
+    assert_match(/message\.event === "tls_identity".*tlsApprovalRequired = true/m,
+                 widget)
+    assert_match(/function trustAndConnect\(draft, accessCode\).*mqttTlsFingerprint.*ftpsTlsFingerprint.*persistSettings/m,
+                 widget)
+    assert_match(/BambuSecurityDialog\s*\{.*mode: root\.securityModalMode.*onTrustRequested: settingsView\.submit\(true\)/m,
+                 widget)
+  end
+
+  def test_tls_identity_rows_share_one_bounded_presentation_component
+    source = File.read(File.join(@root, "BambuSecurityDialog.qml"))
+    component = source[/component IdentityBlock: Column \{.*?\n  \}\n\n  Rectangle/m]
+    instances = source.scan(/^\s{8}IdentityBlock \{.*?^\s{8}\}/m)
+
+    refute_nil component
+    assert_includes component, "required property var identity"
+    assert_includes component, "required property string title"
+    assert_includes component, "width: parent ? parent.width : implicitWidth"
+    assert_includes component, "dialog.tlsFingerprint(parent.identity)"
+    assert_includes component, "dialog.tlsDescription(parent.identity)"
+    assert_equal 2, instances.length
+    assert_includes instances.fetch(0), "identity: dialog.mqttIdentity"
+    assert_includes instances.fetch(0),
+                    'title: dialog.sharedTlsCertificate ? "MQTT + FTPS" : "MQTT"'
+    assert_includes instances.fetch(1),
+                    "visible: dialog.certificateMode && !dialog.probing"
+    assert_includes instances.fetch(1), "identity: dialog.ftpsIdentity"
+    assert_includes instances.fetch(1), 'title: "FTPS"'
+  end
+
+  def test_unpinned_or_rejected_certificate_forces_setup_without_overwriting_pins
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, "readonly property bool hasTrustedTlsPins:"
+    assert_match(/readonly property bool requiresSetupConfirmation:.*!root\.hasTrustedTlsPins/m,
+                 source)
+    assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*beginTlsProbe\(draft\).*return/m,
+                 source)
+    assert_match(/message\.scope === "tls".*message\.code === "certificate_changed".*handleTlsMismatch/m,
+                 source)
+    refute_match(/message\.event === "tls_identity".*persistSettings/m, source)
+  end
+
+  def test_repeated_ftps_mismatch_does_not_reload_the_form_while_user_reapproves
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+    body = source[/function handleTlsMismatch\(message\) \{.*?\n  \}/m]
+
+    refute_nil body
+    assert_includes body, "if (root.tlsRejected) return"
+  end
+
+  def test_editing_the_target_after_a_probe_discards_the_stale_approval
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+    body = source[/function trustAndConnect\(draft, accessCode\) \{.*?\n  \}/m]
+
+    refute_nil body
+    assert_includes body,
+                    "root.tlsTarget(draft) !== root.tlsTarget(root.pendingTlsDraft)"
+    assert_operator body.index("clearTlsProbeState()"), :<,
+                    body.index("saveSettings(draft, accessCode)")
+  end
+
+  def test_runtime_reset_cancels_transient_certificate_probe_state
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+    helper = source[/function clearTlsProbeState\(\) \{.*?\n  \}/m]
+    reset = source[/function resetOperationalState\(\) \{.*?\n  \}/m]
+
+    refute_nil helper
+    assert_includes helper, "tlsProbePending = false"
+    assert_includes helper, "tlsApprovalRequired = false"
+    assert_includes helper, "mqttTlsIdentity = ({})"
+    assert_includes helper, "ftpsTlsIdentity = ({})"
+    assert_includes helper, "pendingTlsDraft = ({})"
+    refute_includes helper, "tlsRejected = false"
+    assert_includes reset, "clearTlsProbeState()"
+    assert_operator source.scan("clearTlsProbeState()").length, :>=, 5
   end
 
   def test_secret_status_is_explicit_and_replacement_never_reads_the_saved_code
@@ -103,7 +231,8 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/id: preferencesGrid.*id: barSummaryColumn.*id: barSummarySwitch/m,
                  source)
-    assert_match(/id: settingsFooter.*text: "SAVE & CONNECT"/m, source)
+    assert_match(/id: settingsFooter.*Row\s*\{.*id: disconnectButton.*text: "DISCONNECT PRINTER".*id: saveButton.*text: "SAVE & CONNECT"/m,
+                 source)
     refute_match(/id: settingsFooter.*ToggleSwitch/m, source)
     refute_match(/parent\.width - \(form\.allowBack \? parent\.spacing \+ Style\.space\(70\) : 0\)/m, source)
   end
@@ -124,6 +253,24 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     refute_match(/Component\.onCompleted:.*viewMode = nextIdleView\(\)/m, source)
     assert_match(/function backToStatus\(\).*if \(!root\.connectionVerified\).*enterConnecting\(\).*return.*viewMode = "status"/m,
+                 source)
+  end
+
+  def test_forced_first_run_setup_remains_dismissible
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+    close_function = source[/function close\(\).*?function nextIdleView\(\)/m]
+    popup_handler = source[/onPopupOpenChanged:.*?onGcodeStateChanged:/m]
+    close_handler = source[/onCloseRequested:.*?Flickable \{/m]
+
+    assert_match(/function close\(\)\s*\{\s*if \(root\.disconnectPending\) return\s*root\.cancelSecurityModal\(\)\s*popupOpen = false/m,
+                 close_function)
+    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, close_function)
+    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, popup_handler)
+    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, close_handler)
+    assert_match(/if \(root\.viewMode === "settings" && root\.hasConnectionTarget\s*&& !root\.requiresSetupConfirmation\).*root\.backToStatus\(\).*else root\.close\(\)/m,
+                 close_handler)
+    assert_match(/allowBack: true/m, source)
+    assert_match(/onBackRequested:.*requiresSetupConfirmation.*root\.close\(\).*root\.backToStatus\(\)/m,
                  source)
   end
 
@@ -173,6 +320,8 @@ class QmlSettingsContractTest < Minitest::Test
 
     refute(keys.any? { |key| key.match?(/access|code|password|secret/i) })
     refute secret_values(bar_widget).any?
+    assert_includes keys, "mqttTlsFingerprint"
+    assert_includes keys, "ftpsTlsFingerprint"
   end
 
   def test_widget_integrates_navigation_and_atomic_quattro_persistence
@@ -232,7 +381,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/var draft = \{.*showBarSummary: form\.showBarSummary/m,
                  source)
-    assert_match(/id: settingsContent.*id: preferencesGrid.*id: barSummaryColumn.*text: "BAR SUMMARY".*ToggleSwitch\s*\{.*checked: form\.showBarSummary.*onToggled:.*form\.showBarSummary = !form\.showBarSummary.*form\.barSummaryToggled\(form\.showBarSummary\).*id: settingsFooter.*text: "SAVE & CONNECT"/m,
+    assert_match(/id: settingsContent.*id: preferencesGrid.*id: barSummaryColumn.*text: "BAR SUMMARY".*ToggleSwitch\s*\{.*checked: form\.showBarSummary.*onToggled:.*form\.showBarSummary = !form\.showBarSummary.*form\.barSummaryToggled\(form\.showBarSummary\).*id: settingsFooter.*"SAVE & CONNECT"/m,
                  source)
 
     widget = File.read(File.join(@root, "BambuWidget.qml"))
@@ -266,8 +415,77 @@ class QmlSettingsContractTest < Minitest::Test
 
     assert_match(/id: settingsButton.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,
                  telemetry)
-    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*BambuButton \{.*anchors\.left: parent\.left.*anchors\.right: parent\.right.*anchors\.bottom: parent\.bottom.*anchors\.margins: Style\.space\(12\).*height: Style\.space\(36\).*text: "SAVE & CONNECT"/m,
+    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*Row\s*\{.*anchors\.fill: parent.*anchors\.margins: Style\.space\(12\).*id: disconnectButton.*height: parent\.height.*id: saveButton.*height: parent\.height/m,
                  settings)
+  end
+
+  def test_security_modal_cancellation_invalidates_late_tls_probe_results
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, 'readonly property string securityModalMode:'
+    assert_match(/securityModalMode:.*disconnectConfirmationOpen \|\| root\.disconnectPending/m,
+                 source)
+    assert_match(/function cancelTlsApproval\(\).*tlsProbeRequestId = \(root\.tlsProbeRequestId \+ 1\).*clearTlsProbeState\(\)/m,
+                 source)
+    assert_match(/function cancelSecurityModal\(\).*disconnectConfirmationOpen.*cancelTlsApproval\(\)/m,
+                 source)
+    assert_match(/function close\(\).*cancelSecurityModal\(\).*popupOpen = false/m,
+                 source)
+    assert_match(/function close\(\).*if \(root\.disconnectPending\) return.*cancelSecurityModal\(\)/m,
+                 source)
+    assert_match(/BambuSecurityDialog\s*\{.*anchors\.fill: parent.*z: 40.*onCancelRequested: root\.cancelSecurityModal\(\)/m,
+                 source)
+    assert_match(/BambuSecurityDialog\s*\{.*processing: root\.disconnectPending/m,
+                 source)
+  end
+
+  def test_disconnect_confirmation_clears_connection_identity_but_preserves_preferences
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, "property int disconnectRequestId: 0"
+    assert_match(/function confirmDisconnect\(\).*disconnectRequestId = \(root\.disconnectRequestId \+ 1\).*disconnectPending = true.*"op": "clear_secret".*"requestId": root\.disconnectRequestId/m,
+                 source)
+    body = source[/function completeDisconnect\(\).*?\n  \}/m]
+    refute_nil body
+    assert_includes body, 'printerName: root.printerName'
+    assert_includes body, 'host: ""'
+    assert_includes body, "mqttPort: 8883"
+    assert_includes body, "ftpsPort: 990"
+    assert_includes body, 'serial: ""'
+    assert_includes body, 'username: "bblp"'
+    assert_includes body, "maxSegments: root.segmentLimit()"
+    assert_includes body, "accentColor: root.validAccentColor(root.accentColor)"
+    assert_includes body, "showBarSummary: root.showBarSummary"
+    assert_includes body, 'mqttTlsFingerprint: ""'
+    assert_includes body, 'ftpsTlsFingerprint: ""'
+    assert_includes body, 'installationId: ""'
+    assert_operator body.index("persistSettings(reset)"), :<,
+                    body.index('viewMode = "setup"')
+    assert_match(/message\.event === "secret_status".*disconnectPending.*message\.requestId === root\.disconnectRequestId.*message\.stored === false.*completeDisconnect\(\)/m,
+                 source)
+    assert_match(/message\.event === "secret_required".*disconnectPending.*message\.requestId === root\.disconnectRequestId.*completeDisconnect\(\)/m,
+                 source)
+    assert_match(/message\.event === "error".*root\.disconnectPending.*message\.requestId === root\.disconnectRequestId.*message\.scope === "secret".*message\.code === "clear_failed".*failDisconnect\("LAN access code could not be removed"\)/m,
+                 source)
+    assert_match(/message\.event === "error".*root\.disconnectPending.*message\.requestId === root\.disconnectRequestId.*message\.scope === "secret".*failDisconnect\(/m,
+                 source)
+    assert_match(/function persistSettings\(draft\).*draft\.installationId === undefined.*root\.installationId.*String\(draft\.installationId \|\| ""\)/m,
+                 source)
+    failure = source[/function failDisconnect\(message\) \{.*?\n  \}/m]
+    refute_nil failure
+    refute_includes failure, "openSettings()"
+    assert_includes failure, 'viewMode = "settings"'
+  end
+
+  def test_panel_close_request_cancels_the_active_security_modal_first
+    source = File.read(File.join(@root, "BambuWidget.qml"))
+    handler = source[/onCloseRequested: \{.*?\n      \}/m]
+
+    refute_nil handler
+    assert_match(/if \(root\.securityModalMode !== ""\).*root\.cancelSecurityModal\(\)/m,
+                 handler)
+    assert_operator handler.index("securityModalMode"), :<,
+                    handler.index('viewMode === "settings"')
   end
 
   def test_new_plugin_install_forces_confirmation_before_connecting
@@ -280,9 +498,9 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/message\.event === "hello".*installationId = String\(message\.installationId \|\| ""\).*installationIdentified = installationId !== "".*if \(root\.requiresSetupConfirmation\).*openSettings\(\).*popupOpen = true.*sendConfiguration\(\).*return/m,
                  source)
-    assert_match(/function persistSettings\(draft\).*entry\.installationId = root\.installationId/m,
+    assert_match(/function persistSettings\(draft\).*entry\.installationId = draft\.installationId === undefined.*root\.installationId/m,
                  source)
-    assert_match(/function saveSettings\(draft, accessCode\).*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*if \(backendChanged\) sendConfiguration\(\)/m,
+    assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*beginTlsProbe\(draft\).*return.*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*if \(backendChanged\) sendConfiguration\(draft\)/m,
                  source)
     assert_match(/function persistSettings\(draft\).*persistingSettings = true.*root\.settings = entry.*updateEntryInline.*persistingSettings = false/m,
                  source)
@@ -313,10 +531,12 @@ class QmlSettingsContractTest < Minitest::Test
   def test_accent_only_save_does_not_restart_the_backend_runtime
     source = File.read(File.join(@root, "BambuWidget.qml"))
 
-    assert_match(/function backendSettingsChanged\(draft\).*host.*mqttPort.*ftpsPort.*serial.*username.*maxSegments/m,
-                 source)
-    refute_match(/function backendSettingsChanged\(draft\).*accentColor/m, source)
-    assert_match(/function saveSettings\(draft, accessCode\).*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*if \(backendChanged\) sendConfiguration\(\)/m,
+    backend_change = source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
+    refute_nil backend_change
+    assert_match(/host.*mqttPort.*ftpsPort.*serial.*username.*maxSegments/m,
+                 backend_change)
+    refute_match(/accentColor/, backend_change)
+    assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*mqttTlsFingerprint = root\.mqttTlsFingerprint.*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*if \(backendChanged\) sendConfiguration\(draft\)/m,
                  source)
   end
 
@@ -353,6 +573,8 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/reflow.*inside the panel margins/im, readme)
     assert_match(/leave.*code.*blank.*keep/im, readme)
     assert_match(/replace/im, readme)
+    assert_match(/Disconnect printer.*confirmation.*preserv.*visual preferences/im,
+                 readme)
   end
 
   private

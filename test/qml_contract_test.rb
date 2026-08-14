@@ -80,7 +80,7 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_configuration_is_sent_only_after_hello
-    assert_match(/function sendConfiguration\(\)\s*{\s*if \(!daemonReady \|\| !root\.hasConnectionTarget\) return/m, @source)
+    assert_match(/function sendConfiguration\(draft\)\s*{\s*if \(!daemonReady \|\| !root\.hasConnectionTarget\) return/m, @source)
     assert_match(/message\.event === "hello".*daemonReady = Number\(message\.protocol\) === 1.*installationId = String\(message\.installationId \|\| ""\).*sendConfiguration\(\)/m,
                  @source)
     assert_includes @source, '"op": "configure"'
@@ -359,7 +359,8 @@ class QmlContractTest < Minitest::Test
     manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
     settings = manifest.fetch("barWidget").fetch("schema").map { |entry| entry.fetch("key") }
 
-    assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments accentColor showBarSummary], settings
+    assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments accentColor showBarSummary
+                    mqttTlsFingerprint ftpsTlsFingerprint], settings
     refute(settings.any? { |key| key.match?(/access|code|password|secret/i) })
     settings.each { |key| assert_includes @source, "setting(\"#{key}\"," }
   end

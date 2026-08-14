@@ -8,7 +8,9 @@ module BambuCompanion
   module TestFixtures
     PRINTER_CONFIG = {
       "host" => "192.168.1.50",
-      "serial" => "0309C123456789"
+      "serial" => "0309C123456789",
+      "mqttTlsFingerprint" => "11" * 32,
+      "ftpsTlsFingerprint" => "22" * 32
     }.freeze
   end
 end

@@ -12,7 +12,7 @@ module BambuCompanion
     MAX_CAPTURE_BYTES = 4096
     READ_CHUNK_BYTES = 4096
 
-    CommandResult = Struct.new(:stdout, :success?, keyword_init: true)
+    CommandResult = Struct.new(:stdout, :success?, :stdout_present?, keyword_init: true)
 
     def initialize(runner: nil, executable_resolver: nil,
                    timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
@@ -64,11 +64,27 @@ module BambuCompanion
       false
     end
 
-    def clear(serial)
+    def clear_all
       path = secret_tool_path
       return false unless path
 
-      @runner.call([path, "clear", *attributes(serial)], stdin_data: "").success?
+      unlocked = @runner.call(
+        [path, "search", "--all", "--unlock", "application", PLUGIN_ID],
+        stdin_data: "", capture_stdout: false
+      )
+      return false unless unlocked.success?
+      return true unless unlocked.stdout_present?
+
+      cleared = @runner.call(
+        [path, "clear", "application", PLUGIN_ID], stdin_data: ""
+      )
+      return false unless cleared.success?
+
+      remaining = @runner.call(
+        [path, "search", "--all", "application", PLUGIN_ID],
+        stdin_data: "", capture_stdout: false
+      )
+      remaining.success? && !remaining.stdout_present?
     rescue SystemCallError
       false
     end
@@ -89,7 +105,7 @@ module BambuCompanion
       !secret.empty? && secret.bytesize <= MAX_SECRET_BYTES
     end
 
-    def run_command(argv, stdin_data:)
+    def run_command(argv, stdin_data:, capture_stdout: true)
       process_stdin = process_stdout = process_stderr = waiter = nil
       stdout_reader = stderr_reader = nil
       cleanup_started = false
@@ -97,7 +113,7 @@ module BambuCompanion
       process_reaped = false
 
       process_stdin, process_stdout, process_stderr, waiter = @process_spawner.call(argv)
-      stdout_reader = read_in_background(process_stdout)
+      stdout_reader = read_in_background(process_stdout, capture: capture_stdout)
       stderr_reader = read_in_background(process_stderr)
       process_stdin.write(stdin_data)
       safely_close(process_stdin)
@@ -111,16 +127,19 @@ module BambuCompanion
         process_reaped = !status.nil?
       end
 
-      stdout = collect_reader(stdout_reader, process_stdout)
+      stdout_result = collect_reader(stdout_reader, process_stdout)
       collect_reader(stderr_reader, process_stderr)
-      CommandResult.new(stdout: stdout, success?: !!status&.success?)
+      CommandResult.new(
+        stdout: capture_stdout ? stdout_result : "",
+        success?: !!status&.success?, stdout_present?: !stdout_result.empty?
+      )
     rescue StandardError
       if waiter && !cleanup_started
         cleanup_started = true
         process_reaped = !terminate_and_reap(waiter).nil?
         cleanup_completed = true
       end
-      CommandResult.new(stdout: "", success?: false)
+      CommandResult.new(stdout: "", success?: false, stdout_present?: false)
     ensure
       Thread.handle_interrupt(Interrupt => :never) do
         if waiter && !process_reaped && !cleanup_completed
@@ -145,19 +164,23 @@ module BambuCompanion
       Open3.popen3(*argv)
     end
 
-    def read_in_background(io)
-      Thread.new { read_bounded(io) }
+    def read_in_background(io, capture: true)
+      Thread.new { read_bounded(io, capture: capture) }
     end
 
-    def read_bounded(io)
+    def read_bounded(io, capture: true)
       captured = String.new(encoding: Encoding::BINARY)
+      saw_output = false
       loop do
         chunk = io.readpartial(READ_CHUNK_BYTES)
+        saw_output = true unless chunk.empty?
+        next unless capture
+
         remaining = MAX_CAPTURE_BYTES - captured.bytesize
         captured << chunk.byteslice(0, remaining) if remaining.positive?
       end
     rescue EOFError
-      captured
+      capture ? captured : (saw_output ? "1" : "")
     rescue StandardError
       ""
     end

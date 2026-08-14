@@ -15,6 +15,7 @@ Item {
   property bool daemonReady: false
   property bool allowBack: true
   property bool requireAccessCode: false
+  property bool canDisconnect: false
   property bool secretRequired: false
   property bool secretStored: false
   property bool secretStatusKnown: false
@@ -29,6 +30,8 @@ Item {
 
   signal backRequested()
   signal saveRequested(var draft, string accessCode)
+  signal trustRequested(var draft, string accessCode)
+  signal disconnectRequested()
   signal forgetCodeRequested()
   signal barSummaryToggled(bool enabled)
   signal inputFocusReleased()
@@ -79,7 +82,7 @@ Item {
     return number
   }
 
-  function submit() {
+  function submit(trustCertificate) {
     validationError = ""
     var nextHost = String(hostInput.text || "").trim()
     if (!nextHost || nextHost.length > 255 || /[\x00-\x1f\x7f]/.test(nextHost)) {
@@ -147,7 +150,11 @@ Item {
       accentColor: nextAccentColor,
       showBarSummary: form.showBarSummary
     }
-    saveRequested(draft, String(accessCodeInput.text || ""))
+    if (trustCertificate === true) {
+      trustRequested(draft, String(accessCodeInput.text || ""))
+    } else {
+      saveRequested(draft, String(accessCodeInput.text || ""))
+    }
   }
 
   component FieldLabel: Text {
@@ -395,7 +402,7 @@ Item {
             : "Leave blank to keep the current code"
           foreground: form.foreground
           accent: form.accent
-          onAccepted: form.submit()
+          onAccepted: form.submit(false)
         }
 
         BambuButton {
@@ -510,18 +517,35 @@ Item {
                      form.foreground.b, 0.12)
     }
 
-    BambuButton {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.bottom: parent.bottom
+    Row {
+      anchors.fill: parent
       anchors.margins: Style.space(12)
-      height: Style.space(36)
-      clip: true
-      text: "SAVE & CONNECT"
-      foreground: form.foreground
-      accent: form.accent
-      bordered: true
-      onClicked: form.submit()
+      spacing: Style.space(8)
+
+      BambuButton {
+        id: disconnectButton
+        width: Math.max(0, (parent.width - parent.spacing) / 2)
+        height: parent.height
+        clip: true
+        enabled: form.canDisconnect
+        text: "DISCONNECT PRINTER"
+        foreground: enabled ? form.errorColor : form.dim
+        accent: form.errorColor
+        bordered: true
+        onClicked: form.disconnectRequested()
+      }
+
+      BambuButton {
+        id: saveButton
+        width: Math.max(0, (parent.width - parent.spacing) / 2)
+        height: parent.height
+        clip: true
+        text: "SAVE & CONNECT"
+        foreground: form.foreground
+        accent: form.accent
+        bordered: true
+        onClicked: form.submit(false)
+      }
     }
   }
 }

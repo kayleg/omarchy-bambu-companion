@@ -378,10 +378,12 @@ class MqttSessionTest < Minitest::Test
     assert_nil session.instance_variable_get(:@reader_thread)
   end
 
-  def test_default_client_uses_scoped_mqtts_credentials_and_no_certificate_verification
+  def test_default_client_uses_scoped_mqtts_credentials_and_pinned_certificate
     config = BambuCompanion::Config.from_h(
       "host" => "printer.local", "mqttPort" => 18_883,
-      "serial" => "SERIAL_1", "username" => "lan-user"
+      "serial" => "SERIAL_1", "username" => "lan-user",
+      "mqttTlsFingerprint" => "AB" * 32,
+      "ftpsTlsFingerprint" => "CD" * 32
     )
     session = BambuCompanion::MqttSession.new(
       config: config, secret: "memory-secret", on_report: ->(*) {},
@@ -394,7 +396,8 @@ class MqttSessionTest < Minitest::Test
     assert_equal 18_883, client.port
     assert client.ssl
     refute client.verify_host
-    assert_equal OpenSSL::SSL::VERIFY_NONE, client.ssl_context.verify_mode
+    assert_equal OpenSSL::SSL::VERIFY_PEER, client.ssl_context.verify_mode
+    assert client.ssl_context.verify_callback
     assert_equal "lan-user", client.username
     assert_equal "memory-secret", client.password
     assert_equal 8, client.connect_timeout
@@ -402,5 +405,59 @@ class MqttSessionTest < Minitest::Test
     assert_equal 15, client.keep_alive
     assert client.clean_session
     assert_match(/\Abambu-companion-/, client.client_id)
+  end
+
+  def test_pin_mismatch_is_translated_before_mqtt_credentials_can_be_accepted
+    config = test_printer_config
+    client = FailingClient.new(
+      OpenSSL::SSL::SSLError.new("certificate verify failed untrusted-data")
+    )
+    context = OpenSSL::SSL::SSLContext.new
+    BambuCompanion::TlsCertificate.configure_pinned_context(
+      context, config.mqtt_tls_fingerprint
+    )
+    verifier = context.instance_variable_get(
+      BambuCompanion::TlsCertificate::VERIFIER_IVAR
+    )
+    verifier.instance_variable_set(:@rejected, true)
+    client.define_singleton_method(:ssl_context) { context }
+    session = BambuCompanion::MqttSession.new(
+      config: config, secret: "memory-secret", on_report: ->(*) {},
+      on_connection: ->(*) {}, on_error: ->(*) {},
+      client_factory: ->(*) { client }
+    )
+
+    error = assert_raises(BambuCompanion::TlsCertificateError) do
+      session.connect_once
+    end
+
+    assert_equal "certificate_changed", error.code
+    refute_includes error.full_message, "untrusted-data"
+  end
+
+  def test_certificate_change_stops_the_retry_loop
+    config = test_printer_config
+    error = BambuCompanion::TlsCertificateError.new(
+      "certificate_changed", "Printer TLS certificate changed"
+    )
+    attempts = 0
+    session = BambuCompanion::MqttSession.new(
+      config: config, secret: "memory-secret", on_report: ->(*) {},
+      on_connection: ->(*) {}, on_error: ->(*) {},
+      client_factory: lambda do |*|
+        attempts += 1
+        FailingClient.new(error)
+      end,
+      jitter: -> { 0.0 }
+    )
+
+    runner = Thread.new { session.run }
+
+    refute_nil runner.join(0.2), "certificate mismatch entered MQTT backoff"
+    assert_equal 1, attempts
+  ensure
+    session&.stop
+    runner&.kill
+    runner&.join
   end
 end

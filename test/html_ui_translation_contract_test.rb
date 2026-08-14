@@ -98,7 +98,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
     load_body = source[/function load\(draft\) \{.*?\n  \}/m]
     refute_nil load_body
     assert_includes load_body, "resetScroll()"
-    assert_includes source, 'text: "SAVE & CONNECT"'
+    assert_includes source, '"SAVE & CONNECT"'
     assert_includes source, 'text: "FORGET CODE"'
     refute_includes source, "advancedOpen"
     refute_match(/demoMode|Offline demo|demoToggle/i, source)

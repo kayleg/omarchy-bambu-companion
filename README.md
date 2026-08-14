@@ -40,7 +40,15 @@ only then does the live dashboard appear.
    LAN access code from the printer's network settings.
 2. Open the Bambu Companion widget.
 3. Enter the printer address, serial number and LAN access code.
-4. Select **Save & Connect**.
+4. Select **Save & Connect** to check the printer certificate. No LAN code is
+   sent during this check.
+5. Review the SHA-256 identity shown for MQTT and FTPS, then select
+   **Trust & Connect** to approve it and start the authenticated connection.
+
+Use a trusted local network for this first approval. Existing installations
+without saved certificate identities must approve their printer once after
+updating; later connections are automatic while those identities remain the
+same.
 
 The exact printer menu names vary by model and firmware. This plugin uses the
 local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
@@ -70,6 +78,10 @@ When a code is already available, Settings reports whether it is stored in
 GNOME Keyring or active only for the current session. Leave the code field
 blank to keep it, enter another code to replace it, or use **Forget code** to
 remove it.
+
+**Disconnect printer** asks for confirmation, then removes the printer address,
+serial number, trusted certificates and LAN code. It preserves the printer
+name and visual preferences so the plugin is ready for a new connection.
 
 ## Features
 
@@ -137,8 +149,9 @@ telemetry used by Bambu Handy is outside this plugin's scope.
 ## Security and local storage
 
 - The plugin does not overwrite user configuration without explicit consent:
-  printer settings are written only with **Save & Connect**, and the bar-summary
-  preference only when its toggle is changed.
+  printer settings are written only with **Save & Connect** or
+  **Trust & Connect**, cleared only after confirming **Disconnect printer**, and
+  the bar-summary preference changes only when its toggle is changed.
 - The LAN access code is never stored in plugin settings, the repository,
   process arguments or normal logs.
 - `secret-tool` stores the code in GNOME Keyring when available. Otherwise it
@@ -149,10 +162,13 @@ telemetry used by Bambu Handy is outside this plugin's scope.
   parsing, cancellation or failure. No persistent print-file cache is kept.
 - Only the simplified geometry remains in memory and is replaced by the next
   model generation.
-
-Bambu printers use local self-signed certificates. Certificate and hostname
-verification are therefore disabled only for the configured printer's MQTT
-and FTPS TLS sessions. Use the plugin on a trusted LAN.
+- Bambu printers use local self-signed certificates, so the plugin applies
+  explicit trust on first use instead of relying on a public certificate
+  authority. It records independent SHA-256 certificate identities for MQTT
+  and FTPS only after **Trust & Connect**.
+- Every authenticated MQTT and FTPS TLS connection must match its saved
+  identity. If either certificate changes, the plugin blocks reconnecting and
+  requires a new explicit review; it never replaces an identity automatically.
 
 ## Requirements
 
@@ -182,6 +198,9 @@ omarchy restart shell
 - Confirm that local printer access is enabled and both devices share a LAN.
 - Replace the saved code if the printer generated a new one.
 - Check that a firewall is not blocking TCP ports `8883` and `990`.
+- If a certificate-change warning appears after a printer reset or firmware
+  change, confirm that the address still targets your printer before approving
+  the new SHA-256 identity.
 
 ### The model is unavailable
 

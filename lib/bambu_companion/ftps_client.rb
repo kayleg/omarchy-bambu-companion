@@ -4,8 +4,30 @@ require "net/ftp"
 require "openssl"
 require "tempfile"
 require "uri"
+require_relative "tls_certificate"
 
 module BambuCompanion
+  module PinnedFtpsTransport
+    private
+
+    def start_tls_session(socket)
+      tls_socket = OpenSSL::SSL::SSLSocket.new(socket, @ssl_context)
+      tls_socket.sync_close = true
+      tls_socket.hostname = @host if tls_socket.respond_to?(:hostname=)
+      if @ssl_session &&
+         Process.clock_gettime(Process::CLOCK_REALTIME) <
+         @ssl_session.time.to_f + @ssl_session.timeout
+        tls_socket.session = @ssl_session
+      end
+      ssl_socket_connect(tls_socket, @ssl_handshake_timeout || @open_timeout)
+      # Exact leaf pinning authenticates the endpoint even though Bambu's
+      # certificate hostname is its serial number rather than the configured IP.
+      tls_socket
+    rescue OpenSSL::SSL::SSLError => error
+      TlsCertificate.raise_if_pin_rejected!(@ssl_context, error)
+    end
+  end
+
   class FtpsError < StandardError
     attr_reader :code
 
@@ -28,13 +50,15 @@ module BambuCompanion
                    sleeper: ->(seconds) { sleep(seconds) }, attempts: 3,
                    max_list_entries: DEFAULT_MAX_LIST_ENTRIES,
                    max_list_bytes: DEFAULT_MAX_LIST_BYTES,
-                   max_list_line_bytes: DEFAULT_MAX_LIST_LINE_BYTES)
+                   max_list_line_bytes: DEFAULT_MAX_LIST_LINE_BYTES,
+                   ftp_class: Net::FTP)
       @config = config
       @secret = String(secret)
       @max_bytes = Integer(max_bytes)
       raise ArgumentError, "max_bytes must be positive" unless @max_bytes.positive?
 
       @ftp_factory = ftp_factory || method(:open_ftp)
+      @ftp_class = ftp_class
       @sleeper = sleeper
       @attempts = Integer(attempts)
       raise ArgumentError, "attempts must be positive" unless @attempts.positive?
@@ -99,6 +123,8 @@ module BambuCompanion
       remote
     rescue FtpsError
       raise
+    rescue TlsCertificateError => error
+      raise FtpsError.new(error.code, error.message), cause: nil
     rescue StandardError
       raise FtpsError.new("transport", "FTPS transfer failed"), cause: nil
     ensure
@@ -384,11 +410,7 @@ module BambuCompanion
     end
 
     def open_ftp(config, secret)
-      ftp = Net::FTP.new(
-        nil, ssl: { verify_mode: OpenSSL::SSL::VERIFY_NONE },
-        implicit_ftps: true, private_data_connection: false, passive: true,
-        open_timeout: 8, read_timeout: 30, ssl_handshake_timeout: 8
-      )
+      ftp = build_ftp(config)
       ftp.connect(config.host, config.ftps_port)
       ftp.login(config.username, secret)
       # Bambu answers 332 to PBSZ/PROT before USER/PASS.
@@ -399,6 +421,22 @@ module BambuCompanion
     rescue StandardError
       cleanup_failed_ftp(ftp)
       raise
+    end
+
+    def build_ftp(config)
+      ftp = @ftp_class.new(
+        nil, ssl: {},
+        implicit_ftps: true, private_data_connection: false, passive: true,
+        open_timeout: 8, read_timeout: 30, ssl_handshake_timeout: 8
+      )
+      return ftp unless ftp.is_a?(Net::FTP)
+
+      context = ftp.instance_variable_get(:@ssl_context)
+      TlsCertificate.configure_pinned_context(
+        context, config.ftps_tls_fingerprint
+      )
+      ftp.singleton_class.prepend(PinnedFtpsTransport)
+      ftp
     end
   end
 end

@@ -490,7 +490,7 @@ class FtpsClientTest < Minitest::Test
       [:new, nil], [:connect, "192.168.1.50", 990],
       [:login, "bblp", secret], [:sendcmd, "PBSZ 0"], [:sendcmd, "PROT P"]
     ], calls
-    assert_equal({ verify_mode: OpenSSL::SSL::VERIFY_NONE }, options[:ssl])
+    assert_equal({}, options[:ssl])
     assert_equal true, options[:implicit_ftps]
     assert_equal false, options[:private_data_connection]
     assert_equal true, opened.instance_variable_get(:@private_data_connection)
@@ -498,6 +498,21 @@ class FtpsClientTest < Minitest::Test
     assert_equal 8, options[:open_timeout]
     assert_equal 8, options[:ssl_handshake_timeout]
     assert_equal 30, options[:read_timeout]
+  end
+
+  def test_default_ftp_context_requires_the_pinned_leaf_on_all_tls_sessions
+    config = test_printer_config
+    object = BambuCompanion::FtpsClient.new(
+      config: config, secret: "session-secret"
+    )
+
+    ftp = object.send(:build_ftp, config)
+    context = ftp.instance_variable_get(:@ssl_context)
+
+    assert_equal OpenSSL::SSL::VERIFY_PEER, context.verify_mode
+    assert context.verify_callback
+    assert_includes ftp.singleton_class.ancestors,
+                    BambuCompanion::PinnedFtpsTransport
   end
 
   def test_default_factory_closes_connection_when_protection_setup_fails

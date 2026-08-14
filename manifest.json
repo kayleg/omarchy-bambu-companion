@@ -23,7 +23,9 @@
       "username": "bblp",
       "maxSegments": 40000,
       "accentColor": "#39FF88",
-      "showBarSummary": true
+      "showBarSummary": true,
+      "mqttTlsFingerprint": "",
+      "ftpsTlsFingerprint": ""
     },
     "schema": [
       { "key": "printerName", "type": "string", "label": "Printer name", "defaultValue": "3D Printer" },
@@ -34,7 +36,9 @@
       { "key": "username", "type": "string", "label": "LAN username", "defaultValue": "bblp" },
       { "key": "maxSegments", "type": "integer", "label": "Wireframe segment limit", "min": 1000, "max": 100000, "step": 1000, "defaultValue": 40000 },
       { "key": "accentColor", "type": "string", "label": "Accent color (#RRGGBB)", "defaultValue": "#39FF88" },
-      { "key": "showBarSummary", "type": "boolean", "label": "Show bar summary", "defaultValue": true }
+      { "key": "showBarSummary", "type": "boolean", "label": "Show bar summary", "defaultValue": true },
+      { "key": "mqttTlsFingerprint", "type": "string", "label": "Trusted MQTT certificate fingerprint", "defaultValue": "" },
+      { "key": "ftpsTlsFingerprint", "type": "string", "label": "Trusted FTPS certificate fingerprint", "defaultValue": "" }
     ]
   }
 }

@@ -58,6 +58,16 @@ class RepositoryContractTest < Minitest::Test
     assert_includes readme, "development only"
   end
 
+  def test_readme_documents_explicit_first_use_certificate_approval
+    readme = File.read(File.join(ROOT, "README.md"))
+
+    assert_match(/Save & Connect.*check.*certificate.*TRUST & CONNECT/im, readme)
+    assert_match(/SHA-256.*MQTT.*FTPS/im, readme)
+    assert_match(/certificate changes.*block.*reconnect/im, readme)
+    assert_match(/existing installations.*approve.*once/im, readme)
+    refute_match(/certificate.*verification.*disabled/i, readme)
+  end
+
   def test_offline_demo_feature_and_fixtures_are_absent
     production_paths = %w[manifest.json BambuWidget.qml BambuSettingsView.qml README.md]
       .concat(Dir[File.join(ROOT, "lib/**/*.rb")])
@@ -91,15 +101,19 @@ class RepositoryContractTest < Minitest::Test
   def test_local_transports_explicitly_use_required_tls_modes
     mqtt = File.read(File.join(ROOT, "lib/bambu_companion/mqtt_session.rb"))
     ftps = File.read(File.join(ROOT, "lib/bambu_companion/ftps_client.rb"))
+    tls = File.read(File.join(ROOT, "lib/bambu_companion/tls_certificate.rb"))
 
     assert_includes mqtt, "verify_host: false"
-    assert_includes mqtt, "OpenSSL::SSL::VERIFY_NONE"
+    assert_includes mqtt, "configure_pinned_context"
     assert_includes ftps, "implicit_ftps: true"
     assert_includes ftps, "private_data_connection: false"
     assert_includes ftps, 'sendcmd("PBSZ 0")'
     assert_includes ftps, 'sendcmd("PROT P")'
     assert_includes ftps, "instance_variable_set(:@private_data_connection, true)"
-    assert_includes ftps, "OpenSSL::SSL::VERIFY_NONE"
+    assert_includes ftps, "configure_pinned_context"
+    assert_includes tls, "OpenSSL::SSL::VERIFY_PEER"
+    refute_includes mqtt, "OpenSSL::SSL::VERIFY_NONE"
+    refute_includes ftps, "OpenSSL::SSL::VERIFY_NONE"
   end
 
   def test_development_checks_run_high_signal_linters

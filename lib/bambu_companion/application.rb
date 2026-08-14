@@ -10,6 +10,7 @@ require_relative "ftps_client"
 require_relative "gcode_source"
 require_relative "gcode_parser"
 require_relative "model_worker"
+require_relative "tls_certificate"
 
 module BambuCompanion
   class Application
@@ -37,13 +38,15 @@ module BambuCompanion
                    outbound_capacity: AsyncIpcEmitter::DEFAULT_CAPACITY,
                    writer_join_seconds: AsyncIpcEmitter::DEFAULT_JOIN_SECONDS,
                    monotonic_clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
-                   installation_id: self.class.installation_id)
+                   installation_id: self.class.installation_id,
+                   tls_probe: TlsProbe.new)
       @input = input
       @secret_store = secret_store
       @mqtt_factory = mqtt_factory || ->(**arguments) { MqttSession.new(**arguments) }
       @worker_factory = worker_factory || method(:build_worker)
       @installation_id = String(installation_id)
       @monotonic_clock = monotonic_clock
+      @tls_probe = tls_probe
       @control_mutex = Mutex.new
       @state_mutex = Mutex.new
       @publication_mutex = Mutex.new
@@ -60,6 +63,8 @@ module BambuCompanion
       @mqtt = nil
       @mqtt_thread = nil
       @worker = nil
+      @tls_probe_generation = 0
+      @tls_probe_thread = nil
       @emitter = AsyncIpcEmitter.new(
         io: output,
         secret_provider: -> { @control_mutex.synchronize { @secret } },
@@ -118,9 +123,11 @@ module BambuCompanion
       when "set_secret"
         set_secret(command)
       when "clear_secret"
-        clear_secret
+        clear_secret(command)
       when "refresh_model"
         refresh_model
+      when "probe_tls"
+        probe_tls(command)
       when "shutdown"
         request_shutdown
       else
@@ -157,6 +164,7 @@ module BambuCompanion
 
       raw = command_value(command, "config", {})
       candidate = Config.from_h(raw || {})
+      cancel_tls_probe
       runtime_id = replace_runtime(candidate)
 
       found = lookup_secret(candidate.serial)
@@ -168,7 +176,30 @@ module BambuCompanion
 
       set_current_secret(String(found))
       @emitter.emit("secret_status", stored: true)
+      unless candidate.trusted_tls?
+        @emitter.emit("tls_required")
+        return
+      end
+
       start_runtime(runtime_id)
+    end
+
+    def probe_tls(command)
+      protocol = command_value(command, "protocol")
+      unless protocol == PROTOCOL
+        emit_error(
+          scope: "config", code: "unsupported_protocol",
+          message: "Unsupported IPC protocol", retryable: false
+        )
+        return
+      end
+      request_id = command_value(command, "requestId")
+      unless request_id.is_a?(Integer) && request_id.between?(0, 2_147_483_647)
+        raise ConfigError, "requestId is invalid"
+      end
+
+      config = Config.from_h(command_value(command, "config", {}) || {})
+      start_tls_probe(config, request_id)
     end
 
     def set_secret(command)
@@ -200,29 +231,42 @@ module BambuCompanion
       start_runtime(runtime_id)
     end
 
-    def clear_secret
+    def clear_secret(command)
+      request_id = command_value(command, "requestId")
+      valid_request_id = request_id.nil? || (request_id.is_a?(Integer) &&
+        request_id.between?(0, 2_147_483_647))
+      raise ConfigError, "requestId is invalid" unless valid_request_id
+
       config = current_config
       unless config
-        emit_error(
+        payload = {
           scope: "secret", code: "invalid_state",
           message: "A printer configuration is required", retryable: false
-        )
+        }
+        payload[:requestId] = request_id unless request_id.nil?
+        @emitter.emit("error", payload)
         return
       end
 
       invalidate_runtime
       stop_runtime
       set_current_secret(nil)
-      cleared = clear_stored_secret(config.serial)
+      cleared = clear_stored_secrets
       if cleared
-        @emitter.emit("secret_status", stored: false)
+        payload = { stored: false }
+        payload[:requestId] = request_id unless request_id.nil?
+        @emitter.emit("secret_status", payload)
       else
-        emit_error(
+        payload = {
           scope: "secret", code: "clear_failed",
           message: "Unable to clear stored LAN access code", retryable: true
-        )
+        }
+        payload[:requestId] = request_id unless request_id.nil?
+        @emitter.emit("error", payload)
       end
-      @emitter.emit("secret_required", storageAvailable: storage_available?)
+      payload = { storageAvailable: storage_available? }
+      payload[:requestId] = request_id unless request_id.nil?
+      @emitter.emit("secret_required", payload)
     end
 
     def refresh_model
@@ -266,6 +310,10 @@ module BambuCompanion
     def start_runtime(runtime_id)
       config, secret = @control_mutex.synchronize { [@config, @secret] }
       return unless active_runtime?(runtime_id) && config && secret
+      unless config.trusted_tls?
+        @emitter.emit("tls_required")
+        return
+      end
 
       worker = @worker_factory.call(
         config: config, secret: secret, emitter: @emitter,
@@ -361,6 +409,15 @@ module BambuCompanion
     end
 
     def emit_network_error(error, runtime_id:)
+      if error.is_a?(TlsCertificateError)
+        emit_runtime_error(
+          runtime_id: runtime_id,
+          scope: "tls", code: error.code, message: error.message,
+          retryable: false
+        )
+        return
+      end
+
       authentication = MqttSession.authentication_error?(error)
       emit_runtime_error(
         runtime_id: runtime_id,
@@ -422,12 +479,14 @@ module BambuCompanion
         return false
       end
 
-      status = worker.snapshot(printer_snapshot)[:status].to_s
+      model = worker.snapshot(printer_snapshot)
+      status = model[:status].to_s
       if status == "ready"
         clear_model_retry(worker)
         return false
       end
       return false unless status == "error"
+      return clear_model_retry(worker) if model.dig(:error, :code) == "certificate_changed"
       return false unless take_model_retry_slot(runtime_id, worker)
 
       worker.submit(hints: hints)
@@ -475,6 +534,102 @@ module BambuCompanion
     def reset_model_retry_unlocked
       @model_retry_attempt = 0
       @model_retry_at = nil
+    end
+
+    def start_tls_probe(config, request_id)
+      generation, previous = @control_mutex.synchronize do
+        @tls_probe_generation += 1
+        [@tls_probe_generation, @tls_probe_thread]
+      end
+      stop_thread(previous)
+
+      gate = Queue.new
+      thread = Thread.new do
+        gate.pop
+        begin
+          result = @tls_probe.probe(
+            host: config.host, mqtt_port: config.mqtt_port,
+            ftps_port: config.ftps_port,
+            cancelled: -> { tls_probe_cancelled?(generation) }
+          )
+          emit_tls_probe_result(generation, request_id, result)
+        rescue TlsCertificateError => error
+          emit_tls_probe_error(generation, request_id, error)
+        rescue StandardError
+          emit_tls_probe_error(
+            generation, request_id,
+            TlsCertificateError.new("probe_failed", "TLS certificate probe failed")
+          )
+        ensure
+          @control_mutex.synchronize do
+            @tls_probe_thread = nil if @tls_probe_thread.equal?(Thread.current)
+          end
+        end
+      end
+      thread.report_on_exception = false
+      attached = @control_mutex.synchronize do
+        next false if @shutdown || @tls_probe_generation != generation
+
+        @tls_probe_thread = thread
+        true
+      end
+      unless attached
+        thread.kill
+        thread.join
+        return
+      end
+
+      gate << true
+    end
+
+    def emit_tls_probe_result(generation, request_id, result)
+      publish_tls_probe(generation) do
+        @emitter.emit(
+          "tls_identity", requestId: request_id,
+          mqtt: result.fetch("mqtt"), ftps: result.fetch("ftps")
+        )
+      end
+    end
+
+    def emit_tls_probe_error(generation, request_id, error)
+      return if error.code == "cancelled"
+
+      publish_tls_probe(generation) do
+        @emitter.emit(
+          "error", scope: "tls", code: "probe_failed",
+          message: "Unable to read printer TLS certificates",
+          retryable: true, requestId: request_id
+        )
+      end
+    end
+
+    def publish_tls_probe(generation)
+      @publication_mutex.synchronize do
+        next false unless active_tls_probe?(generation)
+
+        yield
+        true
+      end
+    end
+
+    def active_tls_probe?(generation)
+      @control_mutex.synchronize do
+        !@shutdown && @tls_probe_generation == generation
+      end
+    end
+
+    def tls_probe_cancelled?(generation)
+      !active_tls_probe?(generation)
+    end
+
+    def cancel_tls_probe
+      thread = @control_mutex.synchronize do
+        @tls_probe_generation += 1
+        current = @tls_probe_thread
+        @tls_probe_thread = nil
+        current
+      end
+      stop_thread(thread)
     end
 
     def build_worker(config:, secret:, emitter:, on_status:)
@@ -573,8 +728,8 @@ module BambuCompanion
       false
     end
 
-    def clear_stored_secret(serial)
-      !!@secret_store.clear(serial)
+    def clear_stored_secrets
+      !!@secret_store.clear_all
     rescue StandardError
       false
     end
@@ -666,6 +821,7 @@ module BambuCompanion
 
     def shutdown
       request_shutdown
+      cancel_tls_probe
       stop_runtime
       @emitter.close
     end

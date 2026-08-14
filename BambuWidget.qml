@@ -46,6 +46,7 @@ BarWidget {
   property real heatbreakFanSpeed: NaN
   property string lastUpdate: ""
   property string modelStatus: "idle"
+  property string modelErrorCode: ""
   property string modelError: ""
   property real zCurrent: NaN
   property string zMode: "unknown"
@@ -55,6 +56,16 @@ BarWidget {
   property bool restartScheduled: false
   property bool pendingSecretWrite: false
   property bool persistingSettings: false
+  property bool tlsProbePending: false
+  property bool tlsApprovalRequired: false
+  property bool tlsRejected: false
+  property bool disconnectConfirmationOpen: false
+  property bool disconnectPending: false
+  property int disconnectRequestId: 0
+  property int tlsProbeRequestId: 0
+  property var pendingTlsDraft: ({})
+  property var mqttTlsIdentity: ({})
+  property var ftpsTlsIdentity: ({})
   readonly property int maxIpcLineChars: 1048576
   property string stdoutBuffer: ""
   property bool stdoutDiscarding: false
@@ -81,12 +92,23 @@ BarWidget {
   readonly property int maxSegments: Number(setting("maxSegments", 40000))
   readonly property string accentColor: String(setting("accentColor", "#39FF88"))
   readonly property bool showBarSummary: setting("showBarSummary", true) !== false
+  readonly property string mqttTlsFingerprint:
+    String(setting("mqttTlsFingerprint", ""))
+  readonly property string ftpsTlsFingerprint:
+    String(setting("ftpsTlsFingerprint", ""))
   readonly property string storedInstallationId: String(setting("installationId", ""))
   readonly property bool hasConnectionTarget: String(root.host).trim() !== ""
     && String(root.serial).trim() !== ""
+  readonly property bool hasTrustedTlsPins:
+    root.validTlsFingerprint(root.mqttTlsFingerprint)
+      && root.validTlsFingerprint(root.ftpsTlsFingerprint)
   readonly property bool requiresSetupConfirmation: !root.hasConnectionTarget
+    || !root.hasTrustedTlsPins || root.tlsRejected
     || (root.installationIdentified
         && root.storedInstallationId !== root.installationId)
+  readonly property string securityModalMode:
+    (root.disconnectConfirmationOpen || root.disconnectPending) ? "disconnect"
+      : ((root.tlsProbePending || root.tlsApprovalRequired) ? "certificate" : "")
   readonly property string displayName: {
     var name = String(root.printerName || "").trim()
     return name || "3D Printer"
@@ -122,10 +144,8 @@ BarWidget {
   }
 
   function close() {
-    if (root.requiresSetupConfirmation) {
-      popupOpen = true
-      return
-    }
+    if (root.disconnectPending) return
+    root.cancelSecurityModal()
     popupOpen = false
     if (componentReady) settingsView.clearAccessCode()
     viewMode = nextIdleView()
@@ -171,7 +191,9 @@ BarWidget {
       maxSegments: root.maxSegments,
       accentColor: root.validAccentColor(root.accentColor)
         ? root.accentColor : "#39FF88",
-      showBarSummary: root.showBarSummary
+      showBarSummary: root.showBarSummary,
+      mqttTlsFingerprint: root.mqttTlsFingerprint,
+      ftpsTlsFingerprint: root.ftpsTlsFingerprint
     }
   }
 
@@ -227,7 +249,10 @@ BarWidget {
     entry.maxSegments = draft.maxSegments
     entry.accentColor = draft.accentColor
     entry.showBarSummary = draft.showBarSummary
-    entry.installationId = root.installationId
+    entry.mqttTlsFingerprint = String(draft.mqttTlsFingerprint || "")
+    entry.ftpsTlsFingerprint = String(draft.ftpsTlsFingerprint || "")
+    entry.installationId = draft.installationId === undefined
+      ? root.installationId : String(draft.installationId || "")
     persistingSettings = true
     root.settings = entry
     root.bar.shell.updateEntryInline(root.moduleName, entry)
@@ -261,11 +286,12 @@ BarWidget {
       || String(draft.serial) !== root.serial
       || String(draft.username) !== root.username
       || Number(draft.maxSegments) !== root.segmentLimit()
+      || String(draft.mqttTlsFingerprint || "") !== root.mqttTlsFingerprint
+      || String(draft.ftpsTlsFingerprint || "") !== root.ftpsTlsFingerprint
   }
 
   function saveSettings(draft, accessCode) {
     var replacement = String(accessCode || "")
-    var backendChanged = backendSettingsChanged(draft)
     if (!replacement && !root.hasUsableSecret) {
       settingsView.reportError("Enter the LAN access code to connect")
       return
@@ -274,6 +300,13 @@ BarWidget {
       settingsView.reportError("Backend is not ready for the LAN code")
       return
     }
+    if (root.requiresTlsProbe(draft)) {
+      root.beginTlsProbe(draft)
+      return
+    }
+    draft.mqttTlsFingerprint = root.mqttTlsFingerprint
+    draft.ftpsTlsFingerprint = root.ftpsTlsFingerprint
+    var backendChanged = backendSettingsChanged(draft)
     pendingSecretWrite = !!replacement
     if (!persistSettings(draft)) {
       pendingSecretWrite = false
@@ -290,13 +323,115 @@ BarWidget {
       return
     }
     enterConnecting()
-    if (backendChanged) sendConfiguration()
+    if (backendChanged) sendConfiguration(draft)
     if (!replacement) return
     Qt.callLater(function() {
       if (!setSecret(replacement)) {
         recoverSecretWrite("LAN code could not be sent. Enter it again")
       }
     })
+  }
+
+  function tlsTarget(draft) {
+    return JSON.stringify({
+      host: String(draft.host || "").trim(),
+      mqttPort: Number(draft.mqttPort),
+      ftpsPort: Number(draft.ftpsPort),
+      serial: String(draft.serial || "").trim()
+    })
+  }
+
+  function requiresTlsProbe(draft) {
+    if (root.tlsRejected || !root.hasTrustedTlsPins) return true
+    return root.tlsTarget(draft) !== root.tlsTarget(root.settingsDraft())
+  }
+
+  function clearTlsProbeState() {
+    root.tlsProbePending = false
+    root.tlsApprovalRequired = false
+    root.pendingTlsDraft = ({})
+    root.mqttTlsIdentity = ({})
+    root.ftpsTlsIdentity = ({})
+  }
+
+  function cancelTlsApproval() {
+    root.tlsProbeRequestId = (root.tlsProbeRequestId + 1) % 2147483647
+    root.clearTlsProbeState()
+  }
+
+  function cancelSecurityModal() {
+    if (root.disconnectConfirmationOpen) {
+      root.disconnectConfirmationOpen = false
+    } else if (root.tlsProbePending || root.tlsApprovalRequired) {
+      root.cancelTlsApproval()
+    }
+    if (root.popupOpen) {
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    }
+  }
+
+  function beginTlsProbe(draft) {
+    if (!root.daemonReady || !sessionProcess.running) {
+      settingsView.reportError("Backend is not ready to check the certificate")
+      return false
+    }
+    root.tlsProbeRequestId = (root.tlsProbeRequestId + 1) % 2147483647
+    root.clearTlsProbeState()
+    root.pendingTlsDraft = JSON.parse(JSON.stringify(draft))
+    root.tlsProbePending = true
+    settingsView.reportError("")
+    var probeConfig = root.configurationForDraft(draft)
+    probeConfig.mqttTlsFingerprint = ""
+    probeConfig.ftpsTlsFingerprint = ""
+    var written = root.writeCommand({
+      "op": "probe_tls", "protocol": 1,
+      "requestId": root.tlsProbeRequestId, "config": probeConfig
+    })
+    if (!written) {
+      root.tlsProbePending = false
+      settingsView.reportError("Certificate check could not be started")
+    }
+    return written
+  }
+
+  function trustAndConnect(draft, accessCode) {
+    if (!root.tlsApprovalRequired) return
+    if (root.tlsTarget(draft) !== root.tlsTarget(root.pendingTlsDraft)) {
+      root.clearTlsProbeState()
+      root.saveSettings(draft, accessCode)
+      return
+    }
+    var trusted = JSON.parse(JSON.stringify(draft))
+    trusted.mqttTlsFingerprint = String(root.mqttTlsIdentity.fingerprint || "")
+    trusted.ftpsTlsFingerprint = String(root.ftpsTlsIdentity.fingerprint || "")
+    var replacement = String(accessCode || "")
+    var backendChanged = backendSettingsChanged(trusted)
+    pendingSecretWrite = !!replacement
+    if (!persistSettings(trusted)) {
+      pendingSecretWrite = false
+      settingsView.reportError("Settings could not be saved by Omarchy Shell")
+      return
+    }
+    root.clearTlsProbeState()
+    root.tlsRejected = false
+    root.processError = ""
+    enterConnecting()
+    if (backendChanged) sendConfiguration(trusted)
+    if (!replacement) return
+    Qt.callLater(function() {
+      if (!setSecret(replacement)) {
+        recoverSecretWrite("LAN code could not be sent. Enter it again")
+      }
+    })
+  }
+
+  function handleTlsMismatch(message) {
+    if (root.tlsRejected) return
+    root.tlsRejected = true
+    root.clearTlsProbeState()
+    root.openSettings()
+    settingsView.reportError(message)
+    root.popupOpen = true
   }
 
   // The non-secret address/identity settings remain useful when a printer is
@@ -339,6 +474,10 @@ BarWidget {
   function isNonNegativeInteger(value) {
     return typeof value === "number" && isFinite(value)
       && value >= 0 && Math.floor(value) === value
+  }
+
+  function validTlsFingerprint(value) {
+    return /^[0-9A-Fa-f]{64}$/.test(String(value || ""))
   }
 
   function isValidSegment(segment) {
@@ -430,7 +569,19 @@ BarWidget {
     return {
       "host": root.host, "mqttPort": root.mqttPort,
       "ftpsPort": root.ftpsPort, "serial": root.serial,
-      "username": root.username, "maxSegments": root.segmentLimit()
+      "username": root.username, "maxSegments": root.segmentLimit(),
+      "mqttTlsFingerprint": root.mqttTlsFingerprint,
+      "ftpsTlsFingerprint": root.ftpsTlsFingerprint
+    }
+  }
+
+  function configurationForDraft(draft) {
+    return {
+      "host": String(draft.host || ""), "mqttPort": Number(draft.mqttPort),
+      "ftpsPort": Number(draft.ftpsPort), "serial": String(draft.serial || ""),
+      "username": String(draft.username || ""), "maxSegments": Number(draft.maxSegments),
+      "mqttTlsFingerprint": String(draft.mqttTlsFingerprint || ""),
+      "ftpsTlsFingerprint": String(draft.ftpsTlsFingerprint || "")
     }
   }
 
@@ -450,9 +601,11 @@ BarWidget {
     }
   }
 
-  function sendConfiguration() {
+  function sendConfiguration(draft) {
     if (!daemonReady || !root.hasConnectionTarget) return
-    writeCommand({ "op": "configure", "protocol": 1, "config": configuration() })
+    var config = draft && typeof draft === "object"
+      ? configurationForDraft(draft) : configuration()
+    writeCommand({ "op": "configure", "protocol": 1, "config": config })
   }
 
   function setSecret(value) {
@@ -465,6 +618,67 @@ BarWidget {
 
   function clearSecret() {
     if (writeCommand({ "op": "clear_secret" })) settingsView.clearAccessCode()
+  }
+
+  function requestDisconnect() {
+    if (!root.hasConnectionTarget && !root.hasUsableSecret) return
+    root.disconnectConfirmationOpen = true
+  }
+
+  function failDisconnect(message) {
+    root.disconnectPending = false
+    root.viewMode = "settings"
+    settingsView.reportError(message)
+    root.popupOpen = true
+  }
+
+  function confirmDisconnect() {
+    root.disconnectConfirmationOpen = false
+    if (!root.daemonReady || !sessionProcess.running) {
+      settingsView.reportError("Backend is not ready to disconnect the printer")
+      return
+    }
+    root.disconnectRequestId = (root.disconnectRequestId + 1) % 2147483647
+    root.disconnectPending = true
+    if (!root.writeCommand({
+      "op": "clear_secret", "requestId": root.disconnectRequestId
+    })) {
+      root.failDisconnect("Printer could not be disconnected")
+    }
+  }
+
+  function completeDisconnect() {
+    if (!root.disconnectPending) return
+    var reset = {
+      printerName: root.printerName,
+      host: "",
+      mqttPort: 8883,
+      ftpsPort: 990,
+      serial: "",
+      username: "bblp",
+      maxSegments: root.segmentLimit(),
+      accentColor: root.validAccentColor(root.accentColor)
+        ? root.accentColor : "#39FF88",
+      showBarSummary: root.showBarSummary,
+      mqttTlsFingerprint: "",
+      ftpsTlsFingerprint: "",
+      installationId: ""
+    }
+    if (!root.persistSettings(reset)) {
+      root.failDisconnect("Disconnected, but Omarchy Shell could not reset the settings")
+      return
+    }
+    root.disconnectPending = false
+    root.pendingSecretWrite = false
+    root.tlsRejected = false
+    root.resetOperationalState()
+    settingsView.load(reset)
+    root.viewMode = "setup"
+    root.popupOpen = true
+    Qt.callLater(function() {
+      panelScroll.contentY = 0
+      keyCatcher.forceActiveFocus()
+    })
   }
 
   function refreshModel() {
@@ -489,6 +703,9 @@ BarWidget {
     }
     daemonReady = false
     resetOperationalState()
+    if (root.disconnectPending) {
+      root.failDisconnect("Backend stopped before disconnecting the printer")
+    }
     resetStreamBuffers()
     recoverSecretWrite("Backend stopped before accepting the LAN code. Enter it again")
     if (restartScheduled) return
@@ -587,8 +804,13 @@ BarWidget {
     zCurrent = finiteNumber(model.zCurrent, NaN)
     zMode = String(model.zMode || "unknown")
     var error = objectOrEmpty(model.error)
+    modelErrorCode = error.code === null || error.code === undefined
+      ? "" : String(error.code)
     modelError = error.message === null || error.message === undefined
       ? "" : String(error.message)
+    if (modelErrorCode === "certificate_changed") {
+      handleTlsMismatch("FTPS certificate changed. Check and approve the printer again.")
+    }
   }
 
   function resetPendingGeometry() {
@@ -624,6 +846,7 @@ BarWidget {
     heatbreakFanSpeed = NaN
     lastUpdate = ""
     modelStatus = "idle"
+    modelErrorCode = ""
     modelError = ""
     zCurrent = NaN
     zMode = "unknown"
@@ -632,6 +855,7 @@ BarWidget {
     secretRequired = false
     secretStored = false
     secretStatusKnown = false
+    clearTlsProbeState()
     modelGeneration = -1
     activeSegments = []
     activeBounds = ({})
@@ -731,6 +955,11 @@ BarWidget {
     }
     if (!daemonReady) return
     if (message.event === "secret_required") {
+      if (root.disconnectPending
+          && message.requestId === root.disconnectRequestId) {
+        root.completeDisconnect()
+        return
+      }
       secretRequired = true
       secretStored = false
       secretStatusKnown = false
@@ -740,16 +969,61 @@ BarWidget {
       }
     } else if (message.event === "secret_status") {
       pendingSecretWrite = false
+      if (root.disconnectPending
+          && message.requestId === root.disconnectRequestId
+          && message.stored === false) {
+        root.completeDisconnect()
+        return
+      }
       secretRequired = false
       secretStored = message.stored === true
       secretStatusKnown = true
+    } else if (message.event === "tls_required") {
+      tlsRejected = !root.hasTrustedTlsPins
+      openSettings()
+      settingsView.reportError("Approve the printer certificate before connecting")
+      popupOpen = true
+    } else if (message.event === "tls_identity") {
+      if (message.requestId !== root.tlsProbeRequestId) return
+      var mqttIdentity = objectOrEmpty(message.mqtt)
+      var ftpsIdentity = objectOrEmpty(message.ftps)
+      if (!root.validTlsFingerprint(mqttIdentity.fingerprint)
+          || !root.validTlsFingerprint(ftpsIdentity.fingerprint)) {
+        root.clearTlsProbeState()
+        settingsView.reportError("Printer returned an invalid certificate identity")
+        return
+      }
+      root.tlsProbePending = false
+      root.tlsApprovalRequired = true
+      root.mqttTlsIdentity = mqttIdentity
+      root.ftpsTlsIdentity = ftpsIdentity
+      settingsView.reportError("")
     } else if (message.event === "state") {
       handleState(message)
     } else if (String(message.event || "").indexOf("geometry_") === 0) {
       handleGeometry(message)
     } else if (message.event === "error") {
+      if (root.disconnectPending
+          && message.requestId === root.disconnectRequestId
+          && message.scope === "secret") {
+        if (message.code === "clear_failed") {
+          root.failDisconnect("LAN access code could not be removed")
+        } else {
+          root.failDisconnect("Printer could not be disconnected")
+        }
+        Qt.callLater(root.sendConfiguration)
+        return
+      }
+      if (message.scope === "tls" && message.code === "probe_failed") {
+        if (message.requestId !== root.tlsProbeRequestId) return
+        root.clearTlsProbeState()
+        settingsView.reportError("Unable to read the printer certificate")
+        return
+      }
       reportProcessError(message.message)
-      if (message.scope === "mqtt" && message.code === "authentication") {
+      if (message.scope === "tls" && message.code === "certificate_changed") {
+        handleTlsMismatch("Printer certificate changed. Check it before reconnecting.")
+      } else if (message.scope === "mqtt" && message.code === "authentication") {
         handleAuthenticationFailure("LAN access code was rejected. Enter it again")
       } else {
         recoverSecretWrite("LAN code was rejected. Enter it again")
@@ -760,10 +1034,7 @@ BarWidget {
   onPopupOpenChanged: {
     if (!componentReady) return
     if (!popupOpen) {
-      if (root.requiresSetupConfirmation) {
-        popupOpen = true
-        return
-      }
+      root.cancelSecurityModal()
       settingsView.clearAccessCode()
       viewMode = nextIdleView()
     }
@@ -869,7 +1140,10 @@ BarWidget {
         : (!root.connectionVerified ? "CONNECTING"
           : ((root.connected ? root.displayGcodeState : "OFFLINE") + " · " + root.percent + "% · "
             + root.formatTemp(root.nozzleTemp) + "/" + root.formatTemp(root.bedTemp))))
-    onPressed: root.popupOpen = !root.popupOpen
+    onPressed: {
+      if (root.popupOpen) root.close()
+      else root.open()
+    }
 
     Row {
       id: buttonContent
@@ -912,7 +1186,7 @@ BarWidget {
       id: keyCatcher
       anchors.fill: parent
       clip: true
-      blocked: settingsView.inputActive
+      blocked: settingsView.inputActive || root.securityModalMode !== ""
 
       Rectangle {
         id: panelBackdrop
@@ -929,8 +1203,9 @@ BarWidget {
       }
 
       onCloseRequested: {
-        if (root.requiresSetupConfirmation) root.popupOpen = true
-        else if (root.viewMode === "settings" && root.hasConnectionTarget) root.backToStatus()
+        if (root.securityModalMode !== "") root.cancelSecurityModal()
+        else if (root.viewMode === "settings" && root.hasConnectionTarget
+            && !root.requiresSetupConfirmation) root.backToStatus()
         else root.close()
       }
 
@@ -1064,13 +1339,16 @@ BarWidget {
             dim: root.dim
             fontFamily: root.fontFamily
             daemonReady: root.daemonReady && sessionProcess.running
-            allowBack: root.viewMode === "settings" && root.hasConnectionTarget
-              && !root.requiresSetupConfirmation
+            allowBack: true
+            canDisconnect: root.hasConnectionTarget || root.hasUsableSecret
             requireAccessCode: !root.hasUsableSecret
             secretRequired: root.secretRequired
             secretStored: root.secretStored
             secretStatusKnown: root.secretStatusKnown
-            onBackRequested: root.backToStatus()
+            onBackRequested: {
+              if (root.requiresSetupConfirmation) root.close()
+              else root.backToStatus()
+            }
             onBarSummaryToggled: function(enabled) {
               if (!root.persistBarSummary(enabled)) {
                 settingsView.showBarSummary = root.showBarSummary
@@ -1078,9 +1356,13 @@ BarWidget {
               }
             }
             onForgetCodeRequested: root.clearSecret()
+            onDisconnectRequested: root.requestDisconnect()
             onInputFocusReleased: keyCatcher.forceActiveFocus()
             onSaveRequested: function(draft, accessCode) {
               root.saveSettings(draft, accessCode)
+            }
+            onTrustRequested: function(draft, accessCode) {
+              root.trustAndConnect(draft, accessCode)
             }
           }
 
@@ -1171,6 +1453,24 @@ BarWidget {
             onClicked: root.openSettings()
           }
         }
+      }
+
+      BambuSecurityDialog {
+        anchors.fill: parent
+        z: 40
+        mode: root.securityModalMode
+        probing: root.tlsProbePending
+        processing: root.disconnectPending
+        mqttIdentity: root.mqttTlsIdentity
+        ftpsIdentity: root.ftpsTlsIdentity
+        foreground: root.foreground
+        accent: root.neon
+        errorColor: root.errorColor
+        background: panelBackdrop.color
+        fontFamily: root.fontFamily
+        onCancelRequested: root.cancelSecurityModal()
+        onTrustRequested: settingsView.submit(true)
+        onDisconnectRequested: root.confirmDisconnect()
       }
     }
   }
