@@ -1,8 +1,8 @@
 # Bambu Companion for Omarchy Quattro
 
 Monitor a Bambu Lab printer from the Omarchy Quattro bar. Bambu Companion
-shows live print telemetry and renders a lightweight, interactive 3D wireframe
-from the G-code available on the printer.
+shows live print telemetry, the slicer's 2D plate preview and a lightweight,
+interactive wireframe extracted from the sliced G-code.
 
 ## Install
 
@@ -90,7 +90,9 @@ name and visual preferences so the plugin is ready for a new connection.
 - Current and target nozzle/bed temperatures.
 - Current layer, total layers and exact or estimated Z progress.
 - Speed profile, fan speeds, Wi-Fi signal and last report time.
-- Landscape dashboard with telemetry on the left and 3D preview on the right.
+- Landscape dashboard with telemetry on the left and print preview on the right.
+- Selectable slicer image and sliced G-code route when available.
+- Animated simulated nozzle marker on the current G-code layer.
 - Configurable accent color and wireframe detail limit.
 - Automatic reconnect after temporary network loss.
 - Monitoring-only operation: no pause, resume, stop, upload or speed commands.
@@ -98,17 +100,24 @@ name and visual preferences so the plugin is ready for a new connection.
 After a completed print, `FINISH` remains visible for 60 seconds and then
 settles to `READY`. Starting another job cancels that delay immediately.
 
-## 3D print preview
+## Print preview
 
-When a job starts, the backend identifies its print file, downloads it over
-FTPS and keeps only recognized outer-wall moves. A new print automatically
-starts a new model generation; late data from the previous job is discarded.
-This also works when the same file is printed again after the previous job has
-finished.
+When a job starts, the backend identifies its print file and downloads it over
+FTPS. For a sliced 3MF archive it reads the bounded PNG plate preview and the
+recognized outer-wall moves from the embedded G-code. Direct `.gcode` files
+provide only the route view.
 
-During printer calibration, heating or file preparation, the model may not be
+The **Route** and **Image** icon buttons are always visible below the coordinate
+badge. A source that is unavailable is disabled. The 2D image is selected by
+default when both exist; switching views preserves the G-code camera.
+
+A new print starts a new preview generation, so late data from the previous job
+cannot replace it. The downloaded file is private and temporary, and is removed
+immediately after parsing, cancellation or failure.
+
+During printer calibration, heating or file preparation, print data may not be
 available yet. The plugin explains this state and retries automatically. Use
-**Reload model** to request another attempt manually.
+**Reload preview** to request another attempt manually.
 
 Preview controls:
 
@@ -118,23 +127,28 @@ Preview controls:
 | Drag vertically | Inspect from above or below |
 | Hold the pointer | Pause automatic rotation |
 | Mouse wheel | Zoom from `0.50×` to `4.00×` |
+| Route / Image icons | Select an available preview source |
 | Auto-rotate | Enable or disable continuous rotation |
 
 Printed paths use the configured accent color; remaining paths stay subdued.
-The renderer samples very large models uniformly so the silhouette and both
-ends of the toolpath remain representative without overloading the bar.
+While printing, a small animated point loops over the outer-wall segments of
+the nearest current layer. It gives the route visual motion; it is not the
+printer's real-time nozzle position. The renderer samples large routes within
+fixed budgets so the UI remains responsive.
 
 ### Supported print files
 
 - Direct `.gcode` files.
 - Bambu Studio or OrcaSlicer `.gcode.3mf` files.
 - Unambiguous `.3mf` archives containing `Metadata/plate_*.gcode`.
+- Bambu 3MF plate previews such as `Metadata/plate_*.png` and the standard
+  auxiliary thumbnails.
 - Outer-wall markers produced by Bambu Studio, OrcaSlicer,
   PrusaSlicer/SuperSlicer and Cura.
 
-Ambiguous multi-plate archives, corrupt files, oversized input or G-code
-without recognized outer-wall markers produce a model-only error. MQTT status
-monitoring continues normally.
+An invalid or missing image does not disable valid G-code, and unsupported
+G-code does not hide a valid image. MQTT status monitoring continues normally
+when neither visual source is usable.
 
 ## Printer compatibility
 
@@ -160,8 +174,9 @@ telemetry used by Bambu Handy is outside this plugin's scope.
   input, not command-line arguments.
 - Downloaded G-code/3MF files use private temporary files and are deleted after
   parsing, cancellation or failure. No persistent print-file cache is kept.
-- Only the simplified geometry remains in memory and is replaced by the next
-  model generation.
+- Only the bounded PNG preview and simplified toolpath remain in memory. The
+  route respects the configured segment limit and both sources are replaced
+  atomically by the next preview generation.
 - Bambu printers use local self-signed certificates, so the plugin applies
   explicit trust on first use instead of relying on a public certificate
   authority. It records independent SHA-256 certificate identities for MQTT
@@ -202,12 +217,12 @@ omarchy restart shell
   change, confirm that the address still targets your printer before approving
   the new SHA-256 identity.
 
-### The model is unavailable
+### The preview is unavailable
 
 - Wait while the printer finishes calibration, heating and file preparation.
 - Confirm that a supported G-code or 3MF file is present on the printer.
-- Select **Reload model** after the print has entered `RUNNING`.
-- Status monitoring remains usable even when model extraction fails.
+- Select **Reload preview** after the print has entered `RUNNING`.
+- Status monitoring remains usable even when preview extraction fails.
 
 ### Inspect Quickshell logs
 
@@ -256,8 +271,8 @@ omarchy restart shell
 - `daemon.rb` launches the Ruby backend.
 - MQTT provides printer telemetry; implicit FTPS provides the active print
   file.
-- The Ruby parser streams and downsamples outer-wall G-code into bounded
-  geometry.
+- Ruby parsers retain a bounded PNG plate preview and streamed, downsampled
+  outer-wall G-code.
 - Newline-delimited JSON over stdin/stdout connects the isolated backend to
   Quickshell.
 
