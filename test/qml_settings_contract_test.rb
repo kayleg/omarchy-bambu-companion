@@ -213,8 +213,11 @@ class QmlSettingsContractTest < Minitest::Test
   def test_settings_copy_and_controls_are_width_bound
     source = settings_source
 
+    assert_match(/import QtQuick\s+import QtQuick\.Controls/, source)
     assert_includes source, "clip: true"
     assert_match(/id: settingsScroll\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*contentHeight: settingsContent\.implicitHeight/m,
+                 source)
+    assert_match(/ScrollBar\.vertical: ScrollBar \{\s*id: settingsScrollBar\s*policy: settingsScroll\.interactive\s*\? ScrollBar\.AlwaysOn : ScrollBar\.AlwaysOff\s*\}/m,
                  source)
     assert_match(/id: settingsHeader\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*id: settingsClose.*text: "CLOSE".*bordered: false/m,
                  source)
@@ -294,7 +297,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/contentWidth: fittedContentWidth\(Style\.space\(860\)\)/m,
                  source)
-    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panel\.contentHeight\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
+    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
                  source)
     assert_match(/id: connectingOverlay.*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
                  source)
@@ -431,13 +434,27 @@ class QmlSettingsContractTest < Minitest::Test
   def test_local_toggles_are_plain_native_controls_on_dedicated_rows
     source = settings_source
 
-    assert_match(/id: settingsContent\s*width: settingsScroll\.width\s*spacing: Style\.space\(2\)/,
+    assert_match(/id: settingsContent\s*width: Math\.max\(0, settingsScroll\.width\s*- \(settingsScroll\.interactive \? Style\.space\(20\) : 0\)\)\s*spacing: Style\.space\(8\)/,
                  source)
     assert_match(/id: localToggleRows\s*width: parent\.width.*id: autoRotateColumn\s*width: parent\.width.*Item \{\s*width: parent\.width\s*height: autoRotateSwitch\.trackHeight.*id: autoRotateSwitch\s*cursorPad: 0.*id: barSummaryColumn\s*width: parent\.width.*text: "BAR SUMMARY".*Item \{\s*width: parent\.width\s*height: barSummarySwitch\.trackHeight.*ToggleSwitch \{\s*id: barSummarySwitch\s*cursorPad: 0.*anchors\.left: parent\.left.*anchors\.verticalCenter: parent\.verticalCenter/m,
                  source)
     refute_includes source, "id: barSummaryRow"
     refute_includes source, "id: barSummaryField"
     refute_includes source, 'text: form.showBarSummary ? "SHOWN" : "HIDDEN"'
+  end
+
+  def test_settings_are_grouped_into_breathable_printer_network_and_display_sections
+    source = settings_source
+
+    assert_includes source, "property color preferenceAccent: accent"
+    assert_match(/component SectionLabel: Text \{.*height: implicitHeight \+ Style\.space\(8\).*verticalAlignment: Text\.AlignBottom.*color: form\.preferenceAccent.*font\.letterSpacing: 1/m,
+                 source)
+    assert_match(/id: settingsContent.*spacing: Style\.space\(8\).*SectionLabel \{ id: printerSectionLabel; text: "PRINTER" \}.*id: printerNameInput.*id: identityGrid.*id: hostInput.*id: serialInput.*SectionLabel \{ id: networkSectionLabel; text: "NETWORK" \}.*id: networkGrid.*id: mqttPortInput.*id: ftpsPortInput.*id: usernameInput.*id: lanCodeHeader.*id: accessCodeRow.*SectionLabel \{ id: displaySectionLabel; text: "DISPLAY" \}.*id: preferencesGrid.*id: accentColorColumn.*id: localToggleRows/m,
+                 source)
+
+    widget = File.read(File.join(@root, "BambuWidget.qml"))
+    assert_match(/BambuSettingsView\s*\{.*preferenceAccent: root\.neon/m,
+                 widget)
   end
 
   def test_accent_color_has_immediate_clickable_presets_on_a_full_width_row
@@ -464,9 +481,12 @@ class QmlSettingsContractTest < Minitest::Test
 
   def test_settings_chrome_matches_the_dashboard_proportions
     settings = settings_source
+    widget = File.read(File.join(@root, "BambuWidget.qml"))
     viewport = File.read(File.join(@root, "BambuModelViewport.qml"))
     telemetry = File.read(File.join(@root, "BambuTelemetryPane.qml"))
 
+    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height/m,
+                 widget)
     assert_match(/id: viewportHeader.*height: Style\.space\(36\).*id: viewportTitle.*font\.pixelSize: Style\.font\.caption/m,
                  viewport)
     assert_match(/id: settingsHeader.*height: Style\.space\(36\).*text: "SETTINGS".*font\.pixelSize: Style\.font\.caption/m,

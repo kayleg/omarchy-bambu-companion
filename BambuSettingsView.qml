@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
@@ -9,6 +10,7 @@ Item {
 
   property color foreground: Color.foreground
   property color accent: Color.accent
+  property color preferenceAccent: accent
   property color errorColor: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
   property string fontFamily: Style.font.family
@@ -196,6 +198,17 @@ Item {
     font.letterSpacing: 0.5
   }
 
+  component SectionLabel: Text {
+    width: parent ? parent.width : implicitWidth
+    height: implicitHeight + Style.space(8)
+    verticalAlignment: Text.AlignBottom
+    color: form.preferenceAccent
+    font.family: form.fontFamily
+    font.pixelSize: Style.font.caption
+    font.bold: true
+    font.letterSpacing: 1
+  }
+
   Rectangle {
     anchors.fill: parent
     color: Qt.rgba(form.foreground.r, form.foreground.g,
@@ -264,11 +277,19 @@ Item {
     boundsBehavior: Flickable.StopAtBounds
     interactive: contentHeight > height + 1
     clip: true
+    ScrollBar.vertical: ScrollBar {
+      id: settingsScrollBar
+      policy: settingsScroll.interactive
+        ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+    }
 
     Column {
       id: settingsContent
-      width: settingsScroll.width
-      spacing: Style.space(2)
+      width: Math.max(0, settingsScroll.width
+        - (settingsScroll.interactive ? Style.space(20) : 0))
+      spacing: Style.space(8)
+
+      SectionLabel { id: printerSectionLabel; text: "PRINTER" }
 
       Column {
         width: parent.width
@@ -324,6 +345,8 @@ Item {
           }
         }
       }
+
+      SectionLabel { id: networkSectionLabel; text: "NETWORK" }
 
       Grid {
         id: networkGrid
@@ -447,6 +470,8 @@ Item {
           onClicked: form.forgetCodeRequested()
         }
       }
+
+      SectionLabel { id: displaySectionLabel; text: "DISPLAY" }
 
       Grid {
         id: preferencesGrid

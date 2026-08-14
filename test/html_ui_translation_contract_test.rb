@@ -25,7 +25,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  @widget)
     assert_match(/id:\s*dashboardLayout.*columns:\s*dashboard\.wideLayout \? 2 : 1/m,
                  @widget)
-    assert_match(/height:\s*wideLayout \? panel\.contentHeight\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
+    assert_match(/height:\s*wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
                  @widget)
     assert_match(/id:\s*telemetryPane.*width:\s*dashboard\.wideLayout\s*\? Style\.space\(300\)\s*:\s*dashboard\.width/m,
                  @widget)

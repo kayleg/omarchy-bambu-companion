@@ -1370,7 +1370,7 @@ BarWidget {
         Item {
           id: dashboard
           width: panelScroll.width
-          height: wideLayout ? panel.contentHeight
+          height: wideLayout ? panelScroll.height
             : telemetryPane.height + dashboardLayout.spacing + modelPane.height
           readonly property bool wideLayout: width >= Style.space(640)
           readonly property real overlayX: wideLayout
@@ -1493,6 +1493,7 @@ BarWidget {
             z: 21
             foreground: root.foreground
             accent: root.accent
+            preferenceAccent: root.neon
             errorColor: root.errorColor
             dim: root.dim
             fontFamily: root.fontFamily
