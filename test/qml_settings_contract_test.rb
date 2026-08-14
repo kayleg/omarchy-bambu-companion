@@ -256,8 +256,11 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/function resetOperationalState\(\).*connectionVerified = false/m, source)
     assert_includes source, "property bool initialViewResolved: false"
-    assert_match(/function resolveInitialView\(\).*if \(root\.initialViewResolved\) return.*initialViewResolved = true.*viewMode = nextIdleView\(\).*if \(viewMode === "setup"\).*settingsView\.load\(settingsDraft\(\)\).*root\.popupOpen = true/m,
-                 source)
+    resolve_initial = source[/function resolveInitialView\(\) \{.*?\n  \}/m]
+    refute_nil resolve_initial
+    assert_match(/if \(root\.initialViewResolved\) return.*initialViewResolved = true.*viewMode = nextIdleView\(\).*if \(viewMode === "setup"\).*settingsView\.load\(settingsDraft\(\)\)/m,
+                 resolve_initial)
+    refute_match(/popupOpen\s*=\s*true/, resolve_initial)
     assert_match(/Component\.onCompleted:.*componentReady = true.*Qt\.callLater\(root\.resolveInitialView\)/m,
                  source)
     refute_match(/Component\.onCompleted:.*viewMode = nextIdleView\(\)/m, source)
@@ -556,8 +559,12 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/function nextIdleView\(\).*requiresSetupConfirmation.*return "setup"/m,
                  source)
-    assert_match(/message\.event === "hello".*installationId = String\(message\.installationId \|\| ""\).*installationIdentified = installationId !== "".*if \(root\.requiresSetupConfirmation\).*openSettings\(\).*popupOpen = true.*sendConfiguration\(\).*return/m,
-                 source)
+    hello = source[/if \(message\.event === "hello"\) \{.*?\n      return\n    \}/m]
+    refute_nil hello
+    assert_match(/installationId = String\(message\.installationId \|\| ""\).*installationIdentified = installationId !== "".*if \(root\.requiresSetupConfirmation\).*viewMode = "setup".*settingsView\.load\(settingsDraft\(\)\).*sendConfiguration\(\).*return/m,
+                 hello)
+    refute_match(/popupOpen\s*=\s*true/, hello)
+    refute_match(/openSettings\(\)/, hello)
     assert_match(/function persistSettings\(draft\).*entry\.installationId = draft\.installationId === undefined.*root\.installationId/m,
                  source)
     assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*beginTlsProbe\(draft\).*return.*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*if \(backendChanged\) sendConfiguration\(draft\)/m,
@@ -628,7 +635,8 @@ class QmlSettingsContractTest < Minitest::Test
   def test_readme_documents_the_dedicated_settings_and_secret_replacement_flow
     readme = File.read(File.join(@root, "README.md"))
 
-    assert_match(/first load.*automatically opens.*setup panel/im, readme)
+    assert_match(/panel stays closed.*plugin reloads|reloads.*other plugins/im, readme)
+    refute_match(/automatically opens.*setup panel/im, readme)
     assert_match(/address.*serial.*LAN access code/im, readme)
     assert_match(/connection loader.*first fresh status\s+report/im, readme)
     assert_match(/reflow.*inside the panel margins/im, readme)

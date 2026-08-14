@@ -32,9 +32,10 @@ omarchy restart shell
 
 ## Setup
 
-On first load, Bambu Companion automatically opens its setup panel. A
-connection loader remains until the first fresh status report is received;
-only then does the live dashboard appear.
+Open the bar widget to configure a printer. The panel stays closed across
+plugin reloads and when other plugins are added. A connection loader remains
+until the first fresh status report is received; only then does the live
+dashboard appear.
 
 1. Enable local network access on the printer and obtain its serial number and
    LAN access code from the printer's network settings.
@@ -71,8 +72,8 @@ local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
 
 The plugin uses the current Omarchy theme accent for non-semantic highlights.
 The **Bar summary** toggle is applied immediately.
-Printer states keep fixed semantic colors: green for healthy/active states, red
-for errors and neutral gray when unavailable.
+The bar icon is green only while a print is running or finished, red on fail
+or error, and otherwise uses the default bar color.
 Other configuration changes are applied with **Save & Connect**.
 
 Settings and the live dashboard reflow at narrow widths so every control stays

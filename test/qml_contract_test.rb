@@ -299,7 +299,11 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, "import QtQuick.Effects"
     assert_includes @source,
                     'readonly property url printerIconSource: Qt.resolvedUrl("assets/printer-open-frame.svg")'
-    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(!root\.connectionVerified\s*\|\| !root\.connected \|\| root\.stale\s*\? root\.dim : root\.successColor\)/m,
+    assert_match(/function isSuccessPrintState\(state\).*RUNNING.*isFinishedState\(state\)/m,
+                 @source)
+    assert_match(/readonly property bool barPrintActive: root\.connected && !root\.stale\s*&& root\.isSuccessPrintState\(root\.displayGcodeState\)/m,
+                 @source)
+    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(root\.barPrintActive \? root\.successColor : root\.foreground\)/m,
                  @source)
     assert_includes @source, "component PrinterIcon: Item {"
     assert_match(/Image\s*{.*id: printerIconImage.*source: root\.printerIconSource.*visible: false.*layer\.enabled: true/m,

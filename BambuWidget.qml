@@ -141,10 +141,10 @@ BarWidget {
     || root.processError !== ""
   readonly property bool modelErrorActive: root.modelStatus === "error"
     && root.modelError !== ""
+  readonly property bool barPrintActive: root.connected && !root.stale
+    && root.isSuccessPrintState(root.displayGcodeState)
   readonly property color printerIconColor: root.errorActive ? root.errorColor
-    : (!root.connectionVerified
-    || !root.connected || root.stale
-    ? root.dim : root.successColor)
+    : (root.barPrintActive ? root.successColor : root.foreground)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   function open() {
@@ -177,11 +177,7 @@ BarWidget {
     if (root.initialViewResolved) return
     initialViewResolved = true
     viewMode = nextIdleView()
-    if (viewMode === "setup") {
-      settingsView.load(settingsDraft())
-      root.popupOpen = true
-      panelScroll.contentY = 0
-    }
+    if (viewMode === "setup") settingsView.load(settingsDraft())
   }
 
   function focusPanelTop() {
@@ -518,6 +514,11 @@ BarWidget {
     var value = String(state || "").toUpperCase()
     return value === "FINISH" || value === "FINISHED"
       || value === "COMPLETE" || value === "COMPLETED"
+  }
+
+  function isSuccessPrintState(state) {
+    return String(state || "").toUpperCase() === "RUNNING"
+      || root.isFinishedState(state)
   }
 
   function printerHasError() {
@@ -1068,8 +1069,8 @@ BarWidget {
       processError = ""
       processErrorReportUpdate = ""
       if (root.requiresSetupConfirmation) {
-        openSettings()
-        popupOpen = true
+        viewMode = "setup"
+        if (componentReady) settingsView.load(settingsDraft())
         sendConfiguration()
         return
       }
