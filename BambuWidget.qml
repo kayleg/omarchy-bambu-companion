@@ -141,10 +141,10 @@ BarWidget {
     || root.processError !== ""
   readonly property bool modelErrorActive: root.modelStatus === "error"
     && root.modelError !== ""
-  readonly property bool barPrintActive: root.connected && !root.stale
-    && root.isSuccessPrintState(root.displayGcodeState)
+  readonly property bool barFinishActive: root.connected && !root.stale
+    && root.isFinishedState(root.displayGcodeState)
   readonly property color printerIconColor: root.errorActive ? root.errorColor
-    : (root.barPrintActive ? root.successColor : root.foreground)
+    : (root.barFinishActive ? root.successColor : root.foreground)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   function open() {
@@ -514,11 +514,6 @@ BarWidget {
     var value = String(state || "").toUpperCase()
     return value === "FINISH" || value === "FINISHED"
       || value === "COMPLETE" || value === "COMPLETED"
-  }
-
-  function isSuccessPrintState(state) {
-    return String(state || "").toUpperCase() === "RUNNING"
-      || root.isFinishedState(state)
   }
 
   function printerHasError() {
@@ -1254,7 +1249,7 @@ BarWidget {
     hasVisualContent: true
     fixedWidth: root.vertical ? barSize : buttonContent.implicitWidth + scaledHorizontalMargin * 2
     fixedHeight: barSize
-    foreground: root.printerIconColor
+    foreground: root.foreground
     activeColor: root.accent
     active: root.popupOpen
     fontFamily: root.fontFamily
@@ -1286,7 +1281,7 @@ BarWidget {
         visible: !root.vertical && root.showBarSummary
         width: Math.min(implicitWidth, Style.space(220))
         text: root.compactLabel()
-        color: root.printerIconColor
+        color: root.foreground
         elide: Text.ElideRight
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption

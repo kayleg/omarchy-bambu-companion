@@ -299,11 +299,11 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, "import QtQuick.Effects"
     assert_includes @source,
                     'readonly property url printerIconSource: Qt.resolvedUrl("assets/printer-open-frame.svg")'
-    assert_match(/function isSuccessPrintState\(state\).*RUNNING.*isFinishedState\(state\)/m,
+    refute_includes @source, "function isSuccessPrintState"
+    refute_includes @source, "barPrintActive"
+    assert_match(/readonly property bool barFinishActive: root\.connected && !root\.stale\s*&& root\.isFinishedState\(root\.displayGcodeState\)/m,
                  @source)
-    assert_match(/readonly property bool barPrintActive: root\.connected && !root\.stale\s*&& root\.isSuccessPrintState\(root\.displayGcodeState\)/m,
-                 @source)
-    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(root\.barPrintActive \? root\.successColor : root\.foreground\)/m,
+    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(root\.barFinishActive \? root\.successColor : root\.foreground\)/m,
                  @source)
     assert_includes @source, "component PrinterIcon: Item {"
     assert_match(/Image\s*{.*id: printerIconImage.*source: root\.printerIconSource.*visible: false.*layer\.enabled: true/m,
@@ -426,7 +426,9 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_printer_states_use_semantic_colors_not_the_user_accent
-    assert_match(/Text\s*\{.*text: root\.compactLabel\(\).*color: root\.printerIconColor/m,
+    assert_match(/fixedHeight: barSize\s*foreground: root\.foreground/, @source)
+    assert_match(/text: root\.compactLabel\(\)\s*color: root\.foreground/, @source)
+    refute_match(/text: root\.compactLabel\(\)\s*color: root\.printerIconColor/,
                  @source)
     assert_match(/width: Math\.max\(0, \(parent\.width - 4\) \* pane\.percent \/ 100\)\s*color: pane\.accent/m,
                  @telemetry_source)

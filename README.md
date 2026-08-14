@@ -72,8 +72,9 @@ local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
 
 The plugin uses the current Omarchy theme accent for non-semantic highlights.
 The **Bar summary** toggle is applied immediately.
-The bar icon is green only while a print is running or finished, red on fail
-or error, and otherwise uses the default bar color.
+The bar icon is green only while the printer is in the temporary finish state,
+red on fail or error, and otherwise uses the default bar color. Recap KPIs in
+the bar always use the default color.
 Other configuration changes are applied with **Save & Connect**.
 
 Settings and the live dashboard reflow at narrow widths so every control stays
