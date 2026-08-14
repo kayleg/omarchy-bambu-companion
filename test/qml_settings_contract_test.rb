@@ -186,8 +186,8 @@ class QmlSettingsContractTest < Minitest::Test
     refute_includes source, 'objectName: "NETWORK"'
     refute_includes source, 'objectName: "ADVANCED"'
     ids = %w[printerNameInput hostInput serialInput mqttPortInput ftpsPortInput
-             usernameInput accessCodeInput maxSegmentsInput accentColorInput
-             barSummarySwitch]
+             usernameInput accessCodeInput maxSegmentsInput explosionFactorInput accentColorInput
+             autoRotateSwitch barSummarySwitch]
     ids.each do |id|
       assert_match(/id:\s*#{Regexp.escape(id)}\b/, source)
     end
@@ -202,6 +202,8 @@ class QmlSettingsContractTest < Minitest::Test
     refute_match(/demoMode|Offline demo/i, source)
     assert_match(/id:\s*serialInput\b/, source)
     assert_match(/nextSegments < 1000 \|\| nextSegments > 100000/, source)
+    assert_match(/nextExplosionFactor < 0 \|\| nextExplosionFactor > 500/, source)
+    assert_match(/explosionFactor:\s*nextExplosionFactor/, source)
     assert_match(/accentColor:\s*nextAccentColor/, source)
     assert_match(/\^#\[0-9A-Fa-f\]\{6\}\$/, source)
     assert_match(/function load\(draft\).*printerNameInput\.text = String\(values\.printerName \|\| "3D Printer"\)/m,
@@ -227,7 +229,7 @@ class QmlSettingsContractTest < Minitest::Test
     assert_operator source.scan(/TextField\s*\{.*?clip: true/m).length, :>=, 7
     assert_match(/id: accessCodeRow.*id: accessCodeInput.*id: forgetCodeInline.*text: "FORGET CODE"/m,
                  source)
-    assert_match(/id: preferencesGrid.*id: maxSegmentsInput.*id: accentColorInput/m,
+    assert_match(/id: preferencesGrid.*id: maxSegmentsInput.*id: explosionFactorInput.*id: accentColorInput.*id: autoRotateSwitch/m,
                  source)
     assert_match(/id: preferencesGrid.*id: barSummaryColumn.*id: barSummarySwitch/m,
                  source)
@@ -394,22 +396,70 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
 
     widget = File.read(File.join(@root, "BambuWidget.qml"))
-    assert_match(/function persistBarSummary\(enabled\).*entry\.showBarSummary = enabled === true.*return root\.commitSettingsEntry\(entry\)/m,
+    assert_match(/function persistBarSummary\(enabled\).*persistLocalPreference\("showBarSummary", enabled === true\)/m,
                  widget)
     assert_match(/BambuSettingsView\s*\{.*onBarSummaryToggled: function\(enabled\).*root\.persistBarSummary\(enabled\)/m,
                  widget)
   end
 
-  def test_bar_summary_is_a_plain_native_toggle_under_its_label
+  def test_explosion_factor_is_loaded_validated_and_saved_with_the_form
     source = settings_source
 
-    assert_match(/id: preferencesGrid.*columns: width >= Style\.space\(260\) \? 2 : 1.*id: accentColorInput.*id: barSummaryColumn\s*width: preferencesGrid\.cellWidth.*text: "BAR SUMMARY".*Item \{\s*width: parent\.width\s*height: accentColorInput\.height.*ToggleSwitch \{\s*id: barSummarySwitch.*anchors\.left: parent\.left.*anchors\.verticalCenter: parent\.verticalCenter/m,
+    assert_match(/readonly property bool inputActive:.*explosionFactorInput\.activeFocus/m,
                  source)
-    assert_match(/id: barSummarySwitch.*cursorPad: Math\.max\(0, Math\.min\(6,\s*\(parent\.height - trackHeight\) \/ 2\)\)/m,
+    assert_match(/function load\(draft\).*explosionFactorInput\.text = String\(values\.explosionFactor === undefined\s*\? 100 : values\.explosionFactor\)/m,
+                 source)
+    assert_match(/id: explosionFactorInput.*maximumLength: 3.*inputMethodHints: Qt\.ImhDigitsOnly.*placeholderText: "100"/m,
+                 source)
+    assert_match(/var explosionText = String\(explosionFactorInput\.text \|\| ""\)\.trim\(\).*var nextExplosionFactor = Number\(explosionText\).*nextExplosionFactor < 0 \|\| nextExplosionFactor > 500.*Explode factor must be between 0 and 500/m,
+                 source)
+    assert_match(/var draft = \{.*maxSegments: nextSegments.*explosionFactor: nextExplosionFactor.*accentColor: nextAccentColor/m,
+                 source)
+  end
+
+  def test_auto_rotate_default_is_loaded_and_saved_with_the_form
+    source = settings_source
+
+    assert_includes source, "property bool autoRotate: true"
+    assert_match(/function load\(draft\).*autoRotate = values\.autoRotate !== false/m,
+                 source)
+    assert_match(/var draft = \{.*autoRotate: form\.autoRotate/m, source)
+    assert_match(/id: autoRotateColumn\s*width: parent\.width.*text: "AUTO-ROTATE BY DEFAULT".*ToggleSwitch\s*\{.*id: autoRotateSwitch.*checked: form\.autoRotate.*onToggled: form\.autoRotate = !form\.autoRotate.*id: barSummaryColumn/m,
+                 source)
+  end
+
+  def test_local_toggles_are_plain_native_controls_on_dedicated_rows
+    source = settings_source
+
+    assert_match(/id: settingsContent\s*width: settingsScroll\.width\s*spacing: Style\.space\(2\)/,
+                 source)
+    assert_match(/id: localToggleRows\s*width: parent\.width.*id: autoRotateColumn\s*width: parent\.width.*Item \{\s*width: parent\.width\s*height: autoRotateSwitch\.trackHeight.*id: autoRotateSwitch\s*cursorPad: 0.*id: barSummaryColumn\s*width: parent\.width.*text: "BAR SUMMARY".*Item \{\s*width: parent\.width\s*height: barSummarySwitch\.trackHeight.*ToggleSwitch \{\s*id: barSummarySwitch\s*cursorPad: 0.*anchors\.left: parent\.left.*anchors\.verticalCenter: parent\.verticalCenter/m,
                  source)
     refute_includes source, "id: barSummaryRow"
     refute_includes source, "id: barSummaryField"
     refute_includes source, 'text: form.showBarSummary ? "SHOWN" : "HIDDEN"'
+  end
+
+  def test_accent_color_has_immediate_clickable_presets_on_a_full_width_row
+    source = settings_source
+    widget = File.read(File.join(@root, "BambuWidget.qml"))
+
+    assert_includes source, "signal accentColorSelected(string color)"
+    assert_match(/function applyAccentPreset\(color\).*accentColorInput\.text = normalized.*accentColorSelected\(normalized\)/m,
+                 source)
+    assert_match(/id: accentColorColumn\s*width: parent\.width.*text: "ACCENT COLOR".*id: accentColorRow\s*width: parent\.width.*id: accentColorInput.*id: accentPresetRow.*model: \["#39FF88", "#45B7FF", "#A78BFA", "#FFB347", "#FF5F8F"\].*radius: width \/ 2.*onClicked: form\.applyAccentPreset\(modelData\)/m,
+                 source)
+
+    preferences = source.index("id: preferencesGrid")
+    accent = source.index("id: accentColorColumn")
+    toggles = source.index("id: localToggleRows")
+    assert_operator preferences, :<, accent
+    assert_operator accent, :<, toggles
+
+    assert_match(/function persistAccentColor\(color\).*validAccentColor\(normalized\).*persistLocalPreference\("accentColor", normalized\)/m,
+                 widget)
+    assert_match(/BambuSettingsView\s*\{.*onAccentColorSelected: function\(color\).*root\.persistAccentColor\(color\)/m,
+                 widget)
   end
 
   def test_settings_chrome_matches_the_dashboard_proportions
@@ -464,6 +514,7 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes body, 'username: "bblp"'
     assert_includes body, "maxSegments: root.segmentLimit()"
     assert_includes body, "accentColor: root.validAccentColor(root.accentColor)"
+    assert_includes body, "autoRotate: root.autoRotate"
     assert_includes body, "showBarSummary: root.showBarSummary"
     assert_includes body, 'mqttTlsFingerprint: ""'
     assert_includes body, 'ftpsTlsFingerprint: ""'
@@ -545,6 +596,8 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/host.*mqttPort.*ftpsPort.*serial.*username.*maxSegments/m,
                  backend_change)
     refute_match(/accentColor/, backend_change)
+    refute_match(/explosionFactor/, backend_change)
+    refute_match(/autoRotate/, backend_change)
     assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*mqttTlsFingerprint = root\.mqttTlsFingerprint.*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*if \(backendChanged\) sendConfiguration\(draft\)/m,
                  source)
   end

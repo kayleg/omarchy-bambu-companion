@@ -57,7 +57,8 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  source)
     assert_includes source, "interval: 50"
     assert_includes source, "function drawBuildPlateGrid(context)"
-    assert_includes source, "property bool autoRotate: true"
+    assert_includes source, "property bool autoRotateDefault: true"
+    assert_includes source, "property bool autoRotate: viewport.autoRotateDefault"
     assert_match(/running:\s*viewport\.panelActive.*modelCanvas\.autoRotate/m, source)
     assert_match(/text:\s*modelCanvas\.autoRotate \? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF"/,
                  source)

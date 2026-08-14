@@ -102,7 +102,9 @@ BarWidget {
   readonly property string serial: String(setting("serial", ""))
   readonly property string username: String(setting("username", "bblp"))
   readonly property int maxSegments: Number(setting("maxSegments", 40000))
+  readonly property real explosionFactor: Number(setting("explosionFactor", 100))
   readonly property string accentColor: String(setting("accentColor", "#39FF88"))
+  readonly property bool autoRotate: setting("autoRotate", true) !== false
   readonly property bool showBarSummary: setting("showBarSummary", true) !== false
   readonly property string mqttTlsFingerprint:
     String(setting("mqttTlsFingerprint", ""))
@@ -205,8 +207,10 @@ BarWidget {
       serial: root.serial,
       username: root.username,
       maxSegments: root.maxSegments,
+      explosionFactor: root.configuredExplosionFactor(),
       accentColor: root.validAccentColor(root.accentColor)
         ? root.accentColor : "#39FF88",
+      autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
       mqttTlsFingerprint: root.mqttTlsFingerprint,
       ftpsTlsFingerprint: root.ftpsTlsFingerprint
@@ -262,7 +266,9 @@ BarWidget {
     entry.serial = draft.serial
     entry.username = draft.username
     entry.maxSegments = draft.maxSegments
+    entry.explosionFactor = draft.explosionFactor
     entry.accentColor = draft.accentColor
+    entry.autoRotate = draft.autoRotate
     entry.showBarSummary = draft.showBarSummary
     entry.mqttTlsFingerprint = String(draft.mqttTlsFingerprint || "")
     entry.ftpsTlsFingerprint = String(draft.ftpsTlsFingerprint || "")
@@ -271,17 +277,27 @@ BarWidget {
     return root.commitSettingsEntry(entry)
   }
 
-  // The bar-only preference is intentionally independent from the connection
-  // form: changing it must not save partially edited printer credentials.
-  function persistBarSummary(enabled) {
+  // View-only preferences must not save partially edited printer credentials
+  // or restart the printer session.
+  function persistLocalPreference(name, value) {
     var current = root.settings && typeof root.settings === "object"
       ? root.settings : ({})
     var entry = { id: root.moduleName }
     for (var key in current) {
       if (key !== "id") entry[key] = current[key]
     }
-    entry.showBarSummary = enabled === true
+    entry[name] = value
     return root.commitSettingsEntry(entry)
+  }
+
+  function persistAccentColor(color) {
+    var normalized = String(color || "").toUpperCase()
+    if (!root.validAccentColor(normalized)) return false
+    return root.persistLocalPreference("accentColor", normalized)
+  }
+
+  function persistBarSummary(enabled) {
+    return root.persistLocalPreference("showBarSummary", enabled === true)
   }
 
   function backendSettingsChanged(draft) {
@@ -532,6 +548,11 @@ BarWidget {
     return Math.max(0, Math.min(100000, Math.floor(configured)))
   }
 
+  function configuredExplosionFactor() {
+    var configured = finiteNumber(root.explosionFactor, 100)
+    return Math.max(0, Math.min(500, Math.round(configured)))
+  }
+
   function formatTemp(value) {
     return isFinite(Number(value)) ? Math.round(Number(value)) + "°" : "--°"
   }
@@ -681,8 +702,10 @@ BarWidget {
       serial: "",
       username: "bblp",
       maxSegments: root.segmentLimit(),
+      explosionFactor: root.configuredExplosionFactor(),
       accentColor: root.validAccentColor(root.accentColor)
         ? root.accentColor : "#39FF88",
+      autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
       mqttTlsFingerprint: "",
       ftpsTlsFingerprint: "",
@@ -1428,6 +1451,8 @@ BarWidget {
               activeSegments: root.activeSegments
               activeBounds: root.activeBounds
               zCurrent: root.zCurrent
+              autoRotateDefault: root.autoRotate
+              explosionFactor: root.configuredExplosionFactor()
               modelStatus: root.modelStatus
               modelError: root.modelError || root.processError
               onSourceRequested: function(source) {
@@ -1478,6 +1503,12 @@ BarWidget {
             secretRequired: root.secretRequired
             secretStored: root.secretStored
             secretStatusKnown: root.secretStatusKnown
+            onAccentColorSelected: function(color) {
+              if (!root.persistAccentColor(color)) {
+                settingsView.restoreAccentColor(root.neon)
+                settingsView.reportError("Accent color setting could not be saved")
+              }
+            }
             onBackRequested: {
               if (root.requiresSetupConfirmation) root.close()
               else root.backToStatus()

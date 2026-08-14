@@ -18,11 +18,13 @@ Item {
   property bool printing: false
   property bool previewAvailable: false
   property bool gcodeAvailable: false
+  property bool autoRotateDefault: true
   property string selectedSource: "gcode"
   property url previewSource: ""
   property var activeSegments: []
   property var activeBounds: ({})
   property real zCurrent: NaN
+  property real explosionFactor: 100
   property string modelStatus: "idle"
   property string modelError: ""
 
@@ -130,7 +132,12 @@ Item {
       property real pitch: -0.28
       property real zoom: 1
       property real wheelStepAccumulator: 0
-      property bool autoRotate: true
+      property bool autoRotate: viewport.autoRotateDefault
+      property bool exploded: false
+      readonly property real explosionFactor: Math.max(0, Math.min(500,
+        isFinite(Number(viewport.explosionFactor))
+          ? Number(viewport.explosionFactor) : 100))
+      property real explosionProgress: exploded ? 1 : 0
       property bool dragging: false
       property real lastDragX: 0
       property real lastDragY: 0
@@ -156,6 +163,13 @@ Item {
       property real projectionMaxY: 1
       property real projectionMinZ: 0
       property real projectionMaxZ: 1
+
+      Behavior on explosionProgress {
+        NumberAnimation {
+          duration: 350
+          easing.type: Easing.InOutCubic
+        }
+      }
 
       function segmentIsFinite(segment) {
         if (!Array.isArray(segment) || segment.length !== 6) return false
@@ -369,10 +383,22 @@ Item {
         projectionMaxZ = isFinite(maxZ) ? maxZ : 1
       }
 
+      function displayZ(z) {
+        var value = Number(z)
+        if (!isFinite(value)) return projectionMinZ
+        var progress = Number(explosionProgress)
+        if (!isFinite(progress)) progress = 0
+        progress = Math.max(0, Math.min(1, progress))
+        var scale = 1 + progress * explosionFactor
+        return projectionMinZ + (value - projectionMinZ) * scale
+      }
+
       function projectionFrame(viewportWidth, viewportHeight, yawAngle, pitchAngle, padding) {
         var centerX = (projectionMinX + projectionMaxX) / 2
         var centerY = (projectionMinY + projectionMaxY) / 2
-        var centerZ = (projectionMinZ + projectionMaxZ) / 2
+        var minDisplayZ = displayZ(projectionMinZ)
+        var maxDisplayZ = displayZ(projectionMaxZ)
+        var centerZ = (minDisplayZ + maxDisplayZ) / 2
         var yawCosine = Math.cos(yawAngle)
         var yawSine = Math.sin(yawAngle)
         var pitchCosine = Math.cos(pitchAngle)
@@ -386,7 +412,7 @@ Item {
             var rotatedX = x * yawCosine - y * yawSine
             var rotatedY = x * yawSine + y * yawCosine
             for (var zIndex = 0; zIndex < 2; zIndex++) {
-              var z = (zIndex ? projectionMaxZ : projectionMinZ) - centerZ
+              var z = (zIndex ? maxDisplayZ : minDisplayZ) - centerZ
               var pitchedY = rotatedY * pitchCosine - z * pitchSine
               var pitchedZ = rotatedY * pitchSine + z * pitchCosine
               var u = rotatedX - pitchedY * 0.34
@@ -428,13 +454,13 @@ Item {
         framePitchSine = Math.sin(pitch)
         frameModelCenterX = (projectionMinX + projectionMaxX) / 2
         frameModelCenterY = (projectionMinY + projectionMaxY) / 2
-        frameModelCenterZ = (projectionMinZ + projectionMaxZ) / 2
+        frameModelCenterZ = (displayZ(projectionMinZ) + displayZ(projectionMaxZ)) / 2
       }
 
       function projectedPoint(x, y, z) {
         var translatedX = x - frameModelCenterX
         var translatedY = y - frameModelCenterY
-        var translatedZ = z - frameModelCenterZ
+        var translatedZ = displayZ(z) - frameModelCenterZ
         var rotatedX = translatedX * frameYawCosine - translatedY * frameYawSine
         var rotatedY = translatedX * frameYawSine + translatedY * frameYawCosine
         var pitchedY = rotatedY * framePitchCosine - translatedZ * framePitchSine
@@ -582,6 +608,7 @@ Item {
 
       onWidthChanged: requestVisiblePaint(false)
       onHeightChanged: requestVisiblePaint(false)
+      onExplosionProgressChanged: requestVisiblePaint(false)
       Component.onCompleted: requestVisiblePaint(true)
     }
 
@@ -787,6 +814,25 @@ Item {
       }
     }
 
+    BambuButton {
+      id: explodeButton
+      visible: viewport.selectedSource === "gcode"
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(10)
+      anchors.bottom: modelFooter.top
+      anchors.bottomMargin: Style.space(8)
+      width: Style.space(132)
+      height: Style.space(30)
+      z: 2
+      text: modelCanvas.exploded ? "EXPLODE ON" : "EXPLODE OFF"
+      enabled: viewport.gcodeAvailable
+      active: modelCanvas.exploded
+      foreground: modelCanvas.exploded ? viewport.neon : viewport.foreground
+      accent: viewport.accent
+      bordered: true
+      onClicked: modelCanvas.exploded = !modelCanvas.exploded
+    }
+
     Row {
       id: modelFooter
       anchors.left: parent.left
@@ -971,6 +1017,12 @@ Item {
     modelCanvas.requestVisiblePaint(false)
   }
   onNeonChanged: modelCanvas.requestVisiblePaint(false)
+  onAutoRotateDefaultChanged: {
+    modelCanvas.autoRotate = viewport.autoRotateDefault
+    modelCanvas.lastFrameTimestamp = 0
+    modelCanvas.requestVisiblePaint(false)
+  }
+  onExplosionFactorChanged: modelCanvas.requestVisiblePaint(false)
   onErrorActiveChanged: modelCanvas.requestVisiblePaint(false)
   onErrorColorChanged: modelCanvas.requestVisiblePaint(false)
   onPanelActiveChanged: {

@@ -65,11 +65,13 @@ local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
 | MQTT / FTPS username | `bblp` | Local Bambu service account |
 | LAN access code | — | Password shown by the printer |
 | Wireframe segment limit | `40000` | Detail/performance limit, from 1,000 to 100,000 |
+| Explode factor | `100` | Additional vertical layer-spacing factor, from 0 to 500 |
 | Accent color | `#39FF88` | Wireframe and active-state color |
+| Auto-rotate by default | enabled | Initial rotation state when the viewport loads |
 | Bar summary | enabled | Show or hide status, progress and temperatures in the bar |
 
-The **Bar summary** toggle is applied immediately. Other configuration changes
-are applied with **Save & Connect**.
+The **Bar summary** toggle and accent-color presets are applied immediately.
+Other configuration changes are applied with **Save & Connect**.
 
 Settings and the live dashboard reflow at narrow widths so every control stays
 inside the panel margins.
@@ -92,6 +94,7 @@ name and visual preferences so the plugin is ready for a new connection.
 - Speed profile, fan speeds, Wi-Fi signal and last report time.
 - Landscape dashboard with telemetry on the left and print preview on the right.
 - Selectable slicer image and sliced G-code route when available.
+- Animated exploded G-code layers with a configurable spacing factor.
 - Animated simulated nozzle marker on the current G-code layer.
 - Configurable accent color and wireframe detail limit.
 - Automatic reconnect after temporary network loss.
@@ -109,7 +112,8 @@ provide only the route view.
 
 The **Route** and **Image** icon buttons are always visible below the coordinate
 badge. A source that is unavailable is disabled. The 2D image is selected by
-default when both exist; switching views preserves the G-code camera.
+default when G-code is unavailable; otherwise the G-code route is selected.
+Switching views preserves the G-code camera.
 
 A new print starts a new preview generation, so late data from the previous job
 cannot replace it. The downloaded file is private and temporary, and is removed
@@ -129,6 +133,7 @@ Preview controls:
 | Mouse wheel | Zoom from `0.50×` to `4.00×` |
 | Route / Image icons | Select an available preview source |
 | Auto-rotate | Enable or disable continuous rotation |
+| Explode | Animate additional vertical spacing between G-code layers |
 
 Printed paths use the configured accent color; remaining paths stay subdued.
 While printing, a small animated point loops over the outer-wall segments of

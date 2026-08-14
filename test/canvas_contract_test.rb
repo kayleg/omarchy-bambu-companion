@@ -41,6 +41,15 @@ class CanvasContractTest < Minitest::Test
                  @source)
   end
 
+  def test_auto_rotation_uses_the_configured_default_but_remains_session_toggleable
+    assert_includes @source, "property bool autoRotateDefault: true"
+    assert_includes @source, "property bool autoRotate: viewport.autoRotateDefault"
+    assert_match(/onAutoRotateDefaultChanged:\s*\{.*modelCanvas\.autoRotate = viewport\.autoRotateDefault.*modelCanvas\.lastFrameTimestamp = 0.*modelCanvas\.requestVisiblePaint\(false\)/m,
+                 @source)
+    assert_match(/id:\s*rotationButton.*onClicked:\s*\{.*modelCanvas\.autoRotate = !modelCanvas\.autoRotate/m,
+                 @source)
+  end
+
   def test_each_frame_has_a_fixed_segment_budget_without_geometry_copies
     assert_match(/readonly property int motionSegmentBudget:\s*10000/, @source)
     assert_match(/readonly property int stillSegmentBudget:\s*40000/, @source)
@@ -86,11 +95,14 @@ class CanvasContractTest < Minitest::Test
   end
 
   def test_projection_frame_centers_and_fills_the_viewport_at_each_angle
+    display = extract_function("displayZ")
     function = extract_function("projectionFrame")
     script = <<~JAVASCRIPT
       var projectionMinX = 107.453, projectionMaxX = 144.607
       var projectionMinY = 80.309, projectionMaxY = 99.606
       var projectionMinZ = 0.2, projectionMaxZ = 30.0
+      var explosionFactor = 20, explosionProgress = 1
+      #{display}
       #{function}
       var frames = [0, Math.PI / 3, Math.PI].map(function(angle) {
         return projectionFrame(600, 360, angle, -0.28, 24)
@@ -250,6 +262,52 @@ class CanvasContractTest < Minitest::Test
     assert_equal 4, values.fetch("zooms")[2]
     assert_equal 0.5, values.fetch("zooms")[3]
     assert_equal ["1", "1.12", "1"], values.fetch("labels")
+  end
+
+  def test_exploded_view_scales_only_display_z_with_a_bounded_animation
+    assert_includes @source, "property real explosionFactor: 100"
+    assert_match(/readonly property real explosionFactor: Math\.max\(0, Math\.min\(500,.*viewport\.explosionFactor.*100\)\)/m,
+                 @source)
+    assert_includes @source, "property bool exploded: false"
+    assert_includes @source, "property real explosionProgress: exploded ? 1 : 0"
+    assert_match(/Behavior on explosionProgress\s*{\s*NumberAnimation\s*{.*duration:\s*350.*easing\.type:\s*Easing\.InOutCubic/m,
+                 @source)
+    assert_match(/onExplosionProgressChanged:\s*requestVisiblePaint\(false\)/,
+                 @source)
+    assert_match(/onExplosionFactorChanged:\s*modelCanvas\.requestVisiblePaint\(false\)/,
+                 @source)
+
+    function = extract_function("displayZ")
+    values = run_javascript(<<~JAVASCRIPT)
+      var projectionMinZ = 0.2
+      var explosionFactor = 20
+      #{function}
+      var explosionProgress = 0
+      var collapsed = displayZ(0.4)
+      explosionProgress = 0.5
+      var halfway = displayZ(0.4)
+      explosionProgress = 1
+      var expanded = displayZ(0.4)
+      var base = displayZ(0.2)
+      explosionProgress = 2
+      var clamped = displayZ(0.4)
+      console.log(JSON.stringify([collapsed, halfway, expanded, base, clamped]))
+    JAVASCRIPT
+
+    assert_in_delta 0.4, values[0], 1e-9
+    assert_in_delta 2.4, values[1], 1e-9
+    assert_in_delta 4.4, values[2], 1e-9
+    assert_in_delta 0.2, values[3], 1e-9
+    assert_in_delta 4.4, values[4], 1e-9
+    assert_match(/function projectionFrame.*var minDisplayZ = displayZ\(projectionMinZ\).*var maxDisplayZ = displayZ\(projectionMaxZ\)/m,
+                 @source)
+    assert_match(/function projectedPoint.*var translatedZ = displayZ\(z\) - frameModelCenterZ/m,
+                 @source)
+  end
+
+  def test_explode_button_is_above_the_z_footer_and_only_controls_gcode
+    assert_match(/BambuButton\s*{\s*id:\s*explodeButton.*visible:\s*viewport\.selectedSource === "gcode".*anchors\.right:\s*parent\.right.*anchors\.bottom:\s*modelFooter\.top.*text:\s*modelCanvas\.exploded \? "EXPLODE ON" : "EXPLODE OFF".*enabled:\s*viewport\.gcodeAvailable.*onClicked:\s*modelCanvas\.exploded = !modelCanvas\.exploded/m,
+                 @source)
   end
 
   def test_print_preparation_and_error_states_are_explained_and_colored

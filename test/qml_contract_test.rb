@@ -378,7 +378,7 @@ class QmlContractTest < Minitest::Test
     manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
     settings = manifest.fetch("barWidget").fetch("schema").map { |entry| entry.fetch("key") }
 
-    assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments accentColor showBarSummary
+    assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments explosionFactor accentColor autoRotate showBarSummary
                     mqttTlsFingerprint ftpsTlsFingerprint], settings
     refute(settings.any? { |key| key.match?(/access|code|password|secret/i) })
     settings.each { |key| assert_includes @source, "setting(\"#{key}\"," }
@@ -406,6 +406,66 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/readonly property color neon: root\.validAccentColor\(root\.accentColor\).*root\.accentColor.*"#39FF88"/m,
                  @source)
+  end
+
+  def test_explosion_factor_is_a_local_persisted_view_preference
+    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
+    defaults = manifest.fetch("barWidget").fetch("defaults")
+    schema = manifest.fetch("barWidget").fetch("schema")
+    explode_schema = schema.find { |entry| entry["key"] == "explosionFactor" }
+
+    assert_equal 100, defaults["explosionFactor"]
+    assert_equal "integer", explode_schema&.fetch("type")
+    assert_equal 0, explode_schema&.fetch("min")
+    assert_equal 500, explode_schema&.fetch("max")
+    assert_includes @source, 'setting("explosionFactor", 100)'
+    assert_match(/function settingsDraft\(\).*explosionFactor: root\.configuredExplosionFactor\(\)/m,
+                 @source)
+    assert_match(/function persistSettings\(draft\).*entry\.explosionFactor = draft\.explosionFactor/m,
+                 @source)
+    assert_match(/BambuModelViewport\s*\{.*explosionFactor: root\.configuredExplosionFactor\(\)/m,
+                 @source)
+
+    backend_change = @source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
+    configuration = @source[/function configuration\(\) \{.*?\n  \}/m]
+    draft_configuration = @source[/function configurationForDraft\(draft\) \{.*?\n  \}/m]
+    refute_includes backend_change, "explosionFactor"
+    refute_includes configuration, "explosionFactor"
+    refute_includes draft_configuration, "explosionFactor"
+  end
+
+  def test_accent_preset_is_a_local_preference_that_cannot_reconnect_the_daemon
+    assert_match(/function persistAccentColor\(color\).*persistLocalPreference\("accentColor", normalized\)/m,
+                 @source)
+
+    backend_change = @source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
+    configuration = @source[/function configuration\(\) \{.*?\n  \}/m]
+    draft_configuration = @source[/function configurationForDraft\(draft\) \{.*?\n  \}/m]
+    refute_includes backend_change, "accentColor"
+    refute_includes configuration, "accentColor"
+    refute_includes draft_configuration, "accentColor"
+  end
+
+  def test_auto_rotate_default_is_a_local_persisted_view_preference
+    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
+    defaults = manifest.fetch("barWidget").fetch("defaults")
+    schema = manifest.fetch("barWidget").fetch("schema")
+    rotate_schema = schema.find { |entry| entry["key"] == "autoRotate" }
+
+    assert_equal true, defaults["autoRotate"]
+    assert_equal "boolean", rotate_schema&.fetch("type")
+    assert_includes @source, 'setting("autoRotate", true) !== false'
+    assert_match(/function settingsDraft\(\).*autoRotate: root\.autoRotate/m,
+                 @source)
+    assert_match(/function persistSettings\(draft\).*entry\.autoRotate = draft\.autoRotate/m,
+                 @source)
+    assert_match(/BambuModelViewport\s*\{.*autoRotateDefault: root\.autoRotate/m,
+                 @source)
+
+    backend_change = @source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
+    configuration = @source[/function configuration\(\) \{.*?\n  \}/m]
+    refute_includes backend_change, "autoRotate"
+    refute_includes configuration, "autoRotate"
   end
 
   def test_bar_summary_setting_hides_only_the_horizontal_recap

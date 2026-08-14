@@ -19,6 +19,7 @@ Item {
   property bool secretRequired: false
   property bool secretStored: false
   property bool secretStatusKnown: false
+  property bool autoRotate: true
   property bool showBarSummary: true
   property string validationError: ""
 
@@ -26,13 +27,15 @@ Item {
     || mqttPortInput.activeFocus || ftpsPortInput.activeFocus
     || accessCodeInput.activeFocus || printerNameInput.activeFocus
     || serialInput.activeFocus || usernameInput.activeFocus
-    || maxSegmentsInput.activeFocus || accentColorInput.activeFocus
+    || maxSegmentsInput.activeFocus || explosionFactorInput.activeFocus
+    || accentColorInput.activeFocus
 
   signal backRequested()
   signal saveRequested(var draft, string accessCode)
   signal trustRequested(var draft, string accessCode)
   signal disconnectRequested()
   signal forgetCodeRequested()
+  signal accentColorSelected(string color)
   signal barSummaryToggled(bool enabled)
   signal inputFocusReleased()
 
@@ -52,7 +55,10 @@ Item {
     serialInput.text = String(values.serial || "")
     usernameInput.text = String(values.username || "bblp")
     maxSegmentsInput.text = String(values.maxSegments || "")
+    explosionFactorInput.text = String(values.explosionFactor === undefined
+      ? 100 : values.explosionFactor)
     accentColorInput.text = String(values.accentColor || "#39FF88")
+    autoRotate = values.autoRotate !== false
     showBarSummary = values.showBarSummary !== false
     validationError = ""
     clearAccessCode()
@@ -69,6 +75,18 @@ Item {
 
   function reportError(message) {
     validationError = String(message || "")
+  }
+
+  function applyAccentPreset(color) {
+    var normalized = String(color || "").toUpperCase()
+    if (!/^#[0-9A-F]{6}$/.test(normalized)) return
+    accentColorInput.text = normalized
+    validationError = ""
+    accentColorSelected(normalized)
+  }
+
+  function restoreAccentColor(color) {
+    accentColorInput.text = String(color || "#39FF88").toUpperCase()
   }
 
   function parsePort(text, label) {
@@ -132,6 +150,15 @@ Item {
       return
     }
 
+    var explosionText = String(explosionFactorInput.text || "").trim()
+    var nextExplosionFactor = Number(explosionText)
+    if (!/^\d+$/.test(explosionText) || !isFinite(nextExplosionFactor)
+        || Math.floor(nextExplosionFactor) !== nextExplosionFactor
+        || nextExplosionFactor < 0 || nextExplosionFactor > 500) {
+      validationError = "Explode factor must be between 0 and 500"
+      return
+    }
+
     var nextAccentColor = String(accentColorInput.text || "").trim()
     if (!/^#[0-9A-Fa-f]{6}$/.test(nextAccentColor)) {
       validationError = "Accent color must use #RRGGBB"
@@ -147,7 +174,9 @@ Item {
       serial: nextSerial,
       username: nextUsername,
       maxSegments: nextSegments,
+      explosionFactor: nextExplosionFactor,
       accentColor: nextAccentColor,
+      autoRotate: form.autoRotate,
       showBarSummary: form.showBarSummary
     }
     if (trustCertificate === true) {
@@ -239,7 +268,7 @@ Item {
     Column {
       id: settingsContent
       width: settingsScroll.width
-      spacing: Style.space(5)
+      spacing: Style.space(2)
 
       Column {
         width: parent.width
@@ -446,32 +475,120 @@ Item {
         Column {
           width: preferencesGrid.cellWidth
           spacing: Style.space(4)
-          FieldLabel { text: "ACCENT COLOR" }
+          FieldLabel { text: "EXPLODE FACTOR" }
+          BambuTextField {
+            id: explosionFactorInput
+            width: parent.width
+            clip: true
+            maximumLength: 3
+            inputMethodHints: Qt.ImhDigitsOnly
+            placeholderText: "100"
+            foreground: form.foreground
+            accent: form.accent
+          }
+        }
+
+      }
+
+      Column {
+        id: accentColorColumn
+        width: parent.width
+        spacing: Style.space(4)
+        FieldLabel { text: "ACCENT COLOR" }
+
+        Row {
+          id: accentColorRow
+          width: parent.width
+          spacing: Style.space(8)
+
           BambuTextField {
             id: accentColorInput
-            width: parent.width
+            width: Math.max(0, parent.width - accentPresetRow.implicitWidth
+              - parent.spacing)
             clip: true
             maximumLength: 7
             placeholderText: "#39FF88"
             foreground: form.foreground
             accent: form.accent
           }
+
+          Row {
+            id: accentPresetRow
+            height: accentColorInput.height
+            spacing: Style.space(6)
+
+            Repeater {
+              model: ["#39FF88", "#45B7FF", "#A78BFA", "#FFB347", "#FF5F8F"]
+
+              Rectangle {
+                required property string modelData
+                readonly property bool selected:
+                  String(accentColorInput.text).toUpperCase() === modelData
+                width: Style.space(20)
+                height: width
+                radius: width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                color: modelData
+                opacity: presetMouse.containsMouse || selected ? 1 : 0.72
+                border.width: selected ? 2 : 1
+                border.color: selected ? form.foreground
+                  : Qt.rgba(form.foreground.r, form.foreground.g,
+                            form.foreground.b, 0.35)
+
+                MouseArea {
+                  id: presetMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: form.applyAccentPreset(modelData)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      Column {
+        id: localToggleRows
+        width: parent.width
+        spacing: Style.space(4)
+
+        Column {
+          id: autoRotateColumn
+          width: parent.width
+          spacing: Style.space(4)
+          FieldLabel { text: "AUTO-ROTATE BY DEFAULT" }
+
+          Item {
+            width: parent.width
+            height: autoRotateSwitch.trackHeight
+
+            ToggleSwitch {
+              id: autoRotateSwitch
+              cursorPad: 0
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              checked: form.autoRotate
+              foreground: form.foreground
+              accent: form.accent
+              onToggled: form.autoRotate = !form.autoRotate
+            }
+          }
         }
 
         Column {
           id: barSummaryColumn
-          width: preferencesGrid.cellWidth
+          width: parent.width
           spacing: Style.space(4)
           FieldLabel { text: "BAR SUMMARY" }
 
           Item {
             width: parent.width
-            height: accentColorInput.height
+            height: barSummarySwitch.trackHeight
 
             ToggleSwitch {
               id: barSummarySwitch
-              cursorPad: Math.max(0, Math.min(6,
-                (parent.height - trackHeight) / 2))
+              cursorPad: 0
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
               checked: form.showBarSummary
