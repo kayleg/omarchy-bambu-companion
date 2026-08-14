@@ -152,15 +152,18 @@ module BambuCompanion
       command.key?(symbol) ? command[symbol] : default
     end
 
+    def supported_protocol?(command)
+      return true if command_value(command, "protocol") == PROTOCOL
+
+      emit_error(
+        scope: "config", code: "unsupported_protocol",
+        message: "Unsupported IPC protocol", retryable: false
+      )
+      false
+    end
+
     def configure(command)
-      protocol = command_value(command, "protocol")
-      unless protocol == PROTOCOL
-        emit_error(
-          scope: "config", code: "unsupported_protocol",
-          message: "Unsupported IPC protocol", retryable: false
-        )
-        return
-      end
+      return unless supported_protocol?(command)
 
       raw = command_value(command, "config", {})
       candidate = Config.from_h(raw || {})
@@ -185,14 +188,8 @@ module BambuCompanion
     end
 
     def probe_tls(command)
-      protocol = command_value(command, "protocol")
-      unless protocol == PROTOCOL
-        emit_error(
-          scope: "config", code: "unsupported_protocol",
-          message: "Unsupported IPC protocol", retryable: false
-        )
-        return
-      end
+      return unless supported_protocol?(command)
+
       request_id = command_value(command, "requestId")
       unless request_id.is_a?(Integer) && request_id.between?(0, 2_147_483_647)
         raise ConfigError, "requestId is invalid"
@@ -237,8 +234,7 @@ module BambuCompanion
         request_id.between?(0, 2_147_483_647))
       raise ConfigError, "requestId is invalid" unless valid_request_id
 
-      config = current_config
-      unless config
+      unless current_config
         payload = {
           scope: "secret", code: "invalid_state",
           message: "A printer configuration is required", retryable: false

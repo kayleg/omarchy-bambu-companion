@@ -333,10 +333,19 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes source, 'visible: root.viewMode === "setup" || root.viewMode === "settings"'
     assert_match(/function openSettings\(\).*settingsView\.load\(settingsDraft\(\)\).*viewMode = "settings"/m,
                  source)
-    assert_match(/function openSettings\(\).*panelScroll\.contentY = 0/m, source)
+    focus_helper = source[/function focusPanelTop\(\) \{.*?\n  \}/m]
+    refute_nil focus_helper
+    assert_includes focus_helper, "Qt.callLater"
+    assert_includes focus_helper, "panelScroll.contentY = 0"
+    assert_includes focus_helper, "keyCatcher.forceActiveFocus()"
+    assert_match(/function openSettings\(\).*root\.focusPanelTop\(\)/m, source)
     assert_match(/function close\(\).*settingsView\.clearAccessCode\(\).*viewMode = nextIdleView\(\)/m,
                  source)
-    assert_match(/function persistSettings\(draft\).*var entry = \{ id: root\.moduleName \}.*root\.settings = entry.*updateEntryInline\(root\.moduleName, entry\)/m,
+    writer = source[/function commitSettingsEntry\(entry\) \{.*?\n  \}/m]
+    refute_nil writer
+    assert_match(/persistingSettings = true.*root\.settings = entry.*updateEntryInline\(root\.moduleName, entry\).*persistingSettings = false/m,
+                 writer)
+    assert_match(/function persistSettings\(draft\).*var entry = \{ id: root\.moduleName \}.*return root\.commitSettingsEntry\(entry\)/m,
                  source)
     assert_match(/function saveSettings\(draft, accessCode\).*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*enterConnecting\(\)/m,
                  source)
@@ -385,7 +394,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
 
     widget = File.read(File.join(@root, "BambuWidget.qml"))
-    assert_match(/function persistBarSummary\(enabled\).*entry\.showBarSummary = enabled === true.*root\.settings = entry.*updateEntryInline\(root\.moduleName, entry\).*return true/m,
+    assert_match(/function persistBarSummary\(enabled\).*entry\.showBarSummary = enabled === true.*return root\.commitSettingsEntry\(entry\)/m,
                  widget)
     assert_match(/BambuSettingsView\s*\{.*onBarSummaryToggled: function\(enabled\).*root\.persistBarSummary\(enabled\)/m,
                  widget)
@@ -502,7 +511,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*beginTlsProbe\(draft\).*return.*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*if \(backendChanged\) sendConfiguration\(draft\)/m,
                  source)
-    assert_match(/function persistSettings\(draft\).*persistingSettings = true.*root\.settings = entry.*updateEntryInline.*persistingSettings = false/m,
+    assert_match(/function commitSettingsEntry\(entry\).*persistingSettings = true.*root\.settings = entry.*updateEntryInline.*persistingSettings = false/m,
                  source)
     assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return/m,
                  source)

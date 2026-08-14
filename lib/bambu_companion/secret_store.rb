@@ -5,6 +5,7 @@ require "open3"
 module BambuCompanion
   class SecretStore
     PLUGIN_ID = "io.github.ypmrg.bambu-companion"
+    PLUGIN_ATTRIBUTES = ["application", PLUGIN_ID].freeze
     LABEL = "Bambu Companion LAN access code"
     DEFAULT_TIMEOUT_SECONDS = 3.0
     DEFAULT_TERMINATE_GRACE_SECONDS = 0.25
@@ -68,22 +69,16 @@ module BambuCompanion
       path = secret_tool_path
       return false unless path
 
-      unlocked = @runner.call(
-        [path, "search", "--all", "--unlock", "application", PLUGIN_ID],
-        stdin_data: "", capture_stdout: false
-      )
+      unlocked = search_all(path, unlock: true)
       return false unless unlocked.success?
       return true unless unlocked.stdout_present?
 
       cleared = @runner.call(
-        [path, "clear", "application", PLUGIN_ID], stdin_data: ""
+        [path, "clear", *PLUGIN_ATTRIBUTES], stdin_data: ""
       )
       return false unless cleared.success?
 
-      remaining = @runner.call(
-        [path, "search", "--all", "application", PLUGIN_ID],
-        stdin_data: "", capture_stdout: false
-      )
+      remaining = search_all(path)
       remaining.success? && !remaining.stdout_present?
     rescue SystemCallError
       false
@@ -98,7 +93,15 @@ module BambuCompanion
     end
 
     def attributes(serial)
-      ["application", PLUGIN_ID, "serial", String(serial)]
+      [*PLUGIN_ATTRIBUTES, "serial", String(serial)]
+    end
+
+    def search_all(path, unlock: false)
+      argv = [path, "search", "--all"]
+      argv << "--unlock" if unlock
+      @runner.call(
+        [*argv, *PLUGIN_ATTRIBUTES], stdin_data: "", capture_stdout: false
+      )
     end
 
     def valid_secret?(secret)

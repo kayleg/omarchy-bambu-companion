@@ -136,7 +136,9 @@ class RepositoryContractTest < Minitest::Test
     launcher = File.read(File.join(ROOT, "bambu-companion"))
     readme = File.read(File.join(ROOT, "README.md"))
 
-    assert_equal 2, widget.scan("root.bar.shell.updateEntryInline(root.moduleName, entry)").length
+    assert_equal 1, widget.scan("root.bar.shell.updateEntryInline(root.moduleName, entry)").length
+    assert_match(/function commitSettingsEntry\(entry\).*updateEntryInline\(root\.moduleName, entry\)/m,
+                 widget)
     assert_match(/function saveSettings\(.*persistSettings\(draft\)/m, widget)
     assert_match(/onBarSummaryToggled:.*persistBarSummary\(enabled\)/m, widget)
     refute_match(%r{(?:\$HOME|~)/\.config}, launcher)

@@ -171,13 +171,17 @@ BarWidget {
     }
   }
 
-  function enterConnecting() {
-    settingsView.clearAccessCode()
-    viewMode = root.hasConnectionTarget ? "connecting" : "setup"
+  function focusPanelTop() {
     Qt.callLater(function() {
       panelScroll.contentY = 0
       keyCatcher.forceActiveFocus()
     })
+  }
+
+  function enterConnecting() {
+    settingsView.clearAccessCode()
+    viewMode = root.hasConnectionTarget ? "connecting" : "setup"
+    root.focusPanelTop()
   }
 
   function settingsDraft() {
@@ -200,10 +204,7 @@ BarWidget {
   function openSettings() {
     settingsView.load(settingsDraft())
     viewMode = "settings"
-    Qt.callLater(function() {
-      panelScroll.contentY = 0
-      keyCatcher.forceActiveFocus()
-    })
+    root.focusPanelTop()
   }
 
   function toggleSettings() {
@@ -218,10 +219,7 @@ BarWidget {
     if (root.requiresSetupConfirmation) {
       viewMode = "setup"
       popupOpen = true
-      Qt.callLater(function() {
-        panelScroll.contentY = 0
-        keyCatcher.forceActiveFocus()
-      })
+      root.focusPanelTop()
       return
     }
     if (!root.connectionVerified) {
@@ -230,15 +228,20 @@ BarWidget {
     }
     settingsView.clearAccessCode()
     viewMode = "status"
-    Qt.callLater(function() {
-      panelScroll.contentY = 0
-      keyCatcher.forceActiveFocus()
-    })
+    root.focusPanelTop()
+  }
+
+  function commitSettingsEntry(entry) {
+    if (!root.bar || !root.bar.shell
+        || typeof root.bar.shell.updateEntryInline !== "function") return false
+    persistingSettings = true
+    root.settings = entry
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    persistingSettings = false
+    return true
   }
 
   function persistSettings(draft) {
-    if (!root.bar || !root.bar.shell
-        || typeof root.bar.shell.updateEntryInline !== "function") return false
     var entry = { id: root.moduleName }
     entry.printerName = draft.printerName
     entry.host = draft.host
@@ -253,18 +256,12 @@ BarWidget {
     entry.ftpsTlsFingerprint = String(draft.ftpsTlsFingerprint || "")
     entry.installationId = draft.installationId === undefined
       ? root.installationId : String(draft.installationId || "")
-    persistingSettings = true
-    root.settings = entry
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
-    persistingSettings = false
-    return true
+    return root.commitSettingsEntry(entry)
   }
 
   // The bar-only preference is intentionally independent from the connection
   // form: changing it must not save partially edited printer credentials.
   function persistBarSummary(enabled) {
-    if (!root.bar || !root.bar.shell
-        || typeof root.bar.shell.updateEntryInline !== "function") return false
     var current = root.settings && typeof root.settings === "object"
       ? root.settings : ({})
     var entry = { id: root.moduleName }
@@ -272,11 +269,7 @@ BarWidget {
       if (key !== "id") entry[key] = current[key]
     }
     entry.showBarSummary = enabled === true
-    persistingSettings = true
-    root.settings = entry
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
-    persistingSettings = false
-    return true
+    return root.commitSettingsEntry(entry)
   }
 
   function backendSettingsChanged(draft) {
@@ -316,10 +309,7 @@ BarWidget {
     if (!backendChanged && !replacement) {
       settingsView.clearAccessCode()
       viewMode = nextIdleView()
-      Qt.callLater(function() {
-        panelScroll.contentY = 0
-        keyCatcher.forceActiveFocus()
-      })
+      root.focusPanelTop()
       return
     }
     enterConnecting()
@@ -675,10 +665,7 @@ BarWidget {
     settingsView.load(reset)
     root.viewMode = "setup"
     root.popupOpen = true
-    Qt.callLater(function() {
-      panelScroll.contentY = 0
-      keyCatcher.forceActiveFocus()
-    })
+    root.focusPanelTop()
   }
 
   function refreshModel() {
