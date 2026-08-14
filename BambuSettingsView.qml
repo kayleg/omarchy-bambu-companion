@@ -10,7 +10,6 @@ Item {
 
   property color foreground: Color.foreground
   property color accent: Color.accent
-  property color preferenceAccent: accent
   property color errorColor: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
   property string fontFamily: Style.font.family
@@ -30,14 +29,12 @@ Item {
     || accessCodeInput.activeFocus || printerNameInput.activeFocus
     || serialInput.activeFocus || usernameInput.activeFocus
     || maxSegmentsInput.activeFocus || explosionFactorInput.activeFocus
-    || accentColorInput.activeFocus
 
   signal backRequested()
   signal saveRequested(var draft, string accessCode)
   signal trustRequested(var draft, string accessCode)
   signal disconnectRequested()
   signal forgetCodeRequested()
-  signal accentColorSelected(string color)
   signal barSummaryToggled(bool enabled)
   signal inputFocusReleased()
 
@@ -59,7 +56,6 @@ Item {
     maxSegmentsInput.text = String(values.maxSegments || "")
     explosionFactorInput.text = String(values.explosionFactor === undefined
       ? 100 : values.explosionFactor)
-    accentColorInput.text = String(values.accentColor || "#39FF88")
     autoRotate = values.autoRotate !== false
     showBarSummary = values.showBarSummary !== false
     validationError = ""
@@ -79,24 +75,13 @@ Item {
     validationError = String(message || "")
   }
 
-  function applyAccentPreset(color) {
-    var normalized = String(color || "").toUpperCase()
-    if (!/^#[0-9A-F]{6}$/.test(normalized)) return
-    accentColorInput.text = normalized
-    validationError = ""
-    accentColorSelected(normalized)
-  }
-
-  function restoreAccentColor(color) {
-    accentColorInput.text = String(color || "#39FF88").toUpperCase()
-  }
-
-  function parsePort(text, label) {
+  function parseInteger(text, label, minimum, maximum) {
     var raw = String(text || "").trim()
     var number = Number(raw)
     if (!/^\d+$/.test(raw) || !isFinite(number)
-        || Math.floor(number) !== number || number < 1 || number > 65535) {
-      validationError = label + " must be between 1 and 65535"
+        || Math.floor(number) !== number
+        || number < minimum || number > maximum) {
+      validationError = label + " must be between " + minimum + " and " + maximum
       return -1
     }
     return number
@@ -110,9 +95,9 @@ Item {
       return
     }
 
-    var nextMqtt = parsePort(mqttPortInput.text, "MQTT port")
+    var nextMqtt = parseInteger(mqttPortInput.text, "MQTT port", 1, 65535)
     if (nextMqtt < 0) return
-    var nextFtps = parsePort(ftpsPortInput.text, "FTPS port")
+    var nextFtps = parseInteger(ftpsPortInput.text, "FTPS port", 1, 65535)
     if (nextFtps < 0) return
 
     var nextName = String(printerNameInput.text || "").trim()
@@ -143,30 +128,12 @@ Item {
       return
     }
 
-    var segmentText = String(maxSegmentsInput.text || "").trim()
-    var nextSegments = Number(segmentText)
-    if (!/^\d+$/.test(segmentText) || !isFinite(nextSegments)
-        || Math.floor(nextSegments) !== nextSegments
-        || nextSegments < 1000 || nextSegments > 100000) {
-      validationError = "Wireframe limit must be between 1000 and 100000"
-      return
-    }
-
-    var explosionText = String(explosionFactorInput.text || "").trim()
-    var nextExplosionFactor = Number(explosionText)
-    if (!/^\d+$/.test(explosionText) || !isFinite(nextExplosionFactor)
-        || Math.floor(nextExplosionFactor) !== nextExplosionFactor
-        || nextExplosionFactor < 0 || nextExplosionFactor > 500) {
-      validationError = "Explode factor must be between 0 and 500"
-      return
-    }
-
-    var nextAccentColor = String(accentColorInput.text || "").trim()
-    if (!/^#[0-9A-Fa-f]{6}$/.test(nextAccentColor)) {
-      validationError = "Accent color must use #RRGGBB"
-      return
-    }
-    nextAccentColor = nextAccentColor.toUpperCase()
+    var nextSegments = parseInteger(
+      maxSegmentsInput.text, "Wireframe limit", 1000, 100000)
+    if (nextSegments < 0) return
+    var nextExplosionFactor = parseInteger(
+      explosionFactorInput.text, "Explode factor", 0, 500)
+    if (nextExplosionFactor < 0) return
 
     var draft = {
       printerName: nextName,
@@ -177,7 +144,6 @@ Item {
       username: nextUsername,
       maxSegments: nextSegments,
       explosionFactor: nextExplosionFactor,
-      accentColor: nextAccentColor,
       autoRotate: form.autoRotate,
       showBarSummary: form.showBarSummary
     }
@@ -202,7 +168,7 @@ Item {
     width: parent ? parent.width : implicitWidth
     height: implicitHeight + Style.space(8)
     verticalAlignment: Text.AlignBottom
-    color: form.preferenceAccent
+    color: form.accent
     font.family: form.fontFamily
     font.pixelSize: Style.font.caption
     font.bold: true
@@ -278,7 +244,6 @@ Item {
     interactive: contentHeight > height + 1
     clip: true
     ScrollBar.vertical: ScrollBar {
-      id: settingsScrollBar
       policy: settingsScroll.interactive
         ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
     }
@@ -289,7 +254,7 @@ Item {
         - (settingsScroll.interactive ? Style.space(20) : 0))
       spacing: Style.space(8)
 
-      SectionLabel { id: printerSectionLabel; text: "PRINTER" }
+      SectionLabel { text: "PRINTER" }
 
       Column {
         width: parent.width
@@ -346,7 +311,7 @@ Item {
         }
       }
 
-      SectionLabel { id: networkSectionLabel; text: "NETWORK" }
+      SectionLabel { text: "NETWORK" }
 
       Grid {
         id: networkGrid
@@ -406,7 +371,6 @@ Item {
       }
 
       Item {
-        id: lanCodeHeader
         width: parent.width
         height: Math.max(lanCodeLabel.implicitHeight, lanCodeStatus.implicitHeight)
 
@@ -439,7 +403,6 @@ Item {
       }
 
       Row {
-        id: accessCodeRow
         width: parent.width
         spacing: Style.space(8)
 
@@ -471,7 +434,7 @@ Item {
         }
       }
 
-      SectionLabel { id: displaySectionLabel; text: "DISPLAY" }
+      SectionLabel { text: "DISPLAY" }
 
       Grid {
         id: preferencesGrid
@@ -516,113 +479,38 @@ Item {
       }
 
       Column {
-        id: accentColorColumn
-        width: parent.width
-        spacing: Style.space(4)
-        FieldLabel { text: "ACCENT COLOR" }
-
-        Row {
-          id: accentColorRow
-          width: parent.width
-          spacing: Style.space(8)
-
-          BambuTextField {
-            id: accentColorInput
-            width: Math.max(0, parent.width - accentPresetRow.implicitWidth
-              - parent.spacing)
-            clip: true
-            maximumLength: 7
-            placeholderText: "#39FF88"
-            foreground: form.foreground
-            accent: form.accent
-          }
-
-          Row {
-            id: accentPresetRow
-            height: accentColorInput.height
-            spacing: Style.space(6)
-
-            Repeater {
-              model: ["#39FF88", "#45B7FF", "#A78BFA", "#FFB347", "#FF5F8F"]
-
-              Rectangle {
-                required property string modelData
-                readonly property bool selected:
-                  String(accentColorInput.text).toUpperCase() === modelData
-                width: Style.space(20)
-                height: width
-                radius: width / 2
-                anchors.verticalCenter: parent.verticalCenter
-                color: modelData
-                opacity: presetMouse.containsMouse || selected ? 1 : 0.72
-                border.width: selected ? 2 : 1
-                border.color: selected ? form.foreground
-                  : Qt.rgba(form.foreground.r, form.foreground.g,
-                            form.foreground.b, 0.35)
-
-                MouseArea {
-                  id: presetMouse
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: form.applyAccentPreset(modelData)
-                }
-              }
-            }
-          }
-        }
-      }
-
-      Column {
-        id: localToggleRows
         width: parent.width
         spacing: Style.space(4)
 
         Column {
-          id: autoRotateColumn
           width: parent.width
           spacing: Style.space(4)
           FieldLabel { text: "AUTO-ROTATE BY DEFAULT" }
 
-          Item {
-            width: parent.width
-            height: autoRotateSwitch.trackHeight
-
-            ToggleSwitch {
-              id: autoRotateSwitch
-              cursorPad: 0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              checked: form.autoRotate
-              foreground: form.foreground
-              accent: form.accent
-              onToggled: form.autoRotate = !form.autoRotate
-            }
+          ToggleSwitch {
+            cursorPad: 0
+            anchors.left: parent.left
+            checked: form.autoRotate
+            foreground: form.foreground
+            accent: form.accent
+            onToggled: form.autoRotate = !form.autoRotate
           }
         }
 
         Column {
-          id: barSummaryColumn
           width: parent.width
           spacing: Style.space(4)
           FieldLabel { text: "BAR SUMMARY" }
 
-          Item {
-            width: parent.width
-            height: barSummarySwitch.trackHeight
-
-            ToggleSwitch {
-              id: barSummarySwitch
-              cursorPad: 0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              checked: form.showBarSummary
-              foreground: form.foreground
-              accent: form.accent
-              onToggled: {
-                form.showBarSummary = !form.showBarSummary
-                form.barSummaryToggled(form.showBarSummary)
-              }
+          ToggleSwitch {
+            cursorPad: 0
+            anchors.left: parent.left
+            checked: form.showBarSummary
+            foreground: form.foreground
+            accent: form.accent
+            onToggled: {
+              form.showBarSummary = !form.showBarSummary
+              form.barSummaryToggled(form.showBarSummary)
             }
           }
         }
@@ -665,7 +553,6 @@ Item {
       spacing: Style.space(8)
 
       BambuButton {
-        id: disconnectButton
         width: Math.max(0, (parent.width - parent.spacing) / 2)
         height: parent.height
         clip: true
@@ -678,7 +565,6 @@ Item {
       }
 
       BambuButton {
-        id: saveButton
         width: Math.max(0, (parent.width - parent.spacing) / 2)
         height: parent.height
         clip: true

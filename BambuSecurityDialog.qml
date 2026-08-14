@@ -96,7 +96,6 @@ Item {
   }
 
   MouseArea {
-    id: modalScrim
     anchors.fill: parent
     onClicked: {
       if (!dialog.processing) dialog.cancelRequested()
@@ -105,7 +104,6 @@ Item {
   }
 
   Rectangle {
-    id: dialogCard
     anchors.centerIn: parent
     width: Math.min(Math.max(0, parent.width - Style.space(32)), Style.space(520))
     height: Math.min(Math.max(0, parent.height - Style.space(32)),
@@ -117,7 +115,6 @@ Item {
     clip: true
 
     MouseArea {
-      id: cardInputBlocker
       anchors.fill: parent
       onClicked: function(mouse) { mouse.accepted = true }
       onWheel: function(wheel) { wheel.accepted = true }

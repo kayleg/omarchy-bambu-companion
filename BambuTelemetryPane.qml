@@ -9,13 +9,12 @@ Item {
   property color foreground: Color.foreground
   property color accent: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
-  property color neon: accent
+  property color successColor: "#39FF88"
   property color errorColor: Color.accent
   property bool errorActive: false
   property bool modelErrorActive: false
   property string fontFamily: Style.font.family
   property url printerIconSource
-  property color iconColor: foreground
 
   property string printerName: "3D Printer"
   property bool online: false
@@ -117,7 +116,7 @@ Item {
       anchors.fill: sourceImage
       source: sourceImage
       colorization: 1.0
-      colorizationColor: pane.iconColor
+      colorizationColor: pane.foreground
     }
   }
 
@@ -147,12 +146,11 @@ Item {
       spacing: Style.space(3)
 
       Text {
-        id: statusLine
         width: parent.width
         text: (pane.online ? "● ONLINE" : "○ OFFLINE")
           + "  ·  " + pane.printerState
         color: pane.errorActive ? pane.errorColor
-          : (pane.online ? pane.neon : pane.dim)
+          : (pane.online ? pane.successColor : pane.dim)
         elide: Text.ElideRight
         font.family: pane.fontFamily
         font.pixelSize: Style.font.caption
@@ -160,7 +158,6 @@ Item {
       }
 
       Row {
-        id: printerIdentity
         width: parent.width
         height: Math.max(statusIcon.implicitHeight, printerNameText.implicitHeight)
         spacing: Style.space(6)
@@ -175,7 +172,7 @@ Item {
           width: Math.max(0, parent.width - statusIcon.width - parent.spacing)
           height: parent.height
           text: pane.printerName.toUpperCase()
-          color: pane.errorActive ? pane.errorColor : pane.foreground
+          color: pane.foreground
           verticalAlignment: Text.AlignVCenter
           elide: Text.ElideRight
           font.family: pane.fontFamily
@@ -208,7 +205,7 @@ Item {
           anchors.bottom: parent.bottom
           anchors.margins: 2
           width: Math.max(0, (parent.width - 4) * pane.percent / 100)
-          color: pane.neon
+          color: pane.accent
         }
       }
 
@@ -219,7 +216,7 @@ Item {
           id: progressText
           anchors.left: parent.left
           text: pane.percent + "% COMPLETE"
-          color: pane.neon
+          color: pane.accent
           font.family: pane.fontFamily
           font.pixelSize: Style.font.bodySmall
           font.bold: true
@@ -240,7 +237,7 @@ Item {
 
       SectionTitle { objectName: "PRINT METRICS" }
       MetricRow { label: "LAYER"; value: pane.layerValue }
-      MetricRow { label: "Z HEIGHT"; value: pane.zValue; valueColor: pane.neon }
+      MetricRow { label: "Z HEIGHT"; value: pane.zValue; valueColor: pane.accent }
       MetricRow { label: "REMAINING"; value: pane.remainingValue }
       MetricRow { label: "SPEED"; value: pane.speedValue }
       MetricRow { label: "FANS"; value: pane.fanValue }
@@ -248,12 +245,12 @@ Item {
       SectionTitle { objectName: "CONNECTION" }
       MetricRow { label: "ADDRESS"; value: pane.hostValue }
       MetricRow { label: "PORTS"; value: pane.portsValue }
-      MetricRow { label: "WI-FI"; value: pane.wifiValue; valueColor: pane.online ? pane.neon : pane.dim }
+      MetricRow { label: "WI-FI"; value: pane.wifiValue; valueColor: pane.online ? pane.successColor : pane.dim }
       MetricRow { label: "REPORT"; value: pane.reportValue }
 
       SectionTitle { objectName: "MODEL DATA" }
       MetricRow { label: "GEOMETRY"; value: pane.segmentValue }
-      MetricRow { label: "STATUS"; value: pane.modelState; valueColor: (pane.errorActive || pane.modelErrorActive) ? pane.errorColor : (pane.modelState === "READY" ? pane.neon : pane.foreground) }
+      MetricRow { label: "STATUS"; value: pane.modelState; valueColor: (pane.errorActive || pane.modelErrorActive) ? pane.errorColor : (pane.modelState === "READY" ? pane.successColor : pane.foreground) }
       MetricRow { label: "SIZE"; value: pane.dimensionsValue }
     }
   }

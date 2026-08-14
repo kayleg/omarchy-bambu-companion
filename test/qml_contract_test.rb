@@ -11,6 +11,9 @@ class QmlContractTest < Minitest::Test
     @telemetry_source = File.read(File.join(@root, "BambuTelemetryPane.qml"))
     @viewport_source = File.read(File.join(@root, "BambuModelViewport.qml"))
     @button_source = File.read(File.join(@root, "BambuButton.qml"))
+    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
+    @widget_defaults = manifest.fetch("barWidget").fetch("defaults")
+    @widget_schema = manifest.fetch("barWidget").fetch("schema")
   end
 
   def test_button_wrapper_exposes_only_options_used_by_the_plugin
@@ -18,6 +21,17 @@ class QmlContractTest < Minitest::Test
     refute_match(/property bool focusable:/, @button_source)
     assert_match(/^\s*selected: false$/m, @button_source)
     assert_match(/^\s*focusable: false$/m, @button_source)
+  end
+
+  def test_qml_ids_are_referenced_in_their_component
+    Dir[File.join(@root, "Bambu*.qml")].each do |path|
+      source = File.read(path)
+      source.scan(/^\s*id:\s*([A-Za-z_]\w*)/).flatten.each do |id|
+        references = source.scan(/\b#{Regexp.escape(id)}\b/).length
+        assert_operator references, :>, 1,
+                        "#{File.basename(path)} declares unused id #{id}"
+      end
+    end
   end
 
   def test_widget_does_not_keep_unused_panel_margin_state
@@ -285,7 +299,7 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, "import QtQuick.Effects"
     assert_includes @source,
                     'readonly property url printerIconSource: Qt.resolvedUrl("assets/printer-open-frame.svg")'
-    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(!root\.connectionVerified\s*\|\| !root\.connected \|\| root\.stale\s*\? root\.dim : \(root\.gcodeState === "RUNNING" \? root\.neon : root\.foreground\)\)/m,
+    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(!root\.connectionVerified\s*\|\| !root\.connected \|\| root\.stale\s*\? root\.dim : root\.successColor\)/m,
                  @source)
     assert_includes @source, "component PrinterIcon: Item {"
     assert_match(/Image\s*{.*id: printerIconImage.*source: root\.printerIconSource.*visible: false.*layer\.enabled: true/m,
@@ -305,9 +319,11 @@ class QmlContractTest < Minitest::Test
     assert_match(/property color errorColor:/, @telemetry_source)
     assert_includes @telemetry_source, "property bool errorActive: false"
     assert_includes @telemetry_source, "property bool modelErrorActive: false"
-    assert_match(/Column\s*{\s*id: telemetryContent.*Text\s*{\s*id: statusLine.*Row\s*{\s*id: printerIdentity.*SidebarPrinterIcon\s*{.*anchors\.verticalCenter: parent\.verticalCenter.*Text\s*{\s*id: printerNameText.*verticalAlignment: Text\.AlignVCenter/m,
+    assert_match(/Column\s*{\s*id: telemetryContent.*Text\s*{.*text: \(pane\.online \? "● ONLINE" : "○ OFFLINE"\).*Row\s*{.*SidebarPrinterIcon\s*{.*anchors\.verticalCenter: parent\.verticalCenter.*Text\s*{\s*id: printerNameText.*verticalAlignment: Text\.AlignVCenter/m,
                  @telemetry_source)
-    assert_match(/id: statusLine.*color: pane\.errorActive \? pane\.errorColor/m,
+    assert_match(/text: \(pane\.online \? "● ONLINE" : "○ OFFLINE"\).*color: pane\.errorActive \? pane\.errorColor/m,
+                 @telemetry_source)
+    assert_match(/text: \(pane\.online \? "● ONLINE" : "○ OFFLINE"\).*pane\.online \? pane\.successColor : pane\.dim/m,
                  @telemetry_source)
     assert_match(/function printerHasError\(\).*state === "ERROR".*state === "FAILED"/m,
                  @source)
@@ -316,6 +332,7 @@ class QmlContractTest < Minitest::Test
                  @telemetry_source)
 
     assert_includes @source, 'readonly property color errorColor: "#ff5f56"'
+    assert_includes @source, 'readonly property color successColor: "#39FF88"'
     assert_match(/readonly property bool errorActive: root\.printerHasError\(\)\s*\|\| root\.processError !== ""/m,
                  @source)
     global_error_definition = @source[
@@ -326,6 +343,8 @@ class QmlContractTest < Minitest::Test
     assert_includes @source,
                     'readonly property bool modelErrorActive: root.modelStatus === "error"'
     assert_match(/BambuTelemetryPane\s*{.*errorColor: root\.errorColor.*errorActive: root\.errorActive.*modelErrorActive: root\.modelErrorActive/m,
+                 @source)
+    assert_match(/BambuTelemetryPane\s*{.*successColor: root\.successColor/m,
                  @source)
     assert_match(/BambuModelViewport\s*{.*errorColor: root\.errorColor.*errorActive: root\.errorActive \|\| root\.modelErrorActive.*printing: root\.connected && root\.gcodeState === "RUNNING"/m,
                  @source)
@@ -359,8 +378,6 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/Flickable\s*{.*id: panelScroll.*flickableDirection: Flickable\.VerticalFlick.*clip: true/m,
                  @source)
-    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
-                 @source)
     assert_match(/BambuTelemetryPane\s*{.*id: telemetryPane.*onSettingsRequested: root\.toggleSettings\(\)/m,
                  @source)
     assert_match(/BambuSettingsView\s*{.*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
@@ -375,20 +392,16 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_manifest_exposes_only_non_secret_widget_settings
-    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
-    settings = manifest.fetch("barWidget").fetch("schema").map { |entry| entry.fetch("key") }
+    settings = @widget_schema.map { |entry| entry.fetch("key") }
 
-    assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments explosionFactor accentColor autoRotate showBarSummary
+    assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments explosionFactor autoRotate showBarSummary
                     mqttTlsFingerprint ftpsTlsFingerprint], settings
     refute(settings.any? { |key| key.match?(/access|code|password|secret/i) })
     settings.each { |key| assert_includes @source, "setting(\"#{key}\"," }
   end
 
   def test_qml_setting_fallbacks_match_manifest_defaults
-    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
-    defaults = manifest.fetch("barWidget").fetch("defaults")
-
-    defaults.each do |key, value|
+    @widget_defaults.each do |key, value|
       literal = value.is_a?(String) ? value.inspect : value.to_s
       assert_includes @source, "setting(\"#{key}\", #{literal})"
     end
@@ -398,61 +411,62 @@ class QmlContractTest < Minitest::Test
     assert_match(/readonly property string displayName:.*return name \|\| "3D Printer"/m,
                  @source)
   end
+  def test_visual_accent_always_uses_the_live_theme_accent
+    sources = @source + @telemetry_source
+    sources += File.read(File.join(@root, "BambuModelViewport.qml"))
 
+    assert_match(/readonly property color accent: Color\.accent/, @source)
+    assert_match(/BambuTelemetryPane\s*\{.*accent: root\.accent/m, @source)
+    assert_match(/BambuModelViewport\s*\{.*accent: root\.accent/m, @source)
+    refute_match(/\bneon\b/, sources)
+  end
 
-  def test_configurable_accent_has_a_safe_green_fallback
-    assert_includes @source, 'setting("accentColor", "#39FF88")'
-    assert_match(/function validAccentColor\(value\).*\^#\[0-9A-Fa-f\]\{6\}\$/m,
+  def test_printer_states_use_semantic_colors_not_the_user_accent
+    assert_match(/Text\s*\{.*text: root\.compactLabel\(\).*color: root\.printerIconColor/m,
                  @source)
-    assert_match(/readonly property color neon: root\.validAccentColor\(root\.accentColor\).*root\.accentColor.*"#39FF88"/m,
-                 @source)
+    assert_match(/width: Math\.max\(0, \(parent\.width - 4\) \* pane\.percent \/ 100\)\s*color: pane\.accent/m,
+                 @telemetry_source)
+    assert_match(/text: pane\.percent \+ "% COMPLETE"\s*color: pane\.accent/m,
+                 @telemetry_source)
+    assert_match(/label: "Z HEIGHT"; value: pane\.zValue; valueColor: pane\.accent/,
+                 @telemetry_source)
+    assert_match(/label: "WI-FI"; value: pane\.wifiValue; valueColor: pane\.online \? pane\.successColor : pane\.dim/,
+                 @telemetry_source)
+    assert_match(/label: "STATUS"; value: pane\.modelState; valueColor: \(pane\.errorActive \|\| pane\.modelErrorActive\) \? pane\.errorColor : \(pane\.modelState === "READY" \? pane\.successColor : pane\.foreground\)/,
+                 @telemetry_source)
+    refute_match(/pane\.online \? pane\.accent|root\.gcodeState === "RUNNING" \? root\.accent/,
+                 @source + @telemetry_source)
+  end
+
+  def test_panel_identity_uses_the_fixed_foreground_color
+    assert_match(/colorizationColor: pane\.foreground/, @telemetry_source)
+    assert_match(/id: printerNameText.*color: pane\.foreground/m,
+                 @telemetry_source)
   end
 
   def test_explosion_factor_is_a_local_persisted_view_preference
-    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
-    defaults = manifest.fetch("barWidget").fetch("defaults")
-    schema = manifest.fetch("barWidget").fetch("schema")
-    explode_schema = schema.find { |entry| entry["key"] == "explosionFactor" }
+    explode_schema = @widget_schema.find { |entry| entry["key"] == "explosionFactor" }
 
-    assert_equal 100, defaults["explosionFactor"]
+    assert_equal 100, @widget_defaults["explosionFactor"]
     assert_equal "integer", explode_schema&.fetch("type")
     assert_equal 0, explode_schema&.fetch("min")
     assert_equal 500, explode_schema&.fetch("max")
-    assert_includes @source, 'setting("explosionFactor", 100)'
-    assert_match(/function settingsDraft\(\).*explosionFactor: root\.configuredExplosionFactor\(\)/m,
+    assert_match(/readonly property int explosionFactor: Math\.max\(0, Math\.min\(500,\s*Math\.round\(finiteNumber\(Number\(setting\("explosionFactor", 100\)\), 100\)\)\)\)/m,
+                 @source)
+    assert_match(/function settingsDraft\(\).*explosionFactor: root\.explosionFactor/m,
                  @source)
     assert_match(/function persistSettings\(draft\).*entry\.explosionFactor = draft\.explosionFactor/m,
                  @source)
-    assert_match(/BambuModelViewport\s*\{.*explosionFactor: root\.configuredExplosionFactor\(\)/m,
+    assert_match(/BambuModelViewport\s*\{.*explosionFactor: root\.explosionFactor/m,
                  @source)
 
-    backend_change = @source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
-    configuration = @source[/function configuration\(\) \{.*?\n  \}/m]
-    draft_configuration = @source[/function configurationForDraft\(draft\) \{.*?\n  \}/m]
-    refute_includes backend_change, "explosionFactor"
-    refute_includes configuration, "explosionFactor"
-    refute_includes draft_configuration, "explosionFactor"
-  end
-
-  def test_accent_preset_is_a_local_preference_that_cannot_reconnect_the_daemon
-    assert_match(/function persistAccentColor\(color\).*persistLocalPreference\("accentColor", normalized\)/m,
-                 @source)
-
-    backend_change = @source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
-    configuration = @source[/function configuration\(\) \{.*?\n  \}/m]
-    draft_configuration = @source[/function configurationForDraft\(draft\) \{.*?\n  \}/m]
-    refute_includes backend_change, "accentColor"
-    refute_includes configuration, "accentColor"
-    refute_includes draft_configuration, "accentColor"
+    assert_local_only("explosionFactor")
   end
 
   def test_auto_rotate_default_is_a_local_persisted_view_preference
-    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
-    defaults = manifest.fetch("barWidget").fetch("defaults")
-    schema = manifest.fetch("barWidget").fetch("schema")
-    rotate_schema = schema.find { |entry| entry["key"] == "autoRotate" }
+    rotate_schema = @widget_schema.find { |entry| entry["key"] == "autoRotate" }
 
-    assert_equal true, defaults["autoRotate"]
+    assert_equal true, @widget_defaults["autoRotate"]
     assert_equal "boolean", rotate_schema&.fetch("type")
     assert_includes @source, 'setting("autoRotate", true) !== false'
     assert_match(/function settingsDraft\(\).*autoRotate: root\.autoRotate/m,
@@ -462,19 +476,12 @@ class QmlContractTest < Minitest::Test
     assert_match(/BambuModelViewport\s*\{.*autoRotateDefault: root\.autoRotate/m,
                  @source)
 
-    backend_change = @source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
-    configuration = @source[/function configuration\(\) \{.*?\n  \}/m]
-    refute_includes backend_change, "autoRotate"
-    refute_includes configuration, "autoRotate"
+    assert_local_only("autoRotate")
   end
 
   def test_bar_summary_setting_hides_only_the_horizontal_recap
-    manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
-    defaults = manifest.fetch("barWidget").fetch("defaults")
-    schema = manifest.fetch("barWidget").fetch("schema")
-
-    assert_equal true, defaults["showBarSummary"]
-    summary_schema = schema.find { |entry| entry["key"] == "showBarSummary" }
+    assert_equal true, @widget_defaults["showBarSummary"]
+    summary_schema = @widget_schema.find { |entry| entry["key"] == "showBarSummary" }
     assert_equal "boolean", summary_schema&.fetch("type")
     assert_includes @source, 'readonly property bool showBarSummary: setting("showBarSummary", true) !== false'
     assert_match(/function settingsDraft\(\).*showBarSummary: root\.showBarSummary/m, @source)
@@ -484,5 +491,15 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/PrinterIcon\s*\{\s*anchors\.verticalCenter: parent\.verticalCenter/m,
                  @source)
+  end
+
+  private
+
+  def assert_local_only(key)
+    %w[backendSettingsChanged configuration configurationForDraft].each do |name|
+      body = @source[/function #{name}\([^)]*\) \{.*?\n  \}/m]
+      refute_nil body
+      refute_includes body, key
+    end
   end
 end

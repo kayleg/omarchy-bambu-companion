@@ -102,8 +102,8 @@ BarWidget {
   readonly property string serial: String(setting("serial", ""))
   readonly property string username: String(setting("username", "bblp"))
   readonly property int maxSegments: Number(setting("maxSegments", 40000))
-  readonly property real explosionFactor: Number(setting("explosionFactor", 100))
-  readonly property string accentColor: String(setting("accentColor", "#39FF88"))
+  readonly property int explosionFactor: Math.max(0, Math.min(500,
+    Math.round(finiteNumber(Number(setting("explosionFactor", 100)), 100))))
   readonly property bool autoRotate: setting("autoRotate", true) !== false
   readonly property bool showBarSummary: setting("showBarSummary", true) !== false
   readonly property string mqttTlsFingerprint:
@@ -133,11 +133,10 @@ BarWidget {
     String(Qt.resolvedUrl("bambu-companion")).replace(/^file:\/\//, "")
   )
   readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color accent: bar ? bar.urgent : Color.accent
+  readonly property color accent: Color.accent
+  readonly property color successColor: "#39FF88"
   readonly property color errorColor: "#ff5f56"
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
-  readonly property color neon: root.validAccentColor(root.accentColor)
-    ? root.accentColor : "#39FF88"
   readonly property bool errorActive: root.printerHasError()
     || root.processError !== ""
   readonly property bool modelErrorActive: root.modelStatus === "error"
@@ -145,7 +144,7 @@ BarWidget {
   readonly property color printerIconColor: root.errorActive ? root.errorColor
     : (!root.connectionVerified
     || !root.connected || root.stale
-    ? root.dim : (root.gcodeState === "RUNNING" ? root.neon : root.foreground))
+    ? root.dim : root.successColor)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   function open() {
@@ -207,9 +206,7 @@ BarWidget {
       serial: root.serial,
       username: root.username,
       maxSegments: root.maxSegments,
-      explosionFactor: root.configuredExplosionFactor(),
-      accentColor: root.validAccentColor(root.accentColor)
-        ? root.accentColor : "#39FF88",
+      explosionFactor: root.explosionFactor,
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
       mqttTlsFingerprint: root.mqttTlsFingerprint,
@@ -267,7 +264,6 @@ BarWidget {
     entry.username = draft.username
     entry.maxSegments = draft.maxSegments
     entry.explosionFactor = draft.explosionFactor
-    entry.accentColor = draft.accentColor
     entry.autoRotate = draft.autoRotate
     entry.showBarSummary = draft.showBarSummary
     entry.mqttTlsFingerprint = String(draft.mqttTlsFingerprint || "")
@@ -277,27 +273,17 @@ BarWidget {
     return root.commitSettingsEntry(entry)
   }
 
-  // View-only preferences must not save partially edited printer credentials
+  // The immediate toggle must not save partially edited printer credentials
   // or restart the printer session.
-  function persistLocalPreference(name, value) {
+  function persistBarSummary(enabled) {
     var current = root.settings && typeof root.settings === "object"
       ? root.settings : ({})
     var entry = { id: root.moduleName }
     for (var key in current) {
       if (key !== "id") entry[key] = current[key]
     }
-    entry[name] = value
+    entry["showBarSummary"] = enabled === true
     return root.commitSettingsEntry(entry)
-  }
-
-  function persistAccentColor(color) {
-    var normalized = String(color || "").toUpperCase()
-    if (!root.validAccentColor(normalized)) return false
-    return root.persistLocalPreference("accentColor", normalized)
-  }
-
-  function persistBarSummary(enabled) {
-    return root.persistLocalPreference("showBarSummary", enabled === true)
   }
 
   function backendSettingsChanged(draft) {
@@ -528,10 +514,6 @@ BarWidget {
       && preview.encodedLength === expectedLength
   }
 
-  function validAccentColor(value) {
-    return /^#[0-9A-Fa-f]{6}$/.test(String(value || ""))
-  }
-
   function isFinishedState(state) {
     var value = String(state || "").toUpperCase()
     return value === "FINISH" || value === "FINISHED"
@@ -546,11 +528,6 @@ BarWidget {
   function segmentLimit() {
     var configured = finiteNumber(root.maxSegments, 40000)
     return Math.max(0, Math.min(100000, Math.floor(configured)))
-  }
-
-  function configuredExplosionFactor() {
-    var configured = finiteNumber(root.explosionFactor, 100)
-    return Math.max(0, Math.min(500, Math.round(configured)))
   }
 
   function formatTemp(value) {
@@ -702,9 +679,7 @@ BarWidget {
       serial: "",
       username: "bblp",
       maxSegments: root.segmentLimit(),
-      explosionFactor: root.configuredExplosionFactor(),
-      accentColor: root.validAccentColor(root.accentColor)
-        ? root.accentColor : "#39FF88",
+      explosionFactor: root.explosionFactor,
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
       mqttTlsFingerprint: "",
@@ -1279,7 +1254,7 @@ BarWidget {
     fixedWidth: root.vertical ? barSize : buttonContent.implicitWidth + scaledHorizontalMargin * 2
     fixedHeight: barSize
     foreground: root.printerIconColor
-    activeColor: root.neon
+    activeColor: root.accent
     active: root.popupOpen
     fontFamily: root.fontFamily
     fontSize: Style.font.caption
@@ -1320,7 +1295,6 @@ BarWidget {
   }
 
   KeyboardPanel {
-    id: panel
     anchorItem: button
     owner: root
     bar: root.bar
@@ -1395,13 +1369,12 @@ BarWidget {
               foreground: root.foreground
               accent: root.accent
               dim: root.dim
-              neon: root.neon
+              successColor: root.successColor
               errorColor: root.errorColor
               errorActive: root.errorActive
               modelErrorActive: root.modelErrorActive
               fontFamily: root.fontFamily
               printerIconSource: root.printerIconSource
-              iconColor: root.printerIconColor
               printerName: root.displayName
               online: root.connected && !root.stale
               printerState: root.displayGcodeState
@@ -1436,7 +1409,6 @@ BarWidget {
               foreground: root.foreground
               accent: root.accent
               dim: root.dim
-              neon: root.neon
               errorColor: root.errorColor
               errorActive: root.errorActive || root.modelErrorActive
               fontFamily: root.fontFamily
@@ -1452,7 +1424,7 @@ BarWidget {
               activeBounds: root.activeBounds
               zCurrent: root.zCurrent
               autoRotateDefault: root.autoRotate
-              explosionFactor: root.configuredExplosionFactor()
+              explosionFactor: root.explosionFactor
               modelStatus: root.modelStatus
               modelError: root.modelError || root.processError
               onSourceRequested: function(source) {
@@ -1473,7 +1445,6 @@ BarWidget {
           }
 
           Rectangle {
-            id: settingsScrim
             visible: root.viewMode === "setup" || root.viewMode === "settings"
             x: dashboard.overlayX
             y: dashboard.overlayY
@@ -1493,7 +1464,6 @@ BarWidget {
             z: 21
             foreground: root.foreground
             accent: root.accent
-            preferenceAccent: root.neon
             errorColor: root.errorColor
             dim: root.dim
             fontFamily: root.fontFamily
@@ -1504,12 +1474,6 @@ BarWidget {
             secretRequired: root.secretRequired
             secretStored: root.secretStored
             secretStatusKnown: root.secretStatusKnown
-            onAccentColorSelected: function(color) {
-              if (!root.persistAccentColor(color)) {
-                settingsView.restoreAccentColor(root.neon)
-                settingsView.reportError("Accent color setting could not be saved")
-              }
-            }
             onBackRequested: {
               if (root.requiresSetupConfirmation) root.close()
               else root.backToStatus()
@@ -1532,7 +1496,6 @@ BarWidget {
           }
 
           Item {
-            id: connectingOverlay
             visible: root.viewMode === "connecting"
             x: dashboard.overlayX
             y: dashboard.overlayY
@@ -1551,7 +1514,6 @@ BarWidget {
               spacing: Style.space(10)
 
               Item {
-                id: connectionSpinner
                 width: Style.space(48)
                 height: width
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1629,7 +1591,7 @@ BarWidget {
         mqttIdentity: root.mqttTlsIdentity
         ftpsIdentity: root.ftpsTlsIdentity
         foreground: root.foreground
-        accent: root.neon
+        accent: root.accent
         errorColor: root.errorColor
         background: panelBackdrop.color
         fontFamily: root.fontFamily

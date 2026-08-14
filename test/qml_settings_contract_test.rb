@@ -42,12 +42,12 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes source, "signal disconnectRequested()"
     assert_match(/Keys\.onEscapePressed:.*cancelRequested\(\).*event\.accepted = true/m,
                  source)
-    assert_match(/id: modalScrim.*anchors\.fill: parent.*onClicked: dialog\.cancelRequested\(\)/m,
+    assert_match(/MouseArea\s*{\s*anchors\.fill: parent.*onClicked:.*dialog\.cancelRequested\(\)/m,
                  source)
-    assert_match(/id: dialogCard.*anchors\.centerIn: parent.*width: Math\.min\(.*parent\.width.*height: Math\.min\(.*parent\.height/m,
+    assert_match(/Rectangle\s*{\s*anchors\.centerIn: parent.*width: Math\.min\(.*parent\.width.*height: Math\.min\(.*parent\.height/m,
                  source)
     assert_match(/id: dialogBody.*Flickable\.VerticalFlick.*clip: true/m, source)
-    assert_match(/id: cardInputBlocker.*anchors\.fill: parent.*onClicked: function\(mouse\).*mouse\.accepted = true/m,
+    assert_match(/Rectangle\s*{\s*anchors\.centerIn: parent.*MouseArea\s*{\s*anchors\.fill: parent.*onClicked: function\(mouse\).*mouse\.accepted = true/m,
                  source)
     assert_includes source,
                     'text: dialog.certificateMode ? "TRUST & CONNECT" : "DISCONNECT"'
@@ -55,7 +55,7 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes source, "identity: dialog.ftpsIdentity"
     assert_match(/Keys\.onEscapePressed:.*if \(!dialog\.processing\) cancelRequested\(\)/m,
                  source)
-    assert_match(/id: modalScrim.*if \(!dialog\.processing\) dialog\.cancelRequested\(\)/m,
+    assert_match(/MouseArea\s*{\s*anchors\.fill: parent.*if \(!dialog\.processing\) dialog\.cancelRequested\(\)/m,
                  source)
     assert_match(/id: actionButton.*visible: !dialog\.probing && !dialog\.processing/m,
                  source)
@@ -174,7 +174,12 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/nextHost\.length > 255/, source)
     assert_match(%r{/\[\\x00-\\x1f\\x7f\]/\.test\(nextHost\)}, source)
     refute_match(/(?:IPv4|IPv6|ipAddress|octet).*test\(nextHost\)/i, source)
-    assert_match(/number < 1 \|\| number > 65535/, source)
+    assert_match(/function parseInteger\(text, label, minimum, maximum\).*number < minimum \|\| number > maximum.*label \+ " must be between " \+ minimum \+ " and " \+ maximum/m,
+                 source)
+    assert_match(/parseInteger\(mqttPortInput\.text, "MQTT port", 1, 65535\)/,
+                 source)
+    assert_match(/parseInteger\(ftpsPortInput\.text, "FTPS port", 1, 65535\)/,
+                 source)
     assert_match(/!\/\^\\d\+\$\/\.test\(raw\)/, source)
   end
 
@@ -186,8 +191,7 @@ class QmlSettingsContractTest < Minitest::Test
     refute_includes source, 'objectName: "NETWORK"'
     refute_includes source, 'objectName: "ADVANCED"'
     ids = %w[printerNameInput hostInput serialInput mqttPortInput ftpsPortInput
-             usernameInput accessCodeInput maxSegmentsInput explosionFactorInput accentColorInput
-             autoRotateSwitch barSummarySwitch]
+             usernameInput accessCodeInput maxSegmentsInput explosionFactorInput]
     ids.each do |id|
       assert_match(/id:\s*#{Regexp.escape(id)}\b/, source)
     end
@@ -201,11 +205,11 @@ class QmlSettingsContractTest < Minitest::Test
     refute_includes source, "demoToggle"
     refute_match(/demoMode|Offline demo/i, source)
     assert_match(/id:\s*serialInput\b/, source)
-    assert_match(/nextSegments < 1000 \|\| nextSegments > 100000/, source)
-    assert_match(/nextExplosionFactor < 0 \|\| nextExplosionFactor > 500/, source)
+    assert_match(/parseInteger\(\s*maxSegmentsInput\.text, "Wireframe limit", 1000, 100000\)/,
+                 source)
+    assert_match(/parseInteger\(\s*explosionFactorInput\.text, "Explode factor", 0, 500\)/,
+                 source)
     assert_match(/explosionFactor:\s*nextExplosionFactor/, source)
-    assert_match(/accentColor:\s*nextAccentColor/, source)
-    assert_match(/\^#\[0-9A-Fa-f\]\{6\}\$/, source)
     assert_match(/function load\(draft\).*printerNameInput\.text = String\(values\.printerName \|\| "3D Printer"\)/m,
                  source)
   end
@@ -217,7 +221,7 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes source, "clip: true"
     assert_match(/id: settingsScroll\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*contentHeight: settingsContent\.implicitHeight/m,
                  source)
-    assert_match(/ScrollBar\.vertical: ScrollBar \{\s*id: settingsScrollBar\s*policy: settingsScroll\.interactive\s*\? ScrollBar\.AlwaysOn : ScrollBar\.AlwaysOff\s*\}/m,
+    assert_match(/ScrollBar\.vertical: ScrollBar \{\s*policy: settingsScroll\.interactive\s*\? ScrollBar\.AlwaysOn : ScrollBar\.AlwaysOff\s*\}/m,
                  source)
     assert_match(/id: settingsHeader\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*id: settingsClose.*text: "CLOSE".*bordered: false/m,
                  source)
@@ -230,13 +234,13 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/id: networkGrid\s*width: parent\.width.*columns: width >= Style\.space\(420\) \? 3 : \(width >= Style\.space\(260\) \? 2 : 1\).*readonly property real cellWidth:/m,
                  source)
     assert_operator source.scan(/TextField\s*\{.*?clip: true/m).length, :>=, 7
-    assert_match(/id: accessCodeRow.*id: accessCodeInput.*id: forgetCodeInline.*text: "FORGET CODE"/m,
+    assert_match(/Row\s*{\s*width: parent\.width.*id: accessCodeInput.*id: forgetCodeInline.*text: "FORGET CODE"/m,
                  source)
-    assert_match(/id: preferencesGrid.*id: maxSegmentsInput.*id: explosionFactorInput.*id: accentColorInput.*id: autoRotateSwitch/m,
+    assert_match(/id: preferencesGrid.*id: maxSegmentsInput.*id: explosionFactorInput.*text: "AUTO-ROTATE BY DEFAULT"/m,
                  source)
-    assert_match(/id: preferencesGrid.*id: barSummaryColumn.*id: barSummarySwitch/m,
+    assert_match(/id: preferencesGrid.*text: "BAR SUMMARY"/m,
                  source)
-    assert_match(/id: settingsFooter.*Row\s*\{.*id: disconnectButton.*text: "DISCONNECT PRINTER".*id: saveButton.*text: "SAVE & CONNECT"/m,
+    assert_match(/id: settingsFooter.*Row\s*\{.*BambuButton\s*\{.*text: "DISCONNECT PRINTER".*BambuButton\s*\{.*text: "SAVE & CONNECT"/m,
                  source)
     refute_match(/id: settingsFooter.*ToggleSwitch/m, source)
     refute_match(/parent\.width - \(form\.allowBack \? parent\.spacing \+ Style\.space\(70\) : 0\)/m, source)
@@ -293,13 +297,11 @@ class QmlSettingsContractTest < Minitest::Test
   def test_connecting_view_has_a_real_loader_and_every_panel_view_is_bounded
     source = File.read(File.join(@root, "BambuWidget.qml"))
 
-    assert_match(/id: connectionSpinner\s*width: Style\.space\(48\).*RotationAnimator on rotation.*loops: Animation\.Infinite.*running: root\.popupOpen && root\.viewMode === "connecting"/m,
+    assert_match(/Item\s*{\s*width: Style\.space\(48\).*RotationAnimator on rotation.*loops: Animation\.Infinite.*running: root\.popupOpen && root\.viewMode === "connecting"/m,
                  source)
     assert_match(/contentWidth: fittedContentWidth\(Style\.space\(860\)\)/m,
                  source)
-    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
-                 source)
-    assert_match(/id: connectingOverlay.*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
+    assert_match(/Item\s*{\s*visible: root\.viewMode === "connecting".*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
                  source)
     assert_match(/BambuTelemetryPane\s*{.*width: dashboard\.wideLayout.*Style\.space\(300\).*onSettingsRequested: root\.toggleSettings\(\)/m,
                  source)
@@ -382,7 +384,7 @@ class QmlSettingsContractTest < Minitest::Test
     source = settings_source
 
     refute_includes source, 'DrawerSection { objectName: "LAN AUTHENTICATION" }'
-    assert_match(/id: networkGrid.*id: usernameInput.*id: accessCodeRow.*id: accessCodeInput.*id: forgetCodeInline/m,
+    assert_match(/id: networkGrid.*id: usernameInput.*text: form\.requireAccessCode.*id: accessCodeInput.*id: forgetCodeInline/m,
                  source)
   end
 
@@ -395,11 +397,11 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/var draft = \{.*showBarSummary: form\.showBarSummary/m,
                  source)
-    assert_match(/id: settingsContent.*id: preferencesGrid.*id: barSummaryColumn.*text: "BAR SUMMARY".*ToggleSwitch\s*\{.*checked: form\.showBarSummary.*onToggled:.*form\.showBarSummary = !form\.showBarSummary.*form\.barSummaryToggled\(form\.showBarSummary\).*id: settingsFooter.*"SAVE & CONNECT"/m,
+    assert_match(/id: settingsContent.*id: preferencesGrid.*text: "BAR SUMMARY".*ToggleSwitch\s*\{.*checked: form\.showBarSummary.*onToggled:.*form\.showBarSummary = !form\.showBarSummary.*form\.barSummaryToggled\(form\.showBarSummary\).*id: settingsFooter.*"SAVE & CONNECT"/m,
                  source)
 
     widget = File.read(File.join(@root, "BambuWidget.qml"))
-    assert_match(/function persistBarSummary\(enabled\).*persistLocalPreference\("showBarSummary", enabled === true\)/m,
+    assert_match(/function persistBarSummary\(enabled\).*var current = root\.settings.*entry\["showBarSummary"\] = enabled === true.*commitSettingsEntry\(entry\)/m,
                  widget)
     assert_match(/BambuSettingsView\s*\{.*onBarSummaryToggled: function\(enabled\).*root\.persistBarSummary\(enabled\)/m,
                  widget)
@@ -414,9 +416,9 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/id: explosionFactorInput.*maximumLength: 3.*inputMethodHints: Qt\.ImhDigitsOnly.*placeholderText: "100"/m,
                  source)
-    assert_match(/var explosionText = String\(explosionFactorInput\.text \|\| ""\)\.trim\(\).*var nextExplosionFactor = Number\(explosionText\).*nextExplosionFactor < 0 \|\| nextExplosionFactor > 500.*Explode factor must be between 0 and 500/m,
+    assert_match(/var nextExplosionFactor = parseInteger\(\s*explosionFactorInput\.text, "Explode factor", 0, 500\).*if \(nextExplosionFactor < 0\) return/m,
                  source)
-    assert_match(/var draft = \{.*maxSegments: nextSegments.*explosionFactor: nextExplosionFactor.*accentColor: nextAccentColor/m,
+    assert_match(/var draft = \{.*maxSegments: nextSegments.*explosionFactor: nextExplosionFactor.*autoRotate: form\.autoRotate/m,
                  source)
   end
 
@@ -427,7 +429,7 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/function load\(draft\).*autoRotate = values\.autoRotate !== false/m,
                  source)
     assert_match(/var draft = \{.*autoRotate: form\.autoRotate/m, source)
-    assert_match(/id: autoRotateColumn\s*width: parent\.width.*text: "AUTO-ROTATE BY DEFAULT".*ToggleSwitch\s*\{.*id: autoRotateSwitch.*checked: form\.autoRotate.*onToggled: form\.autoRotate = !form\.autoRotate.*id: barSummaryColumn/m,
+    assert_match(/text: "AUTO-ROTATE BY DEFAULT"\s*\}\s*ToggleSwitch\s*\{.*checked: form\.autoRotate.*onToggled: form\.autoRotate = !form\.autoRotate.*text: "BAR SUMMARY"/m,
                  source)
   end
 
@@ -436,7 +438,9 @@ class QmlSettingsContractTest < Minitest::Test
 
     assert_match(/id: settingsContent\s*width: Math\.max\(0, settingsScroll\.width\s*- \(settingsScroll\.interactive \? Style\.space\(20\) : 0\)\)\s*spacing: Style\.space\(8\)/,
                  source)
-    assert_match(/id: localToggleRows\s*width: parent\.width.*id: autoRotateColumn\s*width: parent\.width.*Item \{\s*width: parent\.width\s*height: autoRotateSwitch\.trackHeight.*id: autoRotateSwitch\s*cursorPad: 0.*id: barSummaryColumn\s*width: parent\.width.*text: "BAR SUMMARY".*Item \{\s*width: parent\.width\s*height: barSummarySwitch\.trackHeight.*ToggleSwitch \{\s*id: barSummarySwitch\s*cursorPad: 0.*anchors\.left: parent\.left.*anchors\.verticalCenter: parent\.verticalCenter/m,
+    assert_match(/Column\s*\{\s*width: parent\.width\s*spacing: Style\.space\(4\)\s*FieldLabel \{ text: "AUTO-ROTATE BY DEFAULT" \}\s*ToggleSwitch\s*\{\s*cursorPad: 0.*Column\s*\{\s*width: parent\.width\s*spacing: Style\.space\(4\)\s*FieldLabel \{ text: "BAR SUMMARY" \}\s*ToggleSwitch\s*\{\s*cursorPad: 0/m,
+                 source)
+    refute_match(/Item\s*\{\s*width: parent\.width\s*height: (?:autoRotate|barSummary)Switch\.trackHeight/m,
                  source)
     refute_includes source, "id: barSummaryRow"
     refute_includes source, "id: barSummaryField"
@@ -446,36 +450,13 @@ class QmlSettingsContractTest < Minitest::Test
   def test_settings_are_grouped_into_breathable_printer_network_and_display_sections
     source = settings_source
 
-    assert_includes source, "property color preferenceAccent: accent"
-    assert_match(/component SectionLabel: Text \{.*height: implicitHeight \+ Style\.space\(8\).*verticalAlignment: Text\.AlignBottom.*color: form\.preferenceAccent.*font\.letterSpacing: 1/m,
+    assert_match(/component SectionLabel: Text \{.*height: implicitHeight \+ Style\.space\(8\).*verticalAlignment: Text\.AlignBottom.*color: form\.accent.*font\.letterSpacing: 1/m,
                  source)
-    assert_match(/id: settingsContent.*spacing: Style\.space\(8\).*SectionLabel \{ id: printerSectionLabel; text: "PRINTER" \}.*id: printerNameInput.*id: identityGrid.*id: hostInput.*id: serialInput.*SectionLabel \{ id: networkSectionLabel; text: "NETWORK" \}.*id: networkGrid.*id: mqttPortInput.*id: ftpsPortInput.*id: usernameInput.*id: lanCodeHeader.*id: accessCodeRow.*SectionLabel \{ id: displaySectionLabel; text: "DISPLAY" \}.*id: preferencesGrid.*id: accentColorColumn.*id: localToggleRows/m,
+    assert_match(/id: settingsContent.*spacing: Style\.space\(8\).*SectionLabel \{ text: "PRINTER" \}.*id: printerNameInput.*id: identityGrid.*id: hostInput.*id: serialInput.*SectionLabel \{ text: "NETWORK" \}.*id: networkGrid.*id: mqttPortInput.*id: ftpsPortInput.*id: usernameInput.*text: form\.requireAccessCode.*id: accessCodeInput.*SectionLabel \{ text: "DISPLAY" \}.*id: preferencesGrid.*id: explosionFactorInput.*text: "AUTO-ROTATE BY DEFAULT"/m,
                  source)
 
     widget = File.read(File.join(@root, "BambuWidget.qml"))
-    assert_match(/BambuSettingsView\s*\{.*preferenceAccent: root\.neon/m,
-                 widget)
-  end
-
-  def test_accent_color_has_immediate_clickable_presets_on_a_full_width_row
-    source = settings_source
-    widget = File.read(File.join(@root, "BambuWidget.qml"))
-
-    assert_includes source, "signal accentColorSelected(string color)"
-    assert_match(/function applyAccentPreset\(color\).*accentColorInput\.text = normalized.*accentColorSelected\(normalized\)/m,
-                 source)
-    assert_match(/id: accentColorColumn\s*width: parent\.width.*text: "ACCENT COLOR".*id: accentColorRow\s*width: parent\.width.*id: accentColorInput.*id: accentPresetRow.*model: \["#39FF88", "#45B7FF", "#A78BFA", "#FFB347", "#FF5F8F"\].*radius: width \/ 2.*onClicked: form\.applyAccentPreset\(modelData\)/m,
-                 source)
-
-    preferences = source.index("id: preferencesGrid")
-    accent = source.index("id: accentColorColumn")
-    toggles = source.index("id: localToggleRows")
-    assert_operator preferences, :<, accent
-    assert_operator accent, :<, toggles
-
-    assert_match(/function persistAccentColor\(color\).*validAccentColor\(normalized\).*persistLocalPreference\("accentColor", normalized\)/m,
-                 widget)
-    assert_match(/BambuSettingsView\s*\{.*onAccentColorSelected: function\(color\).*root\.persistAccentColor\(color\)/m,
+    assert_match(/BambuSettingsView\s*\{.*accent: root\.accent/m,
                  widget)
   end
 
@@ -494,7 +475,7 @@ class QmlSettingsContractTest < Minitest::Test
 
     assert_match(/id: settingsButton.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,
                  telemetry)
-    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*Row\s*\{.*anchors\.fill: parent.*anchors\.margins: Style\.space\(12\).*id: disconnectButton.*height: parent\.height.*id: saveButton.*height: parent\.height/m,
+    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*Row\s*\{.*anchors\.fill: parent.*anchors\.margins: Style\.space\(12\).*text: "DISCONNECT PRINTER".*height: parent\.height.*text: "SAVE & CONNECT"/m,
                  settings)
   end
 
@@ -533,7 +514,6 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes body, 'serial: ""'
     assert_includes body, 'username: "bblp"'
     assert_includes body, "maxSegments: root.segmentLimit()"
-    assert_includes body, "accentColor: root.validAccentColor(root.accentColor)"
     assert_includes body, "autoRotate: root.autoRotate"
     assert_includes body, "showBarSummary: root.showBarSummary"
     assert_includes body, 'mqttTlsFingerprint: ""'
@@ -608,14 +588,13 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/requireAccessCode: !root\.hasUsableSecret/, source)
   end
 
-  def test_accent_only_save_does_not_restart_the_backend_runtime
+  def test_display_only_save_does_not_restart_the_backend_runtime
     source = File.read(File.join(@root, "BambuWidget.qml"))
 
     backend_change = source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
     refute_nil backend_change
     assert_match(/host.*mqttPort.*ftpsPort.*serial.*username.*maxSegments/m,
                  backend_change)
-    refute_match(/accentColor/, backend_change)
     refute_match(/explosionFactor/, backend_change)
     refute_match(/autoRotate/, backend_change)
     assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*mqttTlsFingerprint = root\.mqttTlsFingerprint.*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*if \(backendChanged\) sendConfiguration\(draft\)/m,

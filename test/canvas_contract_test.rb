@@ -46,7 +46,7 @@ class CanvasContractTest < Minitest::Test
     assert_includes @source, "property bool autoRotate: viewport.autoRotateDefault"
     assert_match(/onAutoRotateDefaultChanged:\s*\{.*modelCanvas\.autoRotate = viewport\.autoRotateDefault.*modelCanvas\.lastFrameTimestamp = 0.*modelCanvas\.requestVisiblePaint\(false\)/m,
                  @source)
-    assert_match(/id:\s*rotationButton.*onClicked:\s*\{.*modelCanvas\.autoRotate = !modelCanvas\.autoRotate/m,
+    assert_match(/text: modelCanvas\.autoRotate \? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF".*onClicked:\s*\{.*modelCanvas\.autoRotate = !modelCanvas\.autoRotate/m,
                  @source)
   end
 
@@ -86,7 +86,7 @@ class CanvasContractTest < Minitest::Test
     assert_match(/var crossingY = firstY \+ \(secondY - firstY\) \* ratio/, @source)
     assert_match(/function drawFrame\(context\).*drawSegments\(context, false, darkColor, 0\.55\).*drawSegments\(context, true, completedColor, 0\.70\)/m,
                  @source)
-    assert_match(/var renderColor = viewport\.errorActive \? viewport\.errorColor : viewport\.neon.*var completedColor = Qt\.rgba\(renderColor\.r, renderColor\.g,\s*renderColor\.b, 0\.74\)/m,
+    assert_match(/var renderColor = viewport\.errorActive \? viewport\.errorColor : viewport\.accent.*var completedColor = Qt\.rgba\(renderColor\.r, renderColor\.g,\s*renderColor\.b, 0\.74\)/m,
                  @source)
     assert_match(/var darkColor = Qt\.rgba\(viewport\.foreground\.r, viewport\.foreground\.g,\s*viewport\.foreground\.b, 0\.10\)/m,
                  @source)
@@ -153,7 +153,7 @@ class CanvasContractTest < Minitest::Test
 
   def test_reload_sits_with_rotation_controls_and_canvas_uses_the_footer_space
     assert_match(/id:\s*canvasFrame.*anchors\.bottom:\s*parent\.bottom/m, @source)
-    assert_match(/Row\s*{\s*id:\s*modelControls.*id:\s*rotationButton.*id:\s*reloadButton/m,
+    assert_match(/Row\s*{\s*id:\s*modelControls.*text: modelCanvas\.autoRotate \? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF".*text: "RELOAD PREVIEW"/m,
                  @source)
     assert_includes @source, 'text: "RELOAD PREVIEW"'
     refute_includes @source, "id: viewportFooter"
@@ -166,7 +166,7 @@ class CanvasContractTest < Minitest::Test
     assert_includes @source, "signal sourceRequested(string source)"
     assert_match(/component SourceIconButton: BambuButton\s*\{.*required property string sourceName.*required property bool available.*enabled: available.*active: viewport\.selectedSource === sourceName.*onClicked: viewport\.sourceRequested\(sourceName\)/m,
                  @source)
-    assert_match(/Column\s*\{\s*id:\s*sourceButtons.*anchors\.top:\s*coordinateBadge\.bottom.*id:\s*gcodeSourceButton.*sourceName:\s*"gcode".*available:\s*viewport\.gcodeAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/route\.svg"\).*id:\s*previewSourceButton.*sourceName:\s*"preview".*available:\s*viewport\.previewAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/image\.svg"\)/m,
+    assert_match(/Column\s*\{\s*id:\s*sourceButtons.*anchors\.top:\s*coordinateBadge\.bottom.*SourceIconButton\s*\{.*sourceName:\s*"gcode".*available:\s*viewport\.gcodeAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/route\.svg"\).*SourceIconButton\s*\{.*sourceName:\s*"preview".*available:\s*viewport\.previewAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/image\.svg"\)/m,
                  @source)
     refute_includes @source, 'text: "MODEL"'
     refute_includes @source, 'text: "G-CODE"'
@@ -179,7 +179,7 @@ class CanvasContractTest < Minitest::Test
   end
 
   def test_preview_is_centered_without_using_the_canvas_renderer
-    assert_match(/Image\s*\{\s*id:\s*printPreview.*source:\s*viewport\.previewSource.*fillMode:\s*Image\.PreserveAspectFit.*visible:\s*viewport\.selectedSource === "preview"/m,
+    assert_match(/Image\s*\{\s*anchors\.fill: parent.*source:\s*viewport\.previewSource.*fillMode:\s*Image\.PreserveAspectFit.*visible:\s*viewport\.selectedSource === "preview"/m,
                  @source)
     assert_match(/Canvas\s*\{\s*id:\s*modelCanvas.*visible:\s*viewport\.selectedSource === "gcode"/m,
                  @source)
@@ -228,7 +228,7 @@ class CanvasContractTest < Minitest::Test
     assert_match(/frameScale = frame\.scale \* zoom/, @source)
     assert_includes @source, 'text: "ZOOM ×" + modelCanvas.formatZoom(modelCanvas.zoom)'
     assert_includes @source, "WHEEL TO ZOOM"
-    assert_match(/onNeonChanged:\s*modelCanvas\.requestVisiblePaint\(false\)/,
+    assert_match(/onAccentChanged:\s*modelCanvas\.requestVisiblePaint\(false\)/,
                  @source)
     assert_match(/Row\s*{\s*id:\s*modelFooter.*width: Math\.max\(0, parent\.width - Style\.space\(20\)\).*clip:\s*true/m,
                  @source)
@@ -306,7 +306,7 @@ class CanvasContractTest < Minitest::Test
   end
 
   def test_explode_button_is_above_the_z_footer_and_only_controls_gcode
-    assert_match(/BambuButton\s*{\s*id:\s*explodeButton.*visible:\s*viewport\.selectedSource === "gcode".*anchors\.right:\s*parent\.right.*anchors\.bottom:\s*modelFooter\.top.*text:\s*modelCanvas\.exploded \? "EXPLODE ON" : "EXPLODE OFF".*enabled:\s*viewport\.gcodeAvailable.*onClicked:\s*modelCanvas\.exploded = !modelCanvas\.exploded/m,
+    assert_match(/BambuButton\s*{\s*visible:\s*viewport\.selectedSource === "gcode".*anchors\.right:\s*parent\.right.*anchors\.bottom:\s*modelFooter\.top.*text:\s*modelCanvas\.exploded \? "EXPLODE ON" : "EXPLODE OFF".*enabled:\s*viewport\.gcodeAvailable.*onClicked:\s*modelCanvas\.exploded = !modelCanvas\.exploded/m,
                  @source)
   end
 
@@ -317,7 +317,13 @@ class CanvasContractTest < Minitest::Test
                     '"Automatic retries are limited · use Reload preview to try again"'
     assert_match(/property color errorColor:/, @source)
     assert_match(/property bool errorActive:/, @source)
-    assert_match(/var renderColor = viewport\.errorActive \? viewport\.errorColor : viewport\.neon/, @source)
+    assert_match(/var renderColor = viewport\.errorActive \? viewport\.errorColor : viewport\.accent/, @source)
+    assert_match(/function drawNozzle\(context\).*var color = viewport\.errorActive \? viewport\.errorColor : viewport\.accent/m,
+                 @source)
+    assert_match(/text: "● PRINTED"\s*color: viewport\.errorActive \? viewport\.errorColor : viewport\.accent/m,
+                 @source)
+    assert_match(/text: "Z ".*color: viewport\.errorActive \? viewport\.errorColor : viewport\.accent/m,
+                 @source)
     assert_match(/color: viewport\.errorColor.*visible: viewport\.modelError !== ""/m,
                  @source)
     assert_includes @source, "onErrorActiveChanged: modelCanvas.requestVisiblePaint(false)"

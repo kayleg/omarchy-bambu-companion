@@ -25,8 +25,6 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  @widget)
     assert_match(/id:\s*dashboardLayout.*columns:\s*dashboard\.wideLayout \? 2 : 1/m,
                  @widget)
-    assert_match(/height:\s*wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
-                 @widget)
     assert_match(/id:\s*telemetryPane.*width:\s*dashboard\.wideLayout\s*\? Style\.space\(300\)\s*:\s*dashboard\.width/m,
                  @widget)
     assert_match(/id:\s*modelPane.*width:\s*dashboard\.wideLayout\s*\? Math\.max\(0, dashboard\.width - telemetryPane\.width - dashboardLayout\.spacing\)\s*:\s*dashboard\.width/m,
@@ -43,7 +41,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
     %w[TEMPERATURES PRINT\ METRICS CONNECTION MODEL\ DATA].each do |label|
       assert_match(/objectName:\s*"#{label}"/, source)
     end
-    refute_match(/#[0-9a-f]{6}/i, source)
+    assert_equal ["#39FF88"], source.scan(/#[0-9a-f]{6}/i).uniq
   end
 
   def test_viewport_has_lightweight_canvas_overlays_and_local_rotation_control
@@ -57,8 +55,6 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  source)
     assert_includes source, "interval: 50"
     assert_includes source, "function drawBuildPlateGrid(context)"
-    assert_includes source, "property bool autoRotateDefault: true"
-    assert_includes source, "property bool autoRotate: viewport.autoRotateDefault"
     assert_match(/running:\s*viewport\.panelActive.*modelCanvas\.autoRotate/m, source)
     assert_match(/text:\s*modelCanvas\.autoRotate \? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF"/,
                  source)
@@ -104,7 +100,6 @@ class HtmlUiTranslationContractTest < Minitest::Test
     refute_includes source, "advancedOpen"
     refute_match(/demoMode|Offline demo|demoToggle/i, source)
     refute_match(/SPEED PROFILE|TEMPERATURE PRESET/, source)
-    assert_includes source, 'text: "ACCENT COLOR"'
   end
 
 

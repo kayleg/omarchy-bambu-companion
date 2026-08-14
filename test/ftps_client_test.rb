@@ -76,6 +76,12 @@ class FtpsClientTest < Minitest::Test
     [object, ftp]
   end
 
+  def test_percent_encoded_hints_use_the_non_deprecated_uri_parser
+    source = File.read(File.expand_path("../lib/bambu_companion/ftps_client.rb", __dir__))
+
+    assert_includes source, "URI::RFC2396_PARSER.unescape"
+  end
+
   def test_maps_sdcard_url_and_downloads_exact_cache_file
     object, ftp = client({ "/cache/Benchy.gcode.3mf" => "archive-data" })
     Dir.mktmpdir do |dir|

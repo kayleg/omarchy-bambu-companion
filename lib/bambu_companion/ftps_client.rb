@@ -365,7 +365,7 @@ module BambuCompanion
         return nil unless safe_uri_host?(uri)
         return nil if uri.userinfo
 
-        text = URI::DEFAULT_PARSER.unescape(uri.path.to_s)
+        text = URI::RFC2396_PARSER.unescape(uri.path.to_s)
       end
       return nil if text.empty? || unsafe_text?(text)
 

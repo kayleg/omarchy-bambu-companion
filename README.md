@@ -66,11 +66,13 @@ local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
 | LAN access code | — | Password shown by the printer |
 | Wireframe segment limit | `40000` | Detail/performance limit, from 1,000 to 100,000 |
 | Explode factor | `100` | Additional vertical layer-spacing factor, from 0 to 500 |
-| Accent color | `#39FF88` | Wireframe and active-state color |
 | Auto-rotate by default | enabled | Initial rotation state when the viewport loads |
 | Bar summary | enabled | Show or hide status, progress and temperatures in the bar |
 
-The **Bar summary** toggle and accent-color presets are applied immediately.
+The plugin uses the current Omarchy theme accent for non-semantic highlights.
+The **Bar summary** toggle is applied immediately.
+Printer states keep fixed semantic colors: green for healthy/active states, red
+for errors and neutral gray when unavailable.
 Other configuration changes are applied with **Save & Connect**.
 
 Settings and the live dashboard reflow at narrow widths so every control stays

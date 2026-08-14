@@ -9,7 +9,6 @@ Item {
   property color foreground: Color.foreground
   property color accent: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
-  property color neon: accent
   property color errorColor: Color.accent
   property bool errorActive: false
   property string fontFamily: Style.font.family
@@ -560,7 +559,7 @@ Item {
       }
 
       function drawFrame(context) {
-        var renderColor = viewport.errorActive ? viewport.errorColor : viewport.neon
+        var renderColor = viewport.errorActive ? viewport.errorColor : viewport.accent
         var darkColor = Qt.rgba(viewport.foreground.r, viewport.foreground.g,
                                 viewport.foreground.b, 0.10)
         var completedColor = Qt.rgba(renderColor.r, renderColor.g,
@@ -582,7 +581,7 @@ Item {
         var position = nozzlePosition(nozzlePath, viewport.activeSegments, nozzlePhase)
         if (!position) return
         var point = projectedPoint(position[0], position[1], position[2])
-        var color = viewport.errorActive ? viewport.errorColor : viewport.neon
+        var color = viewport.errorActive ? viewport.errorColor : viewport.accent
         context.beginPath()
         context.arc(point[0], point[1], 5, 0, Math.PI * 2)
         context.fillStyle = Qt.rgba(color.r, color.g, color.b, 0.20)
@@ -613,7 +612,6 @@ Item {
     }
 
     Image {
-      id: printPreview
       anchors.fill: parent
       anchors.margins: Style.space(32)
       source: viewport.previewSource
@@ -694,13 +692,12 @@ Item {
       spacing: Style.space(8)
 
       BambuButton {
-        id: rotationButton
         width: Math.max(0, (modelControls.width - modelControls.spacing) / 2)
         height: modelControls.height
         clip: true
         enabled: viewport.selectedSource === "gcode" && viewport.gcodeAvailable
         text: modelCanvas.autoRotate ? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF"
-        foreground: modelCanvas.autoRotate ? viewport.neon : viewport.foreground
+        foreground: modelCanvas.autoRotate ? viewport.accent : viewport.foreground
         accent: viewport.accent
         bordered: true
         onClicked: {
@@ -711,7 +708,6 @@ Item {
       }
 
       BambuButton {
-        id: reloadButton
         width: Math.max(0, (modelControls.width - modelControls.spacing) / 2)
         height: modelControls.height
         clip: true
@@ -734,7 +730,7 @@ Item {
       active: viewport.selectedSource === sourceName
       tooltipText: available ? "Show sliced " + sourceLabel
         : sourceLabel + " unavailable for this print"
-      foreground: active ? viewport.neon
+      foreground: active ? viewport.accent
         : (enabled ? viewport.foreground : viewport.dim)
       accent: viewport.accent
       bordered: true
@@ -771,7 +767,6 @@ Item {
       z: 2
 
       SourceIconButton {
-        id: gcodeSourceButton
         width: sourceButtons.width
         height: width
         sourceName: "gcode"
@@ -781,7 +776,6 @@ Item {
       }
 
       SourceIconButton {
-        id: previewSourceButton
         width: sourceButtons.width
         height: width
         sourceName: "preview"
@@ -815,7 +809,6 @@ Item {
     }
 
     BambuButton {
-      id: explodeButton
       visible: viewport.selectedSource === "gcode"
       anchors.right: parent.right
       anchors.rightMargin: Style.space(10)
@@ -827,7 +820,7 @@ Item {
       text: modelCanvas.exploded ? "EXPLODE ON" : "EXPLODE OFF"
       enabled: viewport.gcodeAvailable
       active: modelCanvas.exploded
-      foreground: modelCanvas.exploded ? viewport.neon : viewport.foreground
+      foreground: modelCanvas.exploded ? viewport.accent : viewport.foreground
       accent: viewport.accent
       bordered: true
       onClicked: modelCanvas.exploded = !modelCanvas.exploded
@@ -856,7 +849,7 @@ Item {
           spacing: Style.space(8)
           Text {
             text: "● PRINTED"
-            color: viewport.errorActive ? viewport.errorColor : viewport.neon
+            color: viewport.errorActive ? viewport.errorColor : viewport.accent
             font.family: viewport.fontFamily
             font.pixelSize: Style.font.caption
           }
@@ -887,7 +880,7 @@ Item {
         height: modelFooter.height
         text: "Z " + (isFinite(viewport.zCurrent)
           ? viewport.zCurrent.toFixed(2) + " mm" : "--")
-        color: viewport.errorActive ? viewport.errorColor : viewport.neon
+        color: viewport.errorActive ? viewport.errorColor : viewport.accent
         elide: Text.ElideLeft
         horizontalAlignment: Text.AlignRight
         verticalAlignment: Text.AlignVCenter
@@ -955,7 +948,7 @@ Item {
                 width: Style.space(3)
                 height: width
                 radius: width / 2
-                color: viewport.neon
+                color: viewport.accent
 
                 transform: Translate { id: bounceOffset }
 
@@ -1016,7 +1009,7 @@ Item {
     modelCanvas.lastFrameTimestamp = 0
     modelCanvas.requestVisiblePaint(false)
   }
-  onNeonChanged: modelCanvas.requestVisiblePaint(false)
+  onAccentChanged: modelCanvas.requestVisiblePaint(false)
   onAutoRotateDefaultChanged: {
     modelCanvas.autoRotate = viewport.autoRotateDefault
     modelCanvas.lastFrameTimestamp = 0
