@@ -434,11 +434,11 @@ class QmlContractTest < Minitest::Test
                  @telemetry_source)
     assert_match(/label: "Z HEIGHT"; value: pane\.zValue; valueColor: pane\.accent/,
                  @telemetry_source)
-    assert_match(/label: "WI-FI"; value: pane\.wifiValue; valueColor: pane\.online \? pane\.successColor : pane\.dim/,
+    assert_match(/label: "WI-FI"; value: pane\.wifiValue; valueColor: pane\.accent/,
                  @telemetry_source)
     assert_match(/label: "STATUS"; value: pane\.modelState; valueColor: \(pane\.errorActive \|\| pane\.modelErrorActive\) \? pane\.errorColor : \(pane\.modelState === "READY" \? pane\.successColor : pane\.foreground\)/,
                  @telemetry_source)
-    refute_match(/pane\.online \? pane\.accent|root\.gcodeState === "RUNNING" \? root\.accent/,
+    refute_match(/root\.gcodeState === "RUNNING" \? root\.accent/,
                  @source + @telemetry_source)
   end
 

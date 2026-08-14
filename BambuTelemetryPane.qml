@@ -245,7 +245,7 @@ Item {
       SectionTitle { objectName: "CONNECTION" }
       MetricRow { label: "ADDRESS"; value: pane.hostValue }
       MetricRow { label: "PORTS"; value: pane.portsValue }
-      MetricRow { label: "WI-FI"; value: pane.wifiValue; valueColor: pane.online ? pane.successColor : pane.dim }
+      MetricRow { label: "WI-FI"; value: pane.wifiValue; valueColor: pane.accent }
       MetricRow { label: "REPORT"; value: pane.reportValue }
 
       SectionTitle { objectName: "MODEL DATA" }
