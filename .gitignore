@@ -1,4 +1,5 @@
 .bundle/
+.worktrees/
 .ruby-lsp/
 .superpowers/
 coverage/
