@@ -292,7 +292,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/contentWidth: fittedContentWidth\(Style\.space\(860\)\)/m,
                  source)
-    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
+    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panel\.contentHeight\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
                  source)
     assert_match(/id: connectingOverlay.*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
                  source)

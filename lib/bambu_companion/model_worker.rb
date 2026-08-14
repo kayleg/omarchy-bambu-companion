@@ -75,12 +75,12 @@ module BambuCompanion
     Job = Struct.new(:generation, :hints, :local_path, keyword_init: true)
     STOP = Object.new.freeze
     GEOMETRY_CHUNK_SIZE = 500
+    PREVIEW_CHUNK_CHARS = 49_152
     STOP_JOIN_SECONDS = 0.25
 
-    def initialize(ftps_client:, source:, parser:, emitter:, on_status:)
+    def initialize(ftps_client:, loader:, emitter:, on_status:)
       @ftps_client = ftps_client
-      @source = source
-      @parser = parser
+      @loader = loader
       @emitter = emitter
       @on_status = on_status
       @queue = SizedQueue.new(1)
@@ -198,17 +198,17 @@ module BambuCompanion
       notify_status(job)
       return false unless current?(job)
 
-      geometry = load_geometry(job)
+      bundle = load_geometry(job)
       return false unless current?(job)
-      return false unless publish_geometry(job, geometry)
+      return false unless publish_geometry(job, bundle)
 
       committed = @mutex.synchronize do
         next false unless job.generation == @generation && !@stopped
 
-        @geometry = geometry
+        @geometry = bundle.gcode
         @state = state(
           status: "ready", generation: job.generation,
-          segment_count: geometry.segments.length
+          segment_count: bundle.segment_count
         )
         true
       end
@@ -244,38 +244,71 @@ module BambuCompanion
 
     def parse_path(path, job, source_name: nil)
       hints = source_name ? job.hints.merge("source_name" => source_name) : job.hints
-      @source.open(path, hints) do |io|
-        @parser.parse(io, cancelled: -> { !current?(job) })
-      end
+      @loader.load(path, hints: hints, cancelled: -> { !current?(job) })
     end
 
-    def publish_geometry(job, geometry)
+    def publish_geometry(job, bundle)
+      gcode = bundle.gcode
+      preview = bundle.preview
+      encoded_preview = preview && [preview.data].pack("m0")
       return false unless emit_current(
         job,
         "geometry_begin",
         generation: job.generation,
-        segmentCount: geometry.segments.length,
-        bounds: camel_bounds(geometry.bounds),
-        layerZ: geometry.layer_z
+        segmentCount: bundle.segment_count,
+        gcode: gcode && {
+          segmentCount: gcode.segments.length,
+          bounds: camel_bounds(gcode.bounds)
+        },
+        preview: preview && {
+          byteCount: preview.data.bytesize,
+          encodedLength: encoded_preview.bytesize,
+          width: preview.width,
+          height: preview.height,
+          mimeType: preview.media_type
+        }
       )
 
-      chunk_count = (geometry.segments.length + GEOMETRY_CHUNK_SIZE - 1) /
-                    GEOMETRY_CHUNK_SIZE
-      geometry.segments.each_slice(GEOMETRY_CHUNK_SIZE).with_index do |segments, index|
-        return false unless emit_current(
-          job,
-          "geometry_chunk",
-          generation: job.generation,
-          index: index,
-          segments: segments
-        )
+      chunk_counts = {}
+      if gcode
+        count = chunk_count(gcode.segments.length, GEOMETRY_CHUNK_SIZE)
+        chunk_counts["gcode"] = count
+        gcode.segments.each_slice(GEOMETRY_CHUNK_SIZE).with_index do |segments, index|
+          return false unless emit_current(
+            job,
+            "geometry_chunk",
+            generation: job.generation,
+            source: "gcode",
+            index: index,
+            segments: segments
+          )
+        end
+      end
+
+      if encoded_preview
+        count = chunk_count(encoded_preview.bytesize, PREVIEW_CHUNK_CHARS)
+        chunk_counts["preview"] = count
+        count.times do |index|
+          data = encoded_preview.byteslice(
+            index * PREVIEW_CHUNK_CHARS, PREVIEW_CHUNK_CHARS
+          )
+          return false unless emit_current(
+            job,
+            "geometry_preview_chunk",
+            generation: job.generation,
+            source: "preview",
+            index: index,
+            data: data
+          )
+        end
       end
 
       emit_current(
         job,
         "geometry_end",
         generation: job.generation,
-        chunks: chunk_count
+        sources: bundle.sources.map(&:to_s),
+        chunks: chunk_counts
       )
     end
 
@@ -287,6 +320,8 @@ module BambuCompanion
         current?(job)
       end
     end
+
+    def chunk_count(length, size) = (length + size - 1) / size
 
     def publish_error(job, error)
       published = @mutex.synchronize do

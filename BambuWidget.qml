@@ -67,21 +67,33 @@ BarWidget {
   property var mqttTlsIdentity: ({})
   property var ftpsTlsIdentity: ({})
   readonly property int maxIpcLineChars: 1048576
+  readonly property int maxPreviewBytes: 524288
+  readonly property int maxPreviewPixels: 4194304
+  readonly property int maxPreviewChunkChars: 49152
   property string stdoutBuffer: ""
   property bool stdoutDiscarding: false
   property string stderrBuffer: ""
   property bool stderrDiscarding: false
 
-  property var activeSegments: []
-  property var activeBounds: ({})
+  property var geometryBundle: ({})
+  property string selectedGeometrySource: "gcode"
+  readonly property bool previewAvailable:
+    !!root.geometryBundle.preview
+      && String(root.geometryBundle.preview.url || "").startsWith("data:image/png;base64,")
+  readonly property bool gcodeGeometryAvailable:
+    !!root.geometryBundle.gcode
+      && Array.isArray(root.geometryBundle.gcode.segments)
+      && root.geometryBundle.gcode.segments.length > 0
+  readonly property var activeSegments: {
+    var geometry = root.geometryBundle.gcode
+    return geometry && Array.isArray(geometry.segments) ? geometry.segments : []
+  }
+  readonly property var activeBounds: {
+    var geometry = root.geometryBundle.gcode
+    return geometry && geometry.bounds ? geometry.bounds : ({})
+  }
   property int modelGeneration: -1
-  property var pendingSegments: []
-  property var pendingBounds: ({})
-  property int pendingGeneration: -1
-  property int pendingExpectedSegments: 0
-  property int pendingExpectedChunks: -1
-  property int pendingReceivedChunks: 0
-  property int pendingNextChunk: 0
+  property var pendingGeometry: ({})
 
   readonly property string printerName: String(setting("printerName", "3D Printer"))
   readonly property string host: String(setting("host", ""))
@@ -466,6 +478,15 @@ BarWidget {
       && value >= 0 && Math.floor(value) === value
   }
 
+  function selectGeometrySource(source) {
+    if ((source === "preview" && root.previewAvailable)
+        || (source === "gcode" && root.gcodeGeometryAvailable)) {
+      selectedGeometrySource = source
+      return true
+    }
+    return false
+  }
+
   function validTlsFingerprint(value) {
     return /^[0-9A-Fa-f]{64}$/.test(String(value || ""))
   }
@@ -476,6 +497,19 @@ BarWidget {
       if (typeof segment[index] !== "number" || !isFinite(segment[index])) return false
     }
     return true
+  }
+
+  function validPreview(preview) {
+    preview = objectOrEmpty(preview)
+    if (!isNonNegativeInteger(preview.byteCount) || preview.byteCount < 1
+        || preview.byteCount > root.maxPreviewBytes
+        || !isNonNegativeInteger(preview.width) || preview.width < 1
+        || !isNonNegativeInteger(preview.height) || preview.height < 1
+        || preview.width * preview.height > root.maxPreviewPixels
+        || preview.mimeType !== "image/png") return false
+    var expectedLength = 4 * Math.ceil(preview.byteCount / 3)
+    return isNonNegativeInteger(preview.encodedLength)
+      && preview.encodedLength === expectedLength
   }
 
   function validAccentColor(value) {
@@ -753,8 +787,8 @@ BarWidget {
     var model = objectOrEmpty(message.model)
     var nextGeneration = isNonNegativeInteger(model.generation) ? model.generation : -1
     if (nextGeneration !== modelGeneration) {
-      activeSegments = []
-      activeBounds = ({})
+      geometryBundle = ({})
+      selectedGeometrySource = "gcode"
       resetPendingGeometry()
       modelGeneration = nextGeneration
     }
@@ -801,13 +835,7 @@ BarWidget {
   }
 
   function resetPendingGeometry() {
-    pendingGeneration = -1
-    pendingSegments = []
-    pendingBounds = ({})
-    pendingExpectedSegments = 0
-    pendingExpectedChunks = -1
-    pendingReceivedChunks = 0
-    pendingNextChunk = 0
+    pendingGeometry = ({})
   }
 
   function resetOperationalState() {
@@ -844,8 +872,8 @@ BarWidget {
     secretStatusKnown = false
     clearTlsProbeState()
     modelGeneration = -1
-    activeSegments = []
-    activeBounds = ({})
+    geometryBundle = ({})
+    selectedGeometrySource = "gcode"
     resetPendingGeometry()
     if (root.viewMode !== "settings"
         && (root.viewMode !== "setup" || root.hasConnectionTarget)) {
@@ -859,55 +887,165 @@ BarWidget {
     if (!isNonNegativeInteger(message.generation)) return
     var generation = message.generation
     if (generation !== modelGeneration) return
-    if (event === "geometry_begin") {
-      var expectedSegments = message.segmentCount
-      if (!isNonNegativeInteger(message.segmentCount)
-          || expectedSegments > root.segmentLimit()) {
-        resetPendingGeometry()
-        return
-      }
-      pendingGeneration = generation
-      pendingSegments = []
-      pendingBounds = objectOrEmpty(message.bounds)
-      pendingExpectedSegments = expectedSegments
-      pendingExpectedChunks = -1
-      pendingReceivedChunks = 0
-      pendingNextChunk = 0
-      return
-    }
-    if (pendingGeneration < 0 || generation !== pendingGeneration) return
-    if (event === "geometry_chunk") {
-      var chunk = message.segments
-      if (!isNonNegativeInteger(message.index)
-          || message.index !== pendingNextChunk || !Array.isArray(chunk)
-          || chunk.length === 0
-          || pendingSegments.length + chunk.length > pendingExpectedSegments
-          || pendingSegments.length + chunk.length > root.segmentLimit()) {
-        resetPendingGeometry()
-        return
-      }
-      for (var segmentIndex = 0; segmentIndex < chunk.length; segmentIndex++) {
-        if (!isValidSegment(chunk[segmentIndex])) {
-          resetPendingGeometry()
-          return
-        }
-      }
-      pendingSegments = pendingSegments.concat(chunk)
-      pendingReceivedChunks += 1
-      pendingNextChunk += 1
-      return
-    }
-    if (event === "geometry_end") {
-      var expectedChunks = message.chunks
-      pendingExpectedChunks = expectedChunks
-      if (isNonNegativeInteger(message.chunks)
-          && pendingSegments.length === pendingExpectedSegments
-          && pendingReceivedChunks === expectedChunks) {
-        activeSegments = pendingSegments.slice(0)
-        activeBounds = pendingBounds
-      }
+    if (event === "geometry_begin") beginGeometry(message, generation)
+    else if (event === "geometry_chunk") appendGeometryChunk(message, generation)
+    else if (event === "geometry_preview_chunk") appendPreviewChunk(message, generation)
+    else if (event === "geometry_end") finishGeometry(message, generation)
+  }
+
+  function beginGeometry(message, generation) {
+    if (!isNonNegativeInteger(message.segmentCount)
+        || message.segmentCount > root.segmentLimit()) {
       resetPendingGeometry()
+      return
     }
+    var hasGcode = message.gcode !== null && message.gcode !== undefined
+    var hasPreview = message.preview !== null && message.preview !== undefined
+    var gcode = objectOrEmpty(message.gcode)
+    if (hasGcode && (!isNonNegativeInteger(gcode.segmentCount)
+        || gcode.segmentCount < 1 || gcode.segmentCount !== message.segmentCount)) {
+      resetPendingGeometry()
+      return
+    }
+    if (!hasGcode && message.segmentCount !== 0) {
+      resetPendingGeometry()
+      return
+    }
+    if (hasPreview && !validPreview(message.preview)) {
+      resetPendingGeometry()
+      return
+    }
+    if (!hasGcode && !hasPreview) {
+      resetPendingGeometry()
+      return
+    }
+    pendingGeometry = {
+      generation: generation,
+      gcode: hasGcode ? {
+        expectedSegments: gcode.segmentCount,
+        bounds: objectOrEmpty(gcode.bounds),
+        segments: [],
+        nextChunk: 0
+      } : null,
+      preview: hasPreview ? {
+        byteCount: message.preview.byteCount,
+        encodedLength: message.preview.encodedLength,
+        width: message.preview.width,
+        height: message.preview.height,
+        parts: [],
+        receivedLength: 0,
+        nextChunk: 0
+      } : null
+    }
+  }
+
+  function appendGeometryChunk(message, generation) {
+    var transaction = objectOrEmpty(pendingGeometry)
+    if (generation !== transaction.generation) return
+    var slot = transaction.gcode
+    if (message.source !== "gcode" || !slot) {
+      resetPendingGeometry()
+      return
+    }
+    var chunk = message.segments
+    if (!isNonNegativeInteger(message.index)
+        || message.index !== slot.nextChunk || !Array.isArray(chunk)
+        || chunk.length === 0
+        || slot.segments.length + chunk.length > slot.expectedSegments) {
+      resetPendingGeometry()
+      return
+    }
+    for (var segmentIndex = 0; segmentIndex < chunk.length; segmentIndex++) {
+      if (!isValidSegment(chunk[segmentIndex])) {
+        resetPendingGeometry()
+        return
+      }
+    }
+    slot.segments = slot.segments.concat(chunk)
+    slot.nextChunk += 1
+  }
+
+  function appendPreviewChunk(message, generation) {
+    var transaction = objectOrEmpty(pendingGeometry)
+    if (generation !== transaction.generation) return
+    var slot = transaction.preview
+    var data = message.data
+    if (message.source !== "preview" || !slot
+        || !isNonNegativeInteger(message.index)
+        || message.index !== slot.nextChunk
+        || typeof data !== "string" || data.length < 1
+        || data.length > root.maxPreviewChunkChars
+        || slot.receivedLength + data.length > slot.encodedLength
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)
+        || (data.indexOf("=") >= 0
+          && slot.receivedLength + data.length !== slot.encodedLength)) {
+      resetPendingGeometry()
+      return
+    }
+    slot.parts.push(data)
+    slot.receivedLength += data.length
+    slot.nextChunk += 1
+  }
+
+  function finishGeometry(message, generation) {
+    var transaction = objectOrEmpty(pendingGeometry)
+    if (generation !== transaction.generation) return
+    var expected = []
+    if (transaction.gcode) expected.push("gcode")
+    if (transaction.preview) expected.push("preview")
+    var announced = message.sources
+    var chunks = objectOrEmpty(message.chunks)
+    var expectedChunkKeys = expected.length
+    if (!Array.isArray(announced) || announced.length !== expected.length
+        || Object.keys(chunks).length !== expectedChunkKeys) {
+      resetPendingGeometry()
+      return
+    }
+    for (var index = 0; index < expected.length; index++) {
+      if (announced[index] !== expected[index]) {
+        resetPendingGeometry()
+        return
+      }
+    }
+    var slot = transaction.gcode
+    if (slot && (!isNonNegativeInteger(chunks.gcode)
+        || slot.segments.length !== slot.expectedSegments
+        || slot.nextChunk !== chunks.gcode)) {
+      resetPendingGeometry()
+      return
+    }
+    var preview = transaction.preview
+    if (preview && (!isNonNegativeInteger(chunks.preview)
+        || preview.nextChunk !== chunks.preview
+        || preview.receivedLength !== preview.encodedLength)) {
+      resetPendingGeometry()
+      return
+    }
+    var nextBundle = ({})
+    if (slot) nextBundle.gcode = {
+      segments: slot.segments.slice(0), bounds: slot.bounds
+    }
+    if (preview) {
+      var encoded = preview.parts.join("")
+      var expectedPadding = preview.byteCount % 3 === 0
+        ? 0 : 3 - preview.byteCount % 3
+      var suffix = expectedPadding === 0 ? ""
+        : (expectedPadding === 1 ? "=" : "==")
+      if (!encoded.endsWith(suffix)
+          || (expectedPadding > 0
+            && encoded[encoded.length - expectedPadding - 1] === "=")) {
+        resetPendingGeometry()
+        return
+      }
+      nextBundle.preview = {
+        url: "data:image/png;base64," + encoded,
+        width: preview.width,
+        height: preview.height
+      }
+    }
+    geometryBundle = nextBundle
+    selectedGeometrySource = nextBundle.gcode ? "gcode" : "preview"
+    resetPendingGeometry()
   }
 
   function handleLine(line) {
@@ -1209,7 +1347,7 @@ BarWidget {
         Item {
           id: dashboard
           width: panelScroll.width
-          height: wideLayout ? panelScroll.height
+          height: wideLayout ? panel.contentHeight
             : telemetryPane.height + dashboardLayout.spacing + modelPane.height
           readonly property bool wideLayout: width >= Style.space(640)
           readonly property real overlayX: wideLayout
@@ -1282,11 +1420,19 @@ BarWidget {
               panelActive: root.popupOpen && root.viewMode === "status"
               daemonReady: root.daemonReady && sessionProcess.running
               printing: root.connected && root.gcodeState === "RUNNING"
+              previewAvailable: root.previewAvailable
+              gcodeAvailable: root.gcodeGeometryAvailable
+              selectedSource: root.selectedGeometrySource
+              previewSource: root.previewAvailable
+                ? root.geometryBundle.preview.url : ""
               activeSegments: root.activeSegments
               activeBounds: root.activeBounds
               zCurrent: root.zCurrent
               modelStatus: root.modelStatus
               modelError: root.modelError || root.processError
+              onSourceRequested: function(source) {
+                root.selectGeometrySource(source)
+              }
               onReloadRequested: root.refreshModel()
             }
           }

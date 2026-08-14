@@ -9,6 +9,26 @@ class CanvasContractTest < Minitest::Test
     @source = File.read(File.expand_path("../BambuModelViewport.qml", __dir__))
   end
 
+  def test_source_icons_are_white_masks_recolored_by_the_plugin_palette
+    %w[route.svg image.svg].each do |name|
+      icon = File.read(File.expand_path("../assets/#{name}", __dir__))
+
+      assert_includes icon, 'stroke="#fff"'
+      refute_includes icon, 'stroke="#000"'
+    end
+    assert_match(/component SourceIconButton: BambuButton.*MultiEffect.*colorization:\s*1.*colorizationColor:\s*foreground/m,
+                 @source)
+  end
+
+  def test_loading_message_has_three_panel_scoped_staggered_bouncing_dots
+    assert_match(/id:\s*loadingIndicator.*visible:\s*viewport\.modelStatus === "loading"/m,
+                 @source)
+    assert_match(/Repeater\s*{\s*model:\s*3.*property int phaseDelay:\s*index \* 120/m,
+                 @source)
+    assert_match(/SequentialAnimation\s*{.*running:\s*viewport\.panelActive\s*&&\s*loadingIndicator\.visible.*loops:\s*Animation\.Infinite.*PauseAnimation\s*{\s*duration:\s*loadingDot\.phaseDelay\s*}.*NumberAnimation\s*{.*property:\s*"y".*to:\s*-Style\.space\(3\).*}.*NumberAnimation\s*{.*property:\s*"y".*to:\s*0/m,
+                 @source)
+  end
+
   def test_canvas_animation_is_panel_scoped_and_twenty_fps
     assert_includes @source, "Canvas {"
     assert_includes @source, "renderStrategy: Canvas.Threaded"
@@ -16,7 +36,7 @@ class CanvasContractTest < Minitest::Test
     assert_match(/running:\s*viewport\.panelActive\s*&&\s*viewport\.activeSegments\.length\s*>\s*0.*modelCanvas\.autoRotate/m,
                  @source)
     assert_includes @source, "function advanceAutoRotation(timestamp)"
-    assert_match(/if \(dragging \|\| !autoRotate\) return false/, @source)
+    assert_match(/if \(dragging\) return false/, @source)
     assert_match(/yaw = normalizeAngle\(yaw \+ elapsed \/ 14000 \* Math\.PI \* 2\)/,
                  @source)
   end
@@ -123,8 +143,64 @@ class CanvasContractTest < Minitest::Test
     assert_match(/id:\s*canvasFrame.*anchors\.bottom:\s*parent\.bottom/m, @source)
     assert_match(/Row\s*{\s*id:\s*modelControls.*id:\s*rotationButton.*id:\s*reloadButton/m,
                  @source)
-    assert_includes @source, 'text: "RELOAD MODEL"'
+    assert_includes @source, 'text: "RELOAD PREVIEW"'
     refute_includes @source, "id: viewportFooter"
+  end
+
+  def test_gcode_and_preview_use_vertical_lucide_buttons_below_coordinates
+    assert_includes @source, "property bool previewAvailable: false"
+    assert_includes @source, "property bool gcodeAvailable: false"
+    assert_includes @source, 'property string selectedSource: "gcode"'
+    assert_includes @source, "signal sourceRequested(string source)"
+    assert_match(/component SourceIconButton: BambuButton\s*\{.*required property string sourceName.*required property bool available.*enabled: available.*active: viewport\.selectedSource === sourceName.*onClicked: viewport\.sourceRequested\(sourceName\)/m,
+                 @source)
+    assert_match(/Column\s*\{\s*id:\s*sourceButtons.*anchors\.top:\s*coordinateBadge\.bottom.*id:\s*gcodeSourceButton.*sourceName:\s*"gcode".*available:\s*viewport\.gcodeAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/route\.svg"\).*id:\s*previewSourceButton.*sourceName:\s*"preview".*available:\s*viewport\.previewAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/image\.svg"\)/m,
+                 @source)
+    refute_includes @source, 'text: "MODEL"'
+    refute_includes @source, 'text: "G-CODE"'
+  end
+
+  def test_switching_source_does_not_reset_the_canvas_camera
+    buttons = @source[/Column\s*\{\s*id:\s*sourceButtons.*?\n\s*\}/m]
+    refute_nil buttons
+    refute_match(/modelCanvas\.(?:yaw|pitch|zoom)\s*=/, buttons)
+  end
+
+  def test_preview_is_centered_without_using_the_canvas_renderer
+    assert_match(/Image\s*\{\s*id:\s*printPreview.*source:\s*viewport\.previewSource.*fillMode:\s*Image\.PreserveAspectFit.*visible:\s*viewport\.selectedSource === "preview"/m,
+                 @source)
+    assert_match(/Canvas\s*\{\s*id:\s*modelCanvas.*visible:\s*viewport\.selectedSource === "gcode"/m,
+                 @source)
+  end
+
+  def test_simulated_nozzle_loops_over_only_the_nearest_gcode_layer
+    segment_check = extract_function("segmentIsFinite")
+    build = extract_function("buildNozzlePath")
+    position = extract_function("nozzlePosition")
+    result = run_javascript(<<~JAVASCRIPT)
+      #{segment_check}
+      #{build}
+      #{position}
+      var segments = [
+        [0,0,0.2,10,0,0.2], [10,0,0.2,10,10,0.2],
+        [0,0,0.4,20,0,0.4], [20,0,0.4,20,20,0.4]
+      ]
+      var path = buildNozzlePath(segments, 0.39, 4096)
+      console.log(JSON.stringify({ count: path.items.length,
+        total: path.totalLength,
+        start: nozzlePosition(path, segments, 0),
+        middle: nozzlePosition(path, segments, 0.5),
+        looped: nozzlePosition(path, segments, 1) }))
+    JAVASCRIPT
+
+    assert_equal 2, result.fetch("count")
+    assert_in_delta 40, result.fetch("total"), 1e-9
+    assert_equal [0, 0, 0.4], result.fetch("start")
+    assert_equal [20, 0, 0.4], result.fetch("middle")
+    assert_equal result.fetch("start"), result.fetch("looped")
+    assert_match(/function drawNozzle\(context\).*context\.arc/m, @source)
+    assert_match(/running:.*viewport\.selectedSource === "gcode".*viewport\.printing.*modelCanvas\.nozzlePath\.items\.length > 0/m,
+                 @source)
   end
 
   def test_wheel_zoom_is_bounded_visible_and_documented_in_the_viewport
@@ -177,10 +253,10 @@ class CanvasContractTest < Minitest::Test
   end
 
   def test_print_preparation_and_error_states_are_explained_and_colored
-    assert_includes @source, '"FINDING PRINT MODEL"'
-    assert_includes @source, '"MODEL NOT READY YET"'
+    assert_includes @source, '"FINDING PRINT DATA"'
+    assert_includes @source, '"PRINT DATA NOT READY YET"'
     assert_includes @source,
-                    '"Automatic retries are limited · use Reload model to try again"'
+                    '"Automatic retries are limited · use Reload preview to try again"'
     assert_match(/property color errorColor:/, @source)
     assert_match(/property bool errorActive:/, @source)
     assert_match(/var renderColor = viewport\.errorActive \? viewport\.errorColor : viewport\.neon/, @source)
@@ -264,9 +340,11 @@ class CanvasContractTest < Minitest::Test
     assert_equal true, result.fetch("openResult")
     assert_equal 1, result.fetch("rebuilt")
     assert_equal 1, result.fetch("painted")
-    assert_includes @source, "onActiveSegmentsChanged: modelCanvas.requestVisiblePaint(true)"
+    assert_match(/onActiveSegmentsChanged:\s*\{.*modelCanvas\.rebuildNozzlePath\(\).*modelCanvas\.requestVisiblePaint\(true\)/m,
+                 @source)
     assert_includes @source, "onActiveBoundsChanged: modelCanvas.requestVisiblePaint(true)"
-    assert_includes @source, "onZCurrentChanged: modelCanvas.requestVisiblePaint(false)"
+    assert_match(/onZCurrentChanged:\s*\{.*modelCanvas\.rebuildNozzlePath\(\).*modelCanvas\.requestVisiblePaint\(false\)/m,
+                 @source)
     assert_match(/onPanelActiveChanged:.*if \(viewport\.panelActive\) modelCanvas\.requestVisiblePaint\(true\)/m,
                  @source)
     assert_includes @source, "onWidthChanged: requestVisiblePaint(false)"

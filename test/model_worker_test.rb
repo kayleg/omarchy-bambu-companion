@@ -6,6 +6,7 @@ require "stringio"
 require "timeout"
 require "tmpdir"
 require "bambu_companion/gcode_parser"
+require "bambu_companion/print_preview_loader"
 require "bambu_companion/model_worker"
 
 class ModelWorkerTest < Minitest::Test
@@ -199,6 +200,20 @@ class ModelWorkerTest < Minitest::Test
     end
   end
 
+  class RecordingLoader
+    attr_reader :calls
+
+    def initialize(result)
+      @result = result
+      @calls = []
+    end
+
+    def load(path, hints:, cancelled:)
+      @calls << [path, hints, cancelled]
+      @result
+    end
+  end
+
   class TestError < StandardError
     attr_reader :code
 
@@ -290,12 +305,105 @@ class ModelWorkerTest < Minitest::Test
       names = emitter.events.map(&:first)
       assert_equal "geometry_begin", names.first
       assert_equal "geometry_end", names.last
+      manifest = emitter.events.first.fetch(1)
+      assert_equal 1_205, manifest.fetch(:segmentCount)
+      assert_equal 1_205, manifest.fetch(:gcode).fetch(:segmentCount)
+      assert_nil manifest.fetch(:preview)
       chunks = emitter.events.select { |event,| event == "geometry_chunk" }
       assert_equal([500, 500, 205], chunks.map { |_, payload| payload.fetch(:segments).length })
       assert_equal([0, 1, 2], chunks.map { |_, payload| payload.fetch(:index) })
+      assert(chunks.all? { |_, payload| payload.fetch(:source) == "gcode" })
       assert(chunks.all? { |_, payload| payload.fetch(:generation) == job.generation })
+      ending = emitter.events.last.fetch(1)
+      assert_equal ["gcode"], ending.fetch(:sources)
+      assert_equal({ "gcode" => 3 }, ending.fetch(:chunks))
       emitter.events.each { |event, payload| JSON.generate(payload.merge(event: event)) }
     end
+  end
+
+  def test_publishes_preview_and_gcode_as_one_ordered_transaction
+    preview = BambuCompanion::PreviewImage.new(
+      data: "PNG".b.freeze, width: 320, height: 240, media_type: "image/png"
+    ).freeze
+    gcode_geometry = geometry(
+      segments: [[10, 0, 0.2, 11, 0, 0.2]],
+      bounds: { min_z: 0.2, max_z: 0.2 }, layer_z: [0.2]
+    )
+    emitter = Emitter.new
+    statuses = StatusCollector.new
+    worker = BambuCompanion::ModelWorker.new(
+      ftps_client: nil,
+      loader: RecordingLoader.new(bundle(preview: preview, gcode: gcode_geometry)),
+      emitter: emitter,
+      on_status: statuses
+    )
+    job = worker.submit(hints: {}, local_path: "/tmp/dual")
+
+    assert worker.process(job)
+    begin_event = emitter.events.first
+    assert_equal "geometry_begin", begin_event.first
+    assert_equal 1, begin_event.last.fetch(:segmentCount)
+    assert_equal({
+      segmentCount: 1,
+      bounds: { minX: nil, maxX: nil, minY: nil, maxY: nil,
+                minZ: 0.2, maxZ: 0.2 }
+    }, begin_event.last.fetch(:gcode))
+    assert_equal({
+      byteCount: 3, encodedLength: 4, width: 320, height: 240,
+      mimeType: "image/png"
+    }, begin_event.last.fetch(:preview))
+    chunks = emitter.events.select { |event,| event == "geometry_chunk" }
+    assert_equal ["gcode"], (chunks.map { |_, payload| payload.fetch(:source) })
+    assert_equal [0], (chunks.map { |_, payload| payload.fetch(:index) })
+    preview_chunks = emitter.events.select do |event,|
+      event == "geometry_preview_chunk"
+    end
+    assert_equal ["UE5H"], (preview_chunks.map { |_, payload| payload.fetch(:data) })
+    assert_equal [0], (preview_chunks.map { |_, payload| payload.fetch(:index) })
+    assert_equal({ "gcode" => 1, "preview" => 1 }, emitter.events.last.last.fetch(:chunks))
+    assert_equal %w[gcode preview], emitter.events.last.last.fetch(:sources)
+    assert_equal 1, statuses.snapshots.last.fetch(:segment_count)
+    assert_equal 0.2, worker.snapshot(layer_num: 1).fetch(:z_current)
+  end
+
+  def test_large_preview_is_split_below_the_ipc_text_limit
+    preview = BambuCompanion::PreviewImage.new(
+      data: ("x" * 60_000).b.freeze, width: 320, height: 240,
+      media_type: "image/png"
+    ).freeze
+    emitter = Emitter.new
+    worker = BambuCompanion::ModelWorker.new(
+      ftps_client: nil, loader: RecordingLoader.new(bundle(preview: preview)),
+      emitter: emitter, on_status: StatusCollector.new
+    )
+
+    assert worker.process(worker.submit(hints: {}, local_path: "/tmp/preview"))
+
+    chunks = emitter.events.select { |event,| event == "geometry_preview_chunk" }
+    assert_equal 2, chunks.length
+    assert(chunks.all? { |_, payload| payload.fetch(:data).bytesize <= 49_152 })
+    encoded = chunks.map { |_, payload| payload.fetch(:data) }.join
+    assert_equal [preview.data].pack("m0"), encoded
+    assert_equal({ "preview" => 2 }, emitter.events.last.last.fetch(:chunks))
+  end
+
+  def test_delegates_local_path_hints_and_cancellation_to_geometry_loader
+    loader = RecordingLoader.new(bundle(gcode: geometry))
+    emitter = Emitter.new
+    worker = BambuCompanion::ModelWorker.new(
+      ftps_client: nil,
+      loader: loader,
+      emitter: emitter,
+      on_status: StatusCollector.new
+    )
+    hints = { "file" => "local.gcode.3mf", "plate_idx" => 0 }
+    job = worker.submit(hints: hints, local_path: "/tmp/local-job")
+
+    assert worker.process(job)
+    path, forwarded_hints, cancelled = loader.calls.fetch(0)
+    assert_equal "/tmp/local-job", path
+    assert_equal hints, forwarded_hints
+    refute cancelled.call
   end
 
   def test_background_worker_processes_only_the_latest_pending_generation
@@ -870,8 +978,13 @@ class ModelWorkerTest < Minitest::Test
                    emitter: Emitter.new, on_status: StatusCollector.new)
     BambuCompanion::ModelWorker.new(
       ftps_client: ftps_client,
-      source: source,
-      parser: parser,
+      loader: BambuCompanion::PrintPreviewLoader.new(
+        source: source,
+        gcode_parser: parser,
+        preview_source: Object.new.tap do |preview|
+          preview.define_singleton_method(:extract) { |*| nil }
+        end
+      ),
       emitter: emitter,
       on_status: on_status
     )
@@ -889,11 +1002,16 @@ class ModelWorkerTest < Minitest::Test
     "G90\nM83\n;TYPE:WALL-OUTER\nG1 X0 Y0 Z0.2\nG1 X#{x} Y0 E1\n"
   end
 
-  def geometry(bounds: { min_z: 0.2, max_z: 10.2 }, layer_z: [], layer_z_exact: true)
+  def geometry(segments: [], bounds: { min_z: 0.2, max_z: 10.2 },
+               layer_z: [], layer_z_exact: true)
     BambuCompanion::Geometry.new(
-      segments: [], bounds: bounds, layer_z: layer_z,
+      segments: segments.map(&:freeze).freeze, bounds: bounds.freeze, layer_z: layer_z.freeze,
       layer_z_exact: layer_z_exact
-    )
+    ).freeze
+  end
+
+  def bundle(preview: nil, gcode: nil)
+    BambuCompanion::PrintPreviewBundle.new(preview: preview, gcode: gcode)
   end
 
   def drain_queue(queue)

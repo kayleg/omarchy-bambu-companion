@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 
@@ -15,6 +16,10 @@ Item {
   property bool panelActive: false
   property bool daemonReady: false
   property bool printing: false
+  property bool previewAvailable: false
+  property bool gcodeAvailable: false
+  property string selectedSource: "gcode"
+  property url previewSource: ""
   property var activeSegments: []
   property var activeBounds: ({})
   property real zCurrent: NaN
@@ -22,6 +27,7 @@ Item {
   property string modelError: ""
 
   signal reloadRequested()
+  signal sourceRequested(string source)
 
   readonly property color surface: Qt.rgba(
     foreground.r, foreground.g, foreground.b, 0.025)
@@ -38,17 +44,17 @@ Item {
   }
 
   function emptyModelTitle() {
-    if (viewport.modelStatus === "loading") return "FINDING PRINT MODEL"
+    if (viewport.modelStatus === "loading") return "FINDING PRINT DATA"
     if (viewport.printing && viewport.modelStatus === "error")
-      return "MODEL NOT READY YET"
-    if (viewport.printing) return "WAITING FOR PRINT MODEL"
-    return "MODEL AVAILABLE DURING A PRINT"
+      return "PRINT DATA NOT READY YET"
+    if (viewport.printing) return "WAITING FOR PRINT DATA"
+    return "PREVIEW AVAILABLE DURING A PRINT"
   }
 
   function emptyModelDetail() {
     if (viewport.printing
         && (viewport.modelStatus === "loading" || viewport.modelStatus === "error")) {
-      return "Automatic retries are limited · use Reload model to try again"
+      return "Automatic retries are limited · use Reload preview to try again"
     }
     return ""
   }
@@ -81,7 +87,7 @@ Item {
       anchors.left: parent.left
       anchors.leftMargin: Style.space(12)
       anchors.verticalCenter: parent.verticalCenter
-      text: "3D PRINT PREVIEW"
+      text: "PRINT PREVIEW"
       color: viewport.foreground
       font.family: viewport.fontFamily
       font.pixelSize: Style.font.caption
@@ -95,7 +101,9 @@ Item {
       anchors.right: parent.right
       anchors.rightMargin: Style.space(12)
       anchors.verticalCenter: parent.verticalCenter
-      text: "DRAG TO ROTATE · WHEEL TO ZOOM · HOLD TO PAUSE"
+      text: viewport.selectedSource === "gcode"
+        ? "DRAG TO ROTATE · WHEEL TO ZOOM · HOLD TO PAUSE"
+        : "2D SLICER PREVIEW"
       color: viewport.dim
       horizontalAlignment: Text.AlignRight
       elide: Text.ElideRight
@@ -115,6 +123,7 @@ Item {
     Canvas {
       id: modelCanvas
       anchors.fill: parent
+      visible: viewport.selectedSource === "gcode"
       renderStrategy: Canvas.Threaded
 
       property real yaw: 0
@@ -126,6 +135,9 @@ Item {
       property real lastDragX: 0
       property real lastDragY: 0
       property double lastFrameTimestamp: 0
+      property real nozzlePhase: 0
+      property var nozzlePath: ({ items: [], totalLength: 0 })
+      readonly property int nozzleSegmentBudget: 4096
       property real frameScale: 1
       property real frameCenterU: 0
       property real frameCenterV: 0
@@ -152,6 +164,80 @@ Item {
               || !isFinite(segment[coordinate])) return false
         }
         return true
+      }
+
+      function buildNozzlePath(segments, currentZ, limit) {
+        var empty = { items: [], totalLength: 0 }
+        if (!Array.isArray(segments) || segments.length === 0
+            || !isFinite(currentZ) || !isFinite(limit) || limit < 1) return empty
+        var nearestZ = NaN
+        var nearestDistance = Infinity
+        for (var index = 0; index < segments.length; index++) {
+          var candidate = segments[index]
+          if (!segmentIsFinite(candidate)) continue
+          var layerZ = (candidate[2] + candidate[5]) / 2
+          var distance = Math.abs(layerZ - currentZ)
+          if (distance < nearestDistance) {
+            nearestDistance = distance
+            nearestZ = layerZ
+          }
+        }
+        if (!isFinite(nearestZ)) return empty
+
+        var tolerance = Math.max(1e-7, Math.abs(nearestZ) * 1e-9)
+        var items = []
+        var totalLength = 0
+        for (var segmentIndex = 0;
+             segmentIndex < segments.length && items.length < limit;
+             segmentIndex++) {
+          var segment = segments[segmentIndex]
+          if (!segmentIsFinite(segment)) continue
+          var z = (segment[2] + segment[5]) / 2
+          if (Math.abs(z - nearestZ) > tolerance) continue
+          var dx = segment[3] - segment[0]
+          var dy = segment[4] - segment[1]
+          var dz = segment[5] - segment[2]
+          var length = Math.sqrt(dx * dx + dy * dy + dz * dz)
+          if (!isFinite(length) || length <= 0) continue
+          totalLength += length
+          items.push([segmentIndex, totalLength])
+        }
+        return { items: items, totalLength: totalLength }
+      }
+
+      function nozzlePosition(path, segments, phase) {
+        if (!path || !Array.isArray(path.items) || path.items.length === 0
+            || !isFinite(path.totalLength) || path.totalLength <= 0) return null
+        var normalized = Number(phase)
+        if (!isFinite(normalized)) normalized = 0
+        normalized = ((normalized % 1) + 1) % 1
+        var target = normalized * path.totalLength
+        var low = 0, high = path.items.length - 1
+        while (low < high) {
+          var middle = Math.floor((low + high) / 2)
+          if (target <= path.items[middle][1]) high = middle
+          else low = middle + 1
+        }
+        var item = path.items[low]
+        var segment = segments[item[0]]
+        if (!segmentIsFinite(segment)) return null
+        var start = low === 0 ? 0 : path.items[low - 1][1]
+        var length = item[1] - start
+        var ratio = length > 0 ? (target - start) / length : 0
+        ratio = Math.max(0, Math.min(1, ratio))
+        return [
+          segment[0] + (segment[3] - segment[0]) * ratio,
+          segment[1] + (segment[4] - segment[1]) * ratio,
+          segment[2] + (segment[5] - segment[2]) * ratio
+        ]
+      }
+
+      function rebuildNozzlePath() {
+        nozzlePhase = 0
+        nozzlePath = viewport.printing && viewport.selectedSource === "gcode"
+          ? buildNozzlePath(viewport.activeSegments, viewport.zCurrent,
+                            nozzleSegmentBudget)
+          : ({ items: [], totalLength: 0 })
       }
 
       function renderBudget() {
@@ -228,10 +314,18 @@ Item {
         }
         var elapsed = Math.max(0, Math.min(250, now - lastFrameTimestamp))
         lastFrameTimestamp = now
-        if (dragging || !autoRotate) return false
-        yaw = normalizeAngle(yaw + elapsed / 14000 * Math.PI * 2)
-        requestPaint()
-        return true
+        if (dragging) return false
+        var changed = false
+        if (autoRotate) {
+          yaw = normalizeAngle(yaw + elapsed / 14000 * Math.PI * 2)
+          changed = true
+        }
+        if (nozzlePath.items.length > 0) {
+          nozzlePhase = (nozzlePhase + elapsed / 6000) % 1
+          changed = true
+        }
+        if (changed) requestPaint()
+        return changed
       }
 
       function rebuildProjectionBounds() {
@@ -337,7 +431,7 @@ Item {
         frameModelCenterZ = (projectionMinZ + projectionMaxZ) / 2
       }
 
-      function appendProjectedPoint(context, x, y, z, move) {
+      function projectedPoint(x, y, z) {
         var translatedX = x - frameModelCenterX
         var translatedY = y - frameModelCenterY
         var translatedZ = z - frameModelCenterZ
@@ -347,10 +441,16 @@ Item {
         var pitchedZ = rotatedY * framePitchSine + translatedZ * framePitchCosine
         var u = rotatedX - pitchedY * 0.34
         var v = -pitchedZ * 0.82 + pitchedY * 0.38
-        var screenX = width / 2 + (u - frameCenterU) * frameScale
-        var screenY = height / 2 + (v - frameCenterV) * frameScale
-        if (move) context.moveTo(screenX, screenY)
-        else context.lineTo(screenX, screenY)
+        return [
+          width / 2 + (u - frameCenterU) * frameScale,
+          height / 2 + (v - frameCenterV) * frameScale
+        ]
+      }
+
+      function appendProjectedPoint(context, x, y, z, move) {
+        var point = projectedPoint(x, y, z)
+        if (move) context.moveTo(point[0], point[1])
+        else context.lineTo(point[0], point[1])
       }
 
       function appendWholeSegment(context, segment) {
@@ -451,6 +551,22 @@ Item {
         drawSegments(context, true, completedColor, 0.70)
       }
 
+      function drawNozzle(context) {
+        if (!viewport.printing || viewport.selectedSource !== "gcode") return
+        var position = nozzlePosition(nozzlePath, viewport.activeSegments, nozzlePhase)
+        if (!position) return
+        var point = projectedPoint(position[0], position[1], position[2])
+        var color = viewport.errorActive ? viewport.errorColor : viewport.neon
+        context.beginPath()
+        context.arc(point[0], point[1], 5, 0, Math.PI * 2)
+        context.fillStyle = Qt.rgba(color.r, color.g, color.b, 0.20)
+        context.fill()
+        context.beginPath()
+        context.arc(point[0], point[1], 2.2, 0, Math.PI * 2)
+        context.fillStyle = color
+        context.fill()
+      }
+
       onPaint: {
         if (!viewport.panelActive) return
         if (!isFinite(width) || !isFinite(height) || width <= 0 || height <= 0) return
@@ -461,6 +577,7 @@ Item {
         context.fillRect(0, 0, width, height)
         drawBuildPlateGrid(context)
         drawFrame(context)
+        drawNozzle(context)
       }
 
       onWidthChanged: requestVisiblePaint(false)
@@ -468,8 +585,21 @@ Item {
       Component.onCompleted: requestVisiblePaint(true)
     }
 
+    Image {
+      id: printPreview
+      anchors.fill: parent
+      anchors.margins: Style.space(32)
+      source: viewport.previewSource
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      cache: false
+      smooth: true
+      visible: viewport.selectedSource === "preview" && viewport.previewAvailable
+    }
+
     MouseArea {
       anchors.fill: parent
+      enabled: viewport.selectedSource === "gcode"
       acceptedButtons: Qt.LeftButton
       cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
       onWheel: function(wheel) {
@@ -518,7 +648,9 @@ Item {
       interval: 50
       repeat: true
       running: viewport.panelActive && viewport.activeSegments.length > 0
-        && modelCanvas.autoRotate
+        && viewport.selectedSource === "gcode"
+        && (modelCanvas.autoRotate
+          || (viewport.printing && modelCanvas.nozzlePath.items.length > 0))
       onTriggered: modelCanvas.advanceAutoRotation(Date.now())
     }
 
@@ -539,6 +671,7 @@ Item {
         width: Math.max(0, (modelControls.width - modelControls.spacing) / 2)
         height: modelControls.height
         clip: true
+        enabled: viewport.selectedSource === "gcode" && viewport.gcodeAvailable
         text: modelCanvas.autoRotate ? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF"
         foreground: modelCanvas.autoRotate ? viewport.neon : viewport.foreground
         accent: viewport.accent
@@ -556,11 +689,78 @@ Item {
         height: modelControls.height
         clip: true
         enabled: viewport.daemonReady
-        text: "RELOAD MODEL"
+        text: "RELOAD PREVIEW"
         foreground: viewport.foreground
         accent: viewport.accent
         bordered: true
         onClicked: viewport.reloadRequested()
+      }
+    }
+
+    component SourceIconButton: BambuButton {
+      required property string sourceName
+      required property bool available
+      required property string sourceLabel
+      required property url iconSource
+
+      enabled: available
+      active: viewport.selectedSource === sourceName
+      tooltipText: available ? "Show sliced " + sourceLabel
+        : sourceLabel + " unavailable for this print"
+      foreground: active ? viewport.neon
+        : (enabled ? viewport.foreground : viewport.dim)
+      accent: viewport.accent
+      bordered: true
+      onClicked: viewport.sourceRequested(sourceName)
+
+      Image {
+        id: sourceIconImage
+        anchors.centerIn: parent
+        width: Style.space(16)
+        height: width
+        source: iconSource
+        sourceSize.width: width
+        sourceSize.height: height
+        visible: false
+        layer.enabled: true
+      }
+
+      MultiEffect {
+        anchors.fill: sourceIconImage
+        source: sourceIconImage
+        colorization: 1
+        colorizationColor: foreground
+      }
+    }
+
+    Column {
+      id: sourceButtons
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(10)
+      anchors.top: coordinateBadge.bottom
+      anchors.topMargin: Style.space(8)
+      width: Style.space(30)
+      spacing: Style.space(6)
+      z: 2
+
+      SourceIconButton {
+        id: gcodeSourceButton
+        width: sourceButtons.width
+        height: width
+        sourceName: "gcode"
+        available: viewport.gcodeAvailable
+        sourceLabel: "G-code route"
+        iconSource: Qt.resolvedUrl("assets/route.svg")
+      }
+
+      SourceIconButton {
+        id: previewSourceButton
+        width: sourceButtons.width
+        height: width
+        sourceName: "preview"
+        available: viewport.previewAvailable
+        sourceLabel: "2D preview"
+        iconSource: Qt.resolvedUrl("assets/image.svg")
       }
     }
 
@@ -669,16 +869,77 @@ Item {
       anchors.centerIn: parent
       width: Math.max(0, parent.width - Style.space(48))
       spacing: Style.space(5)
-      visible: viewport.activeSegments.length === 0
+      visible: viewport.selectedSource === "preview"
+        ? !viewport.previewAvailable : viewport.activeSegments.length === 0
 
-      Text {
-        width: parent.width
-        text: viewport.emptyModelTitle()
-        color: viewport.errorActive ? viewport.errorColor : viewport.dim
-        horizontalAlignment: Text.AlignHCenter
-        font.family: viewport.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        height: Math.max(loadingTitle.implicitHeight, Style.space(12))
+        spacing: Style.space(6)
+
+        Text {
+          id: loadingTitle
+          anchors.verticalCenter: parent.verticalCenter
+          text: viewport.emptyModelTitle()
+          color: viewport.errorActive ? viewport.errorColor : viewport.dim
+          font.family: viewport.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        Item {
+          id: loadingIndicator
+          anchors.verticalCenter: parent.verticalCenter
+          width: loadingDots.width
+          height: Style.space(12)
+          visible: viewport.modelStatus === "loading"
+
+          Row {
+            id: loadingDots
+            anchors.centerIn: parent
+            spacing: Style.space(3)
+
+            Repeater {
+              model: 3
+
+              Rectangle {
+                id: loadingDot
+                required property int index
+                property int phaseDelay: index * 120
+                width: Style.space(3)
+                height: width
+                radius: width / 2
+                color: viewport.neon
+
+                transform: Translate { id: bounceOffset }
+
+                SequentialAnimation {
+                  running: viewport.panelActive && loadingIndicator.visible
+                  loops: Animation.Infinite
+                  PauseAnimation { duration: loadingDot.phaseDelay }
+                  NumberAnimation {
+                    target: bounceOffset
+                    property: "y"
+                    from: 0
+                    to: -Style.space(3)
+                    duration: 160
+                    easing.type: Easing.OutQuad
+                  }
+                  NumberAnimation {
+                    target: bounceOffset
+                    property: "y"
+                    to: 0
+                    duration: 220
+                    easing.type: Easing.InQuad
+                  }
+                  PauseAnimation {
+                    duration: 720 - loadingDot.phaseDelay
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 
       Text {
@@ -694,9 +955,21 @@ Item {
     }
   }
 
-  onActiveSegmentsChanged: modelCanvas.requestVisiblePaint(true)
+  onActiveSegmentsChanged: {
+    modelCanvas.rebuildNozzlePath()
+    modelCanvas.requestVisiblePaint(true)
+  }
   onActiveBoundsChanged: modelCanvas.requestVisiblePaint(true)
-  onZCurrentChanged: modelCanvas.requestVisiblePaint(false)
+  onZCurrentChanged: {
+    modelCanvas.rebuildNozzlePath()
+    modelCanvas.requestVisiblePaint(false)
+  }
+  onPrintingChanged: modelCanvas.rebuildNozzlePath()
+  onSelectedSourceChanged: {
+    modelCanvas.rebuildNozzlePath()
+    modelCanvas.lastFrameTimestamp = 0
+    modelCanvas.requestVisiblePaint(false)
+  }
   onNeonChanged: modelCanvas.requestVisiblePaint(false)
   onErrorActiveChanged: modelCanvas.requestVisiblePaint(false)
   onErrorColorChanged: modelCanvas.requestVisiblePaint(false)

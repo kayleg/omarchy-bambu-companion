@@ -42,6 +42,7 @@ module BambuCompanion
     HINT_KEYS = %w[file url gcode_file subtask_name].freeze
     BARE_SOCKET_CLEANUP_VERSION = "0.3.9"
     LIST_BLOCK_SIZE = 64 * 1024
+    LIST_ROOTS = ["/", "/cache", "/model"].freeze
     DEFAULT_MAX_LIST_ENTRIES = 10_000
     DEFAULT_MAX_LIST_BYTES = 4 * 1024 * 1024
     DEFAULT_MAX_LIST_LINE_BYTES = 16 * 1024
@@ -185,14 +186,16 @@ module BambuCompanion
         raise_not_found
       end
 
-      exact_names = unique_basename_matches(
+      exact_names = prefer_active_files(unique_basename_matches(
         paths, records.filter_map { |record| record[:basename] }
-      )
+      ))
       return exact_names.first if exact_names.length == 1
       raise_ambiguous if exact_names.length > 1
 
       tokens = records.filter_map { |record| record[:token] }.uniq
-      matches = paths.select { |path| tokens.include?(canonical_name(path)) }
+      matches = prefer_active_files(
+        paths.select { |path| tokens.include?(canonical_name(path)) }
+      )
       return matches.first if matches.length == 1
       raise_ambiguous if matches.length > 1
 
@@ -217,6 +220,11 @@ module BambuCompanion
       end.uniq
     end
 
+    def prefer_active_files(matches)
+      active = matches.reject { |path| path.start_with?("/model/") }
+      active.empty? ? matches : active
+    end
+
     def raise_ambiguous
       raise FtpsError.new(
         "ambiguous_file", "Multiple SD-card files match the active print"
@@ -232,7 +240,7 @@ module BambuCompanion
     def list_paths(ftp, cancelled:)
       paths = {}
       budget = { bytes: 0, entries: 0 }
-      ["/", "/cache"].each do |root|
+      LIST_ROOTS.each do |root|
         stream_listing(ftp, root, budget: budget, cancelled: cancelled) do |entry|
           check_cancelled!(cancelled)
 
@@ -272,7 +280,7 @@ module BambuCompanion
         yield line
       end
     rescue Net::FTPError => error
-      return if root == "/cache" && cache_missing_error?(error)
+      return if root != "/" && directory_missing_error?(error)
 
       raise
     end
@@ -294,7 +302,7 @@ module BambuCompanion
       ), cause: nil
     end
 
-    def cache_missing_error?(error)
+    def directory_missing_error?(error)
       error.message.match?(
         /\A550\b.*\b(?:not found|no files(?: found)?|does not exist)\b/i
       )
@@ -314,10 +322,11 @@ module BambuCompanion
 
         "/#{remainder}"
       else
-        remainder = text.delete_prefix("/").delete_prefix("cache/")
+        directory = root.delete_prefix("/")
+        remainder = text.delete_prefix("/").delete_prefix("#{directory}/")
         return nil if remainder.empty? || remainder.include?("/")
 
-        "/cache/#{remainder}"
+        "/#{directory}/#{remainder}"
       end
     end
 

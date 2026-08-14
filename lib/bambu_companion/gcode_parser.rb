@@ -24,9 +24,15 @@ module BambuCompanion
       /\ATYPE:\s*WALL-OUTER\z/i
     ].freeze
     FEATURE_MARKER = /\A(?:FEATURE|TYPE):/i
-    PARAMETER = /([XYZE])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/
+    PARAMETER = /([XYZEIJR])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/
     ZERO = BigDecimal("0")
     EPSILON = BigDecimal("1e-7")
+    FLOAT_EPSILON = EPSILON.to_f
+    ARC_MAX_CHORD_MM = 0.75
+    ARC_MAX_ANGLE = Math::PI / 36
+    ARC_MAX_SEGMENTS = 512
+    ARC_RADIUS_TOLERANCE_MM = 0.05
+    TWO_PI = 2 * Math::PI
 
     def initialize(max_segments: DEFAULT_MAX_SEGMENTS)
       @max_segments = Integer(max_segments)
@@ -59,6 +65,8 @@ module BambuCompanion
     def reset
       @absolute_position = true
       @absolute_extrusion = true
+      @absolute_arc_center = false
+      @plane = :xy
       @outer = false
       @position = { "X" => ZERO, "Y" => ZERO, "Z" => ZERO, "E" => ZERO }
       @segments = []
@@ -86,10 +94,17 @@ module BambuCompanion
       case command
       when "G90" then @absolute_position = true
       when "G91" then @absolute_position = false
+      when "G90.1" then @absolute_arc_center = true
+      when "G91.1" then @absolute_arc_center = false
+      when "G17" then @plane = :xy
+      when "G18" then @plane = :xz
+      when "G19" then @plane = :yz
       when "M82" then @absolute_extrusion = true
       when "M83" then @absolute_extrusion = false
-      when "G92" then parameters.each { |axis, value| @position[axis] = value }
-      when "G0", "G00", "G1", "G01" then move(%w[G1 G01].include?(command), parameters)
+      when "G92"
+        parameters.each { |axis, value| @position[axis] = value if @position.key?(axis) }
+      when "G0", "G00", "G1", "G01", "G2", "G02", "G3", "G03"
+        move(command, parameters)
       end
     end
 
@@ -99,7 +114,7 @@ module BambuCompanion
       @outer = OUTER_MARKERS.any? { |marker| marker.match?(comment) }
     end
 
-    def move(linear_extrusion_command, parameters)
+    def move(command, parameters)
       before = @position.dup
       %w[X Y Z].each do |axis|
         next unless parameters.key?(axis)
@@ -118,11 +133,134 @@ module BambuCompanion
 
       moved_xy = (before["X"] - @position["X"]).abs > EPSILON ||
                  (before["Y"] - @position["Y"]).abs > EPSILON
-      return unless linear_extrusion_command && @outer && moved_xy && extrusion_delta > EPSILON
+      return unless @outer && extrusion_delta > EPSILON
 
-      segment = [before["X"], before["Y"], before["Z"],
-                 @position["X"], @position["Y"], @position["Z"]]
-      record(segment)
+      case command
+      when "G1", "G01"
+        return unless moved_xy
+
+        record([before["X"], before["Y"], before["Z"],
+                @position["X"], @position["Y"], @position["Z"]])
+      when "G2", "G02", "G3", "G03"
+        return unless @plane == :xy
+
+        clockwise = command == "G2" || command == "G02"
+        arc_segments(before, @position, parameters, clockwise: clockwise).each do |segment|
+          record(segment)
+        end
+      end
+    end
+
+    def arc_segments(start_position, end_position, parameters, clockwise:)
+      start_point = xyz_floats(start_position)
+      end_point = xyz_floats(end_position)
+      center = arc_center(start_point, end_point, parameters, clockwise: clockwise)
+      return [] unless center
+
+      radius = Math.hypot(start_point[0] - center[0], start_point[1] - center[1])
+      return [] unless radius.finite? && radius > FLOAT_EPSILON
+
+      start_angle = Math.atan2(start_point[1] - center[1], start_point[0] - center[0])
+      sweep = arc_sweep(start_point, end_point, center, clockwise: clockwise)
+      return [] unless sweep&.finite?
+
+      tessellate_arc(start_point, end_point, center, radius, start_angle, sweep)
+    rescue Math::DomainError, FloatDomainError
+      []
+    end
+
+    def arc_center(start_point, end_point, parameters, clockwise:)
+      if parameters.key?("I") || parameters.key?("J")
+        ij_arc_center(start_point, end_point, parameters)
+      elsif parameters.key?("R")
+        radius_arc_center(start_point, end_point, parameters["R"].to_f,
+                          clockwise: clockwise)
+      end
+    end
+
+    def ij_arc_center(start_point, end_point, parameters)
+      center = if @absolute_arc_center
+                 [parameters.fetch("I", start_point[0]).to_f,
+                  parameters.fetch("J", start_point[1]).to_f]
+               else
+                 [start_point[0] + parameters.fetch("I", ZERO).to_f,
+                  start_point[1] + parameters.fetch("J", ZERO).to_f]
+               end
+      start_radius = Math.hypot(start_point[0] - center[0], start_point[1] - center[1])
+      end_radius = Math.hypot(end_point[0] - center[0], end_point[1] - center[1])
+      return unless center.all?(&:finite?) && start_radius.finite? && end_radius.finite?
+      return if (start_radius - end_radius).abs > ARC_RADIUS_TOLERANCE_MM
+
+      center
+    end
+
+    def radius_arc_center(start_point, end_point, signed_radius, clockwise:)
+      return unless signed_radius.finite?
+
+      dx = end_point[0] - start_point[0]
+      dy = end_point[1] - start_point[1]
+      chord = Math.hypot(dx, dy)
+      radius = signed_radius.abs
+      return if chord <= FLOAT_EPSILON || radius + ARC_RADIUS_TOLERANCE_MM < chord / 2
+
+      midpoint = [start_point[0] + (dx / 2), start_point[1] + (dy / 2)]
+      half_chord = chord / 2
+      height = Math.sqrt([((radius - half_chord) * (radius + half_chord)), 0].max)
+      return unless midpoint.all?(&:finite?) && height.finite?
+
+      perpendicular = [-dy / chord, dx / chord]
+      centers = [1, -1].map do |direction|
+        [midpoint[0] + (direction * height * perpendicular[0]),
+         midpoint[1] + (direction * height * perpendicular[1])]
+      end.select { |center| center.all?(&:finite?) }
+      major = signed_radius.negative?
+      centers.find do |center|
+        sweep = arc_sweep(start_point, end_point, center, clockwise: clockwise)
+        major ? sweep.abs >= Math::PI : sweep.abs <= Math::PI
+      end
+    end
+
+    def arc_sweep(start_point, end_point, center, clockwise:)
+      if Math.hypot(end_point[0] - start_point[0], end_point[1] - start_point[1]) <= FLOAT_EPSILON
+        return clockwise ? -TWO_PI : TWO_PI
+      end
+
+      start_angle = Math.atan2(start_point[1] - center[1], start_point[0] - center[0])
+      end_angle = Math.atan2(end_point[1] - center[1], end_point[0] - center[0])
+      sweep = end_angle - start_angle
+      sweep -= TWO_PI while clockwise && sweep >= 0
+      sweep += TWO_PI while !clockwise && sweep <= 0
+      sweep
+    end
+
+    def tessellate_arc(start_point, end_point, center, radius, start_angle, sweep)
+      arc_length = radius * sweep.abs
+      segment_count = [
+        (sweep.abs / ARC_MAX_ANGLE).ceil,
+        (arc_length / ARC_MAX_CHORD_MM).ceil,
+        1
+      ].max.clamp(1, ARC_MAX_SEGMENTS)
+      previous = start_point
+      Array.new(segment_count) do |index|
+        ratio = (index + 1).fdiv(segment_count)
+        point = if index + 1 == segment_count
+                  end_point
+                else
+                  angle = start_angle + (sweep * ratio)
+                  [center[0] + (radius * Math.cos(angle)),
+                   center[1] + (radius * Math.sin(angle)),
+                   start_point[2] + ((end_point[2] - start_point[2]) * ratio)]
+                end
+        return [] unless point.all?(&:finite?)
+
+        segment = [*previous, *point]
+        previous = point
+        segment
+      end
+    end
+
+    def xyz_floats(position)
+      %w[X Y Z].map { |axis| position.fetch(axis).to_f }
     end
 
     def record(segment)

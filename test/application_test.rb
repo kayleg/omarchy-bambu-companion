@@ -1682,6 +1682,30 @@ class ApplicationTest < Minitest::Test
     assert workers.first.stopped
   end
 
+  def test_default_worker_uses_gcode_parser_and_bounded_3mf_preview
+    app, = build_app(input: StringIO.new)
+    config = test_printer_config("maxSegments" => 12_345)
+
+    worker = app.send(
+      :build_worker,
+      config: config,
+      secret: nil,
+      emitter: Object.new,
+      on_status: ->(*) {}
+    )
+    loader = worker.instance_variable_get(:@loader)
+    gcode_parser = loader&.instance_variable_get(:@gcode_parser)
+    preview_source = loader&.instance_variable_get(:@preview_source)
+
+    assert_instance_of BambuCompanion::PrintPreviewLoader, loader
+    assert_instance_of BambuCompanion::GcodeParser, gcode_parser
+    assert_instance_of BambuCompanion::ThreeMfPreview, preview_source
+    assert_equal 12_345, gcode_parser.instance_variable_get(:@max_segments)
+    assert_equal 512 * 1024, preview_source.instance_variable_get(:@max_bytes)
+  ensure
+    app&.send(:shutdown)
+  end
+
   def test_daemon_term_signal_exits_cleanly
     root = File.expand_path("..", __dir__)
     stdin = stdout = stderr = wait = nil

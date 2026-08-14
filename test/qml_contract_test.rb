@@ -101,7 +101,7 @@ class QmlContractTest < Minitest::Test
     refute_includes @source, "onSettingsChanged:"
     assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return.*resetOperationalState\(\).*sendConfiguration\(\)/m,
                  @source)
-    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*modelGeneration = -1.*activeSegments = \[\].*activeBounds = \(\{\}\).*resetPendingGeometry\(\).*viewMode = nextIdleView\(\)/m,
+    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*modelGeneration = -1.*geometryBundle = \(\{\}\).*selectedGeometrySource = "gcode".*resetPendingGeometry\(\).*viewMode = nextIdleView\(\)/m,
                  @source)
   end
 
@@ -133,11 +133,12 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, '"op": "set_secret"'
     assert_includes @settings_source, "password: true"
     assert_includes @settings_source, "maximumLength: 256"
-    assert_includes @source, "pendingSegments"
+    assert_includes @source, "pendingGeometry"
+    assert_includes @source, "geometryBundle"
     assert_includes @source, "activeSegments"
     assert_includes @source, "geometry_begin"
     assert_includes @source, "geometry_end"
-    assert_includes @source, "pendingNextChunk"
+    assert_includes @source, "nextChunk"
   end
 
   def test_actions_require_a_ready_process_and_clear_secret_only_after_accepted_write
@@ -158,19 +159,23 @@ class QmlContractTest < Minitest::Test
   def test_geometry_is_transactional_ordered_and_bounded
     assert_includes @source, "function resetPendingGeometry()"
     assert_includes @source, "function isNonNegativeInteger(value)"
+    assert_includes @source, "function validPreview(preview)"
+    assert_includes @source, "readonly property int maxPreviewBytes: 524288"
     assert_match(/function handleGeometry\(message\).*if \(!isNonNegativeInteger\(message\.generation\)\).*if \(event === "geometry_begin"\)/m,
                  @source)
-    assert_match(/isNonNegativeInteger\(message\.generation\)/, @source)
-    assert_match(/isNonNegativeInteger\(message\.segmentCount\)/, @source)
-    assert_match(/isNonNegativeInteger\(message\.index\)/, @source)
-    assert_match(/isNonNegativeInteger\(message\.chunks\)/, @source)
-    assert_match(/expectedSegments > root\.segmentLimit\(\)/, @source)
-    assert_match(/generation !== pendingGeneration/, @source)
-    assert_match(/message\.index !== pendingNextChunk/, @source)
-    assert_match(/pendingSegments\.length \+ chunk\.length > pendingExpectedSegments/, @source)
-    assert_match(/pendingSegments\.length === pendingExpectedSegments/m, @source)
-    assert_match(/pendingReceivedChunks === expectedChunks/m, @source)
-    assert_match(/activeSegments = pendingSegments\.slice\(0\).*resetPendingGeometry\(\)/m,
+    assert_includes @source,
+                    'else if (event === "geometry_preview_chunk") appendPreviewChunk(message, generation)'
+    assert_match(/function beginGeometry\(message, generation\).*message\.segmentCount > root\.segmentLimit\(\).*var hasGcode = message\.gcode !== null.*var hasPreview = message\.preview !== null/m,
+                 @source)
+    assert_match(/hasGcode.*gcode\.segmentCount !== message\.segmentCount.*hasPreview && !validPreview\(message\.preview\).*if \(!hasGcode && !hasPreview\)/m,
+                 @source)
+    assert_match(/pendingGeometry = \{.*generation: generation.*gcode: hasGcode.*preview: hasPreview/m,
+                 @source)
+    assert_match(/function appendGeometryChunk\(message, generation\).*generation !== transaction\.generation.*message\.source !== "gcode".*message\.index !== slot\.nextChunk.*slot\.segments\.length \+ chunk\.length > slot\.expectedSegments/m,
+                 @source)
+    assert_match(/function finishGeometry\(message, generation\).*Object\.keys\(chunks\)\.length !== expectedChunkKeys.*slot\.segments\.length !== slot\.expectedSegments.*slot\.nextChunk !== chunks\.gcode/m,
+                 @source)
+    assert_match(/geometryBundle = nextBundle.*selectedGeometrySource = nextBundle\.gcode \? "gcode" : "preview".*resetPendingGeometry\(\)/m,
                  @source)
   end
 
@@ -178,7 +183,7 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, "property int modelGeneration: -1"
     assert_match(/function handleState\(message\).*var nextGeneration = isNonNegativeInteger\(model\.generation\).*if \(nextGeneration !== modelGeneration\).*resetPendingGeometry\(\).*modelGeneration = nextGeneration/m,
                  @source)
-    assert_match(/if \(nextGeneration !== modelGeneration\).*activeSegments = \[\].*activeBounds = \(\{\}\).*resetPendingGeometry\(\).*modelGeneration = nextGeneration/m,
+    assert_match(/if \(nextGeneration !== modelGeneration\).*geometryBundle = \(\{\}\).*selectedGeometrySource = "gcode".*resetPendingGeometry\(\).*modelGeneration = nextGeneration/m,
                  @source)
     assert_match(/function handleGeometry\(message\).*if \(!isNonNegativeInteger\(message\.generation\)\) return.*if \(generation !== modelGeneration\) return.*if \(event === "geometry_begin"\)/m,
                  @source)
@@ -195,7 +200,21 @@ class QmlContractTest < Minitest::Test
   def test_each_geometry_segment_has_six_finite_numeric_coordinates
     assert_match(/function isValidSegment\(segment\).*Array\.isArray\(segment\).*segment\.length !== 6.*typeof segment\[index\] !== "number".*!isFinite\(segment\[index\]\).*return false.*return true/m,
                  @source)
-    assert_match(/function handleGeometry\(message\).*pendingSegments\.length \+ chunk\.length > root\.segmentLimit\(\).*for \(var segmentIndex = 0; segmentIndex < chunk\.length; segmentIndex\+\+\).*if \(!isValidSegment\(chunk\[segmentIndex\]\)\).*resetPendingGeometry\(\).*return.*pendingSegments = pendingSegments\.concat\(chunk\)/m,
+    assert_match(/function handleGeometry\(message\).*slot\.segments\.length \+ chunk\.length > slot\.expectedSegments.*for \(var segmentIndex = 0; segmentIndex < chunk\.length; segmentIndex\+\+\).*if \(!isValidSegment\(chunk\[segmentIndex\]\)\).*resetPendingGeometry\(\).*return.*slot\.segments = slot\.segments\.concat\(chunk\)/m,
+                 @source)
+  end
+
+  def test_geometry_source_selection_uses_only_complete_available_sources
+    assert_includes @source, 'property string selectedGeometrySource: "gcode"'
+    assert_match(/readonly property bool previewAvailable:\s*!!root\.geometryBundle\.preview.*data:image\/png;base64/m,
+                 @source)
+    assert_match(/readonly property bool gcodeGeometryAvailable:\s*!!root\.geometryBundle\.gcode.*segments\.length > 0/m,
+                 @source)
+    assert_match(/function selectGeometrySource\(source\).*source === "preview".*previewAvailable.*source === "gcode".*gcodeGeometryAvailable.*selectedGeometrySource = source/m,
+                 @source)
+    assert_match(/readonly property var activeSegments:.*geometryBundle\.gcode.*segments/m,
+                 @source)
+    assert_match(/BambuModelViewport\s*\{.*previewAvailable: root\.previewAvailable.*gcodeAvailable: root\.gcodeGeometryAvailable.*selectedSource: root\.selectedGeometrySource.*previewSource: root\.previewAvailable.*onSourceRequested: function\(source\).*root\.selectGeometrySource\(source\)/m,
                  @source)
   end
 
@@ -340,7 +359,7 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/Flickable\s*{.*id: panelScroll.*flickableDirection: Flickable\.VerticalFlick.*clip: true/m,
                  @source)
-    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
+    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panel\.contentHeight\s*:\s*telemetryPane\.height \+ dashboardLayout\.spacing \+ modelPane\.height/m,
                  @source)
     assert_match(/BambuTelemetryPane\s*{.*id: telemetryPane.*onSettingsRequested: root\.toggleSettings\(\)/m,
                  @source)

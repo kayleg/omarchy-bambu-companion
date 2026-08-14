@@ -109,6 +109,63 @@ class GcodeParserTest < Minitest::Test
     assert_equal [[0.0, 0.0, 0.2, 1.0, 0.0, 0.2]], geometry.segments
   end
 
+  def test_tessellates_bambu_ij_arcs_without_straightening_the_curve
+    gcode = <<~GCODE
+      G90
+      M83
+      ; FEATURE: Outer wall
+      G1 X171.689 Y152.234 Z0.2
+      G3 X166.611 Y155.115 I-7.077 J-6.557 E0.22091
+      G2 X171.689 Y152.234 I-1.999 J-9.438 E0.22091
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 100).parse(StringIO.new(gcode))
+
+    assert_operator geometry.segments.length, :>, 2
+    assert_equal [171.689, 152.234], geometry.segments.first.values_at(0, 1)
+    assert_in_delta 171.689, geometry.segments.last.fetch(3), 1e-9
+    assert_in_delta 152.234, geometry.segments.last.fetch(4), 1e-9
+    geometry.segments.each do |segment|
+      chord = Math.hypot(segment.fetch(3) - segment.fetch(0),
+                         segment.fetch(4) - segment.fetch(1))
+      assert_operator chord, :<=, 0.8
+    end
+  end
+
+  def test_an_arc_always_updates_position_before_the_next_linear_move
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G2 X10 Y0 I5 J0
+      G1 X11 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [[10.0, 0.0, 0.2, 11.0, 0.0, 0.2]], geometry.segments
+  end
+
+  def test_tessellates_radius_arcs_and_keeps_the_segment_budget
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G3 X10 Y0 R5 E1
+      G2 X0 Y0 R5 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 100).parse(StringIO.new(gcode))
+    bounded = BambuCompanion::GcodeParser.new(max_segments: 8).parse(StringIO.new(gcode))
+
+    assert_operator bounded.segments.length, :<=, 8
+    assert_in_delta 0.0, geometry.segments.last.fetch(3), 1e-9
+    assert_in_delta 0.0, geometry.segments.last.fetch(4), 1e-9
+    assert bounded.segments.flatten.all?(&:finite?)
+  end
+
   def test_ignores_moves_whose_coordinate_math_overflows
     gcode = <<~GCODE
       G90

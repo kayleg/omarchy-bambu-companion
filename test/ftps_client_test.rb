@@ -19,7 +19,7 @@ class FtpsClientTest < Minitest::Test
     end
 
     def nlst(root)
-      prefix = root == "/" ? "/" : "/cache/"
+      prefix = root == "/" ? "/" : "#{root}/"
       @files.keys.select do |path|
         remainder = path.delete_prefix(prefix)
         path.start_with?(prefix) && !remainder.include?("/")
@@ -617,6 +617,51 @@ class FtpsClientTest < Minitest::Test
       )
 
       assert_equal "/cache/archive.3mf", remote
+    end
+  end
+
+  def test_searches_the_printer_model_directory_for_builtin_jobs
+    ftp_class = Class.new(FakeFtp) do
+      def nlst(root)
+        return ["A1 Mini Version.3mf"] if root == "/model"
+
+        []
+      end
+    end
+    ftp = ftp_class.new("/model/A1 Mini Version.3mf" => "archive")
+    object = BambuCompanion::FtpsClient.new(
+      config: test_printer_config, secret: "session-secret",
+      ftp_factory: ->(*) { ftp }, sleeper: ->(_seconds) {}
+    )
+
+    Dir.mktmpdir do |dir|
+      remote = object.download(
+        hints: { "subtask_name" => "A1 Mini Version" },
+        destination: File.join(dir, "download")
+      )
+
+      assert_equal "/model/A1 Mini Version.3mf", remote
+    end
+  end
+
+  def test_builtin_model_directory_is_only_a_fallback_for_duplicate_names
+    ftp = FakeFtp.new(
+      "/cache/current.3mf" => "active archive",
+      "/model/current.3mf" => "built-in archive"
+    )
+    object = BambuCompanion::FtpsClient.new(
+      config: test_printer_config, secret: "session-secret",
+      ftp_factory: ->(*) { ftp }, sleeper: ->(_seconds) {}
+    )
+
+    Dir.mktmpdir do |dir|
+      destination = File.join(dir, "download")
+      remote = object.download(
+        hints: { "subtask_name" => "current" }, destination: destination
+      )
+
+      assert_equal "/cache/current.3mf", remote
+      assert_equal "active archive", File.binread(destination)
     end
   end
 

@@ -9,6 +9,8 @@ require_relative "mqtt_session"
 require_relative "ftps_client"
 require_relative "gcode_source"
 require_relative "gcode_parser"
+require_relative "three_mf_preview"
+require_relative "print_preview_loader"
 require_relative "model_worker"
 require_relative "tls_certificate"
 
@@ -631,8 +633,11 @@ module BambuCompanion
     def build_worker(config:, secret:, emitter:, on_status:)
       ModelWorker.new(
         ftps_client: secret && FtpsClient.new(config: config, secret: secret),
-        source: GcodeSource.new,
-        parser: GcodeParser.new(max_segments: config.max_segments),
+        loader: PrintPreviewLoader.new(
+          source: GcodeSource.new,
+          gcode_parser: GcodeParser.new(max_segments: config.max_segments),
+          preview_source: ThreeMfPreview.new
+        ),
         emitter: emitter,
         on_status: on_status
       )
