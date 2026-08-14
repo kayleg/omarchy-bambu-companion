@@ -125,7 +125,7 @@ Item {
       id: modelCanvas
       anchors.fill: parent
       visible: viewport.selectedSource === "gcode"
-      renderStrategy: Canvas.Threaded
+      renderStrategy: Canvas.Immediate
 
       property real yaw: 0
       property real pitch: -0.28
@@ -156,6 +156,11 @@ Item {
       property real frameModelCenterZ: 0
       readonly property int motionSegmentBudget: 10000
       readonly property int stillSegmentBudget: 40000
+      property var packedSegments: []
+      property int packedCount: 0
+      property bool paintQueued: false
+      property real projectedX: 0
+      property real projectedY: 0
       property real projectionMinX: 0
       property real projectionMaxX: 1
       property real projectionMinY: 0
@@ -253,12 +258,27 @@ Item {
           : ({ items: [], totalLength: 0 })
       }
 
+      function rebuildPackedSegments() {
+        var source = viewport.activeSegments
+        var packed = []
+        if (Array.isArray(source)) {
+          for (var index = 0; index < source.length; index++) {
+            var segment = source[index]
+            if (!segmentIsFinite(segment)) continue
+            packed.push(segment[0], segment[1], segment[2],
+                        segment[3], segment[4], segment[5])
+          }
+        }
+        packedSegments = packed
+        packedCount = packed.length / 6
+      }
+
       function renderBudget() {
         return dragging || autoRotate ? motionSegmentBudget : stillSegmentBudget
       }
 
       function renderCount() {
-        return Math.min(viewport.activeSegments.length, renderBudget())
+        return Math.min(packedCount, renderBudget())
       }
 
       function segmentIndexForSample(sample, segmentCount, sampleCount) {
@@ -337,7 +357,7 @@ Item {
           nozzlePhase = (nozzlePhase + elapsed / 6000) % 1
           changed = true
         }
-        if (changed) requestPaint()
+        if (changed) schedulePaint()
         return changed
       }
 
@@ -386,7 +406,7 @@ Item {
         var value = Number(z)
         if (!isFinite(value)) return projectionMinZ
         var progress = Number(explosionProgress)
-        if (!isFinite(progress)) progress = 0
+        if (!isFinite(progress) || progress <= 0) return value
         progress = Math.max(0, Math.min(1, progress))
         var scale = 1 + progress * explosionFactor
         return projectionMinZ + (value - projectionMinZ) * scale
@@ -456,7 +476,7 @@ Item {
         frameModelCenterZ = (displayZ(projectionMinZ) + displayZ(projectionMaxZ)) / 2
       }
 
-      function projectedPoint(x, y, z) {
+      function projectPoint(x, y, z) {
         var translatedX = x - frameModelCenterX
         var translatedY = y - frameModelCenterY
         var translatedZ = displayZ(z) - frameModelCenterZ
@@ -464,18 +484,21 @@ Item {
         var rotatedY = translatedX * frameYawSine + translatedY * frameYawCosine
         var pitchedY = rotatedY * framePitchCosine - translatedZ * framePitchSine
         var pitchedZ = rotatedY * framePitchSine + translatedZ * framePitchCosine
-        var u = rotatedX - pitchedY * 0.34
-        var v = -pitchedZ * 0.82 + pitchedY * 0.38
-        return [
-          width / 2 + (u - frameCenterU) * frameScale,
-          height / 2 + (v - frameCenterV) * frameScale
-        ]
+        projectedX = width / 2
+          + (rotatedX - pitchedY * 0.34 - frameCenterU) * frameScale
+        projectedY = height / 2
+          + (-pitchedZ * 0.82 + pitchedY * 0.38 - frameCenterV) * frameScale
+      }
+
+      function projectedPoint(x, y, z) {
+        projectPoint(x, y, z)
+        return [projectedX, projectedY]
       }
 
       function appendProjectedPoint(context, x, y, z, move) {
-        var point = projectedPoint(x, y, z)
-        if (move) context.moveTo(point[0], point[1])
-        else context.lineTo(point[0], point[1])
+        projectPoint(x, y, z)
+        if (move) context.moveTo(projectedX, projectedY)
+        else context.lineTo(projectedX, projectedY)
       }
 
       function appendWholeSegment(context, segment) {
@@ -514,7 +537,7 @@ Item {
       }
 
       function drawBuildPlateGrid(context) {
-        if (viewport.activeSegments.length === 0) return
+        if (packedCount === 0 || dragging) return
         var divisions = 8
         context.beginPath()
         for (var step = 0; step <= divisions; step++) {
@@ -534,27 +557,46 @@ Item {
 
       function drawSegments(context, brightWanted, color, widthValue) {
         var cutoff = isFinite(viewport.zCurrent) ? viewport.zCurrent : NaN
+        var packed = packedSegments
+        var segmentCount = packedCount
         var countToDraw = renderCount()
         var drewSegment = false
+        var scratch = [0, 0, 0, 0, 0, 0]
         context.beginPath()
         for (var sample = 0; sample < countToDraw; sample++) {
-          var index = segmentIndexForSample(
-            sample, viewport.activeSegments.length, countToDraw)
-          var segment = viewport.activeSegments[index]
-          if (!segmentIsFinite(segment)) continue
-          if (splitAtCut(context, segment, cutoff, brightWanted)) drewSegment = true
+          var index = segmentIndexForSample(sample, segmentCount, countToDraw)
+          var base = index * 6
+          scratch[0] = packed[base]
+          scratch[1] = packed[base + 1]
+          scratch[2] = packed[base + 2]
+          scratch[3] = packed[base + 3]
+          scratch[4] = packed[base + 4]
+          scratch[5] = packed[base + 5]
+          if (splitAtCut(context, scratch, cutoff, brightWanted)) drewSegment = true
         }
         if (!drewSegment) return
         context.lineWidth = widthValue
         context.strokeStyle = color
-        context.lineCap = "round"
+        context.lineCap = dragging || autoRotate ? "butt" : "round"
         context.stroke()
+      }
+
+      function schedulePaint() {
+        if (paintQueued) return
+        paintQueued = true
+        Qt.callLater(flushQueuedPaint)
+      }
+
+      function flushQueuedPaint() {
+        if (!paintQueued) return
+        paintQueued = false
+        if (viewport.panelActive) requestPaint()
       }
 
       function requestVisiblePaint(rebuildBounds) {
         if (!viewport.panelActive) return false
         if (rebuildBounds) rebuildProjectionBounds()
-        requestPaint()
+        schedulePaint()
         return true
       }
 
@@ -577,6 +619,7 @@ Item {
       }
 
       function drawNozzle(context) {
+        if (dragging) return
         if (!viewport.printing || viewport.selectedSource !== "gcode") return
         var position = nozzlePosition(nozzlePath, viewport.activeSegments, nozzlePhase)
         if (!position) return
@@ -608,7 +651,10 @@ Item {
       onWidthChanged: requestVisiblePaint(false)
       onHeightChanged: requestVisiblePaint(false)
       onExplosionProgressChanged: requestVisiblePaint(false)
-      Component.onCompleted: requestVisiblePaint(true)
+      Component.onCompleted: {
+        rebuildPackedSegments()
+        requestVisiblePaint(true)
+      }
     }
 
     Image {
@@ -635,7 +681,7 @@ Item {
         if (wholeSteps !== 0) {
           modelCanvas.zoom = modelCanvas.zoomAfterSteps(modelCanvas.zoom, wholeSteps)
           modelCanvas.wheelStepAccumulator -= wholeSteps
-          modelCanvas.requestPaint()
+          modelCanvas.schedulePaint()
         }
         wheel.accepted = true
       }
@@ -655,17 +701,17 @@ Item {
         modelCanvas.pitch = orientation.pitch
         modelCanvas.lastDragX = mouse.x
         modelCanvas.lastDragY = mouse.y
-        modelCanvas.requestPaint()
+        modelCanvas.schedulePaint()
       }
       onReleased: {
         modelCanvas.dragging = false
         modelCanvas.lastFrameTimestamp = Date.now()
-        if (!modelCanvas.autoRotate) modelCanvas.requestPaint()
+        if (!modelCanvas.autoRotate) modelCanvas.schedulePaint()
       }
       onCanceled: {
         modelCanvas.dragging = false
         modelCanvas.lastFrameTimestamp = Date.now()
-        if (!modelCanvas.autoRotate) modelCanvas.requestPaint()
+        if (!modelCanvas.autoRotate) modelCanvas.schedulePaint()
       }
     }
 
@@ -703,7 +749,7 @@ Item {
         onClicked: {
           modelCanvas.autoRotate = !modelCanvas.autoRotate
           modelCanvas.lastFrameTimestamp = Date.now()
-          modelCanvas.requestPaint()
+          modelCanvas.schedulePaint()
         }
       }
 
@@ -995,6 +1041,7 @@ Item {
   }
 
   onActiveSegmentsChanged: {
+    modelCanvas.rebuildPackedSegments()
     modelCanvas.rebuildNozzlePath()
     modelCanvas.requestVisiblePaint(true)
   }

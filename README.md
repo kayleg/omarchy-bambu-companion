@@ -142,7 +142,7 @@ Printed paths use the configured accent color; remaining paths stay subdued.
 While printing, a small animated point loops over the outer-wall segments of
 the nearest current layer. It gives the route visual motion; it is not the
 printer's real-time nozzle position. The renderer samples large routes within
-fixed budgets so the UI remains responsive.
+fixed budgets and coalesces drag frames so rotation stays responsive.
 
 ### Supported print files
 

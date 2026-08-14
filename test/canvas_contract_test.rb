@@ -31,7 +31,7 @@ class CanvasContractTest < Minitest::Test
 
   def test_canvas_animation_is_panel_scoped_and_twenty_fps
     assert_includes @source, "Canvas {"
-    assert_includes @source, "renderStrategy: Canvas.Threaded"
+    assert_includes @source, "renderStrategy: Canvas.Immediate"
     assert_includes @source, "interval: 50"
     assert_match(/running:\s*viewport\.panelActive\s*&&\s*viewport\.activeSegments\.length\s*>\s*0.*modelCanvas\.autoRotate/m,
                  @source)
@@ -55,12 +55,72 @@ class CanvasContractTest < Minitest::Test
     assert_match(/readonly property int stillSegmentBudget:\s*40000/, @source)
     assert_match(/function renderBudget\(\).*dragging \|\| autoRotate \? motionSegmentBudget : stillSegmentBudget/m,
                  @source)
-    assert_match(/function renderCount\(\).*Math\.min\(viewport\.activeSegments\.length, renderBudget\(\)\)/m,
+    assert_match(/function renderCount\(\).*Math\.min\(packedCount, renderBudget\(\)\)/m,
                  @source)
     assert_includes @source, "function segmentIndexForSample(sample, segmentCount, sampleCount)"
-    assert_match(/for \(var sample = 0; sample < countToDraw; sample\+\+\).*var index = segmentIndexForSample\(\s*sample, viewport\.activeSegments\.length, countToDraw\)/m,
+    assert_includes @source, "function rebuildPackedSegments()"
+    assert_match(/for \(var sample = 0; sample < countToDraw; sample\+\+\).*var index = segmentIndexForSample\(sample, segmentCount, countToDraw\)/m,
                  @source)
     refute_match(/var\s+dark\s*=\s*\[\]\s*,\s*bright\s*=\s*\[\]/, @source)
+  end
+
+  def test_paint_requests_coalesce_to_one_visible_frame
+    assert_includes @source, "function schedulePaint()"
+    assert_includes @source, "function flushQueuedPaint()"
+    assert_match(/if \(paintQueued\) return/, @source)
+    assert_match(/Qt\.callLater\(flushQueuedPaint\)/, @source)
+    schedule = extract_function("schedulePaint")
+    flush = extract_function("flushQueuedPaint")
+    script = <<~JAVASCRIPT
+      var viewport = { panelActive: true }
+      var paintQueued = false
+      var painted = 0
+      var later = []
+      var Qt = { callLater: function(fn) { later.push(fn) } }
+      function requestPaint() { painted += 1 }
+      #{schedule}
+      #{flush}
+      schedulePaint()
+      schedulePaint()
+      schedulePaint()
+      var queuedBeforeFlush = later.length
+      later[0]()
+      viewport.panelActive = false
+      schedulePaint()
+      later[1]()
+      console.log(JSON.stringify({
+        queuedBeforeFlush: queuedBeforeFlush,
+        painted: painted,
+        later: later.length
+      }))
+    JAVASCRIPT
+    result = run_javascript(script)
+
+    assert_equal 1, result.fetch("queuedBeforeFlush")
+    assert_equal 1, result.fetch("painted")
+    assert_equal 2, result.fetch("later")
+  end
+
+  def test_packed_segments_drop_invalid_rows_once
+    check = extract_function("segmentIsFinite")
+    pack = extract_function("rebuildPackedSegments")
+    result = run_javascript(<<~JAVASCRIPT)
+      var packedSegments = [9]
+      var packedCount = 99
+      var viewport = { activeSegments: [
+        [0, 1, 2, 3, 4, 5],
+        [0, 1, 2, 3, 4, NaN],
+        null,
+        [6, 7, 8, 9, 10, 11]
+      ] }
+      #{check}
+      #{pack}
+      rebuildPackedSegments()
+      console.log(JSON.stringify({ packed: packedSegments, count: packedCount }))
+    JAVASCRIPT
+
+    assert_equal [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], result.fetch("packed")
+    assert_equal 2, result.fetch("count")
   end
 
   def test_bounded_sampling_is_uniform_and_includes_both_endpoints
@@ -223,7 +283,7 @@ class CanvasContractTest < Minitest::Test
     assert_match(/function zoomAfterSteps\(currentZoom, steps\)/, @source)
     assert_match(/return Math\.max\(0\.5, Math\.min\(4(?:\.0)?, nextZoom\)\)/,
                  @source)
-    assert_match(/onWheel: function\(wheel\).*wheelStepAccumulator \+=.*wholeWheelSteps.*if \(wholeSteps !== 0\).*zoomAfterSteps.*wheelStepAccumulator -= wholeSteps.*requestPaint\(\).*wheel\.accepted = true/m,
+    assert_match(/onWheel: function\(wheel\).*wheelStepAccumulator \+=.*wholeWheelSteps.*if \(wholeSteps !== 0\).*zoomAfterSteps.*wheelStepAccumulator -= wholeSteps.*schedulePaint\(\).*wheel\.accepted = true/m,
                  @source)
     assert_match(/frameScale = frame\.scale \* zoom/, @source)
     assert_includes @source, 'text: "ZOOM ×" + modelCanvas.formatZoom(modelCanvas.zoom)'
@@ -301,7 +361,7 @@ class CanvasContractTest < Minitest::Test
     assert_in_delta 4.4, values[4], 1e-9
     assert_match(/function projectionFrame.*var minDisplayZ = displayZ\(projectionMinZ\).*var maxDisplayZ = displayZ\(projectionMaxZ\)/m,
                  @source)
-    assert_match(/function projectedPoint.*var translatedZ = displayZ\(z\) - frameModelCenterZ/m,
+    assert_match(/function projectPoint.*var translatedZ = displayZ\(z\) - frameModelCenterZ/m,
                  @source)
   end
 
@@ -390,7 +450,7 @@ class CanvasContractTest < Minitest::Test
       var viewport = { panelActive: false }
       var rebuilt = 0, painted = 0
       function rebuildProjectionBounds() { rebuilt += 1 }
-      function requestPaint() { painted += 1 }
+      function schedulePaint() { painted += 1 }
       #{function}
       var closedResult = requestVisiblePaint(true)
       viewport.panelActive = true
@@ -404,7 +464,7 @@ class CanvasContractTest < Minitest::Test
     assert_equal true, result.fetch("openResult")
     assert_equal 1, result.fetch("rebuilt")
     assert_equal 1, result.fetch("painted")
-    assert_match(/onActiveSegmentsChanged:\s*\{.*modelCanvas\.rebuildNozzlePath\(\).*modelCanvas\.requestVisiblePaint\(true\)/m,
+    assert_match(/onActiveSegmentsChanged:\s*\{.*modelCanvas\.rebuildPackedSegments\(\).*modelCanvas\.rebuildNozzlePath\(\).*modelCanvas\.requestVisiblePaint\(true\)/m,
                  @source)
     assert_includes @source, "onActiveBoundsChanged: modelCanvas.requestVisiblePaint(true)"
     assert_match(/onZCurrentChanged:\s*\{.*modelCanvas\.rebuildNozzlePath\(\).*modelCanvas\.requestVisiblePaint\(false\)/m,

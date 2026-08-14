@@ -48,7 +48,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
     source = component_source("BambuModelViewport.qml")
 
     assert_includes source, "Canvas {"
-    assert_includes source, "renderStrategy: Canvas.Threaded"
+    assert_includes source, "renderStrategy: Canvas.Immediate"
     assert_includes source, "readonly property int motionSegmentBudget: 10000"
     assert_includes source, "readonly property int stillSegmentBudget: 40000"
     assert_match(/function renderBudget\(\).*dragging \|\| autoRotate\s*\? motionSegmentBudget : stillSegmentBudget/m,
