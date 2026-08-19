@@ -205,7 +205,9 @@ class QmlSettingsContractTest < Minitest::Test
     refute_includes source, "demoToggle"
     refute_match(/demoMode|Offline demo/i, source)
     assert_match(/id:\s*serialInput\b/, source)
-    assert_match(/parseInteger\(\s*maxSegmentsInput\.text, "Wireframe limit", 1000, 100000\)/,
+    assert_match(/parseInteger\(\s*maxSegmentsInput\.text, "Wireframe limit", 1000, 1000000\)/,
+                 source)
+    assert_match(/id: maxSegmentsInput.*maximumLength: 7.*inputMethodHints: Qt\.ImhDigitsOnly/m,
                  source)
     assert_match(/parseInteger\(\s*explosionFactorInput\.text, "Explode factor", 0, 500\)/,
                  source)

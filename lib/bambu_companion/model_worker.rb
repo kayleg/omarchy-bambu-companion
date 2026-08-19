@@ -2,6 +2,7 @@
 
 require "monitor"
 require "tempfile"
+require "fileutils"
 
 module BambuCompanion
   module ZProgress
@@ -73,16 +74,30 @@ module BambuCompanion
     end
 
     Job = Struct.new(:generation, :hints, :local_path, keyword_init: true)
+    ProgressGeometry = Struct.new(:bounds, :layer_z, :layer_z_exact,
+                                  keyword_init: true)
     STOP = Object.new.freeze
-    GEOMETRY_CHUNK_SIZE = 500
     PREVIEW_CHUNK_CHARS = 49_152
     STOP_JOIN_SECONDS = 0.25
+    PLUGIN_DATA_NAME = "io.github.ypmrg.bambu-companion"
 
-    def initialize(ftps_client:, loader:, emitter:, on_status:)
+    def self.default_geometry_directory
+      root = ENV["BAMBU_NATIVE_DATA_ROOT"]
+      if root.nil? || root.empty?
+        share = ENV["XDG_DATA_HOME"]
+        share = File.join(Dir.home, ".local/share") if share.nil? || share.empty?
+        root = File.join(share, PLUGIN_DATA_NAME)
+      end
+      File.join(root, "geometry")
+    end
+
+    def initialize(ftps_client:, loader:, emitter:, on_status:,
+                   geometry_directory: nil)
       @ftps_client = ftps_client
       @loader = loader
       @emitter = emitter
       @on_status = on_status
+      @geometry_directory = geometry_directory || self.class.default_geometry_directory
       @queue = SizedQueue.new(1)
       @mutex = Mutex.new
       # Direct same-thread callback reentry is supported. A callback must not
@@ -114,7 +129,10 @@ module BambuCompanion
           raise StoppedError if @stopped
 
           @generation += 1
-          @state = state(status: "loading", generation: @generation)
+          @state = state(
+            status: "loading", generation: @generation,
+            load_phase: copied_path ? "processing" : "locating"
+          )
           job = Job.new(
             generation: @generation, hints: copied_hints, local_path: copied_path
           ).freeze
@@ -205,7 +223,7 @@ module BambuCompanion
       committed = @mutex.synchronize do
         next false unless job.generation == @generation && !@stopped
 
-        @geometry = bundle.gcode
+        @geometry = progress_geometry(bundle.gcode)
         @state = state(
           status: "ready", generation: job.generation,
           segment_count: bundle.segment_count
@@ -224,7 +242,10 @@ module BambuCompanion
     end
 
     def load_geometry(job)
-      return parse_path(job.local_path, job) if job.local_path
+      if job.local_path
+        update_load_state(job, phase: "processing")
+        return parse_path(job.local_path, job)
+      end
 
       raise "FTPS client is unavailable" unless @ftps_client
 
@@ -234,12 +255,51 @@ module BambuCompanion
         remote = @ftps_client.download(
           hints: job.hints,
           destination: path,
-          cancelled: -> { !current?(job) }
+          cancelled: -> { !current?(job) },
+          progress: lambda do |loaded, total|
+            update_load_state(
+              job, phase: "downloading", loaded_bytes: loaded,
+              total_bytes: total
+            )
+          end
         )
         return false unless current?(job)
 
+        update_load_state(job, phase: "processing")
         parse_path(path, job, source_name: remote)
       end
+    end
+
+    def update_load_state(job, phase:, loaded_bytes: 0, total_bytes: nil)
+      loaded = [Integer(loaded_bytes), 0].max
+      total = Integer(total_bytes) if total_bytes
+      total = nil unless total&.positive?
+      progress = total ? [[loaded * 100 / total, 0].max, 100].min : nil
+      bucket = total ? progress : loaded / (1 << 20)
+      published = @mutex.synchronize do
+        next false unless job.generation == @generation && !@stopped
+
+        previous = @state
+        previous_bucket = if previous[:total_bytes].to_i.positive?
+                            previous[:load_progress]
+                          else
+                            previous[:loaded_bytes].to_i / (1 << 20)
+                          end
+        next false if previous[:load_phase] == phase &&
+                      previous[:total_bytes].to_i == total.to_i &&
+                      previous_bucket == bucket
+
+        @state = state(
+          status: "loading", generation: job.generation,
+          load_phase: phase, load_progress: progress,
+          loaded_bytes: loaded, total_bytes: total.to_i
+        )
+        true
+      end
+      notify_status(job) if published
+      published
+    rescue ArgumentError, TypeError
+      false
     end
 
     def parse_path(path, job, source_name: nil)
@@ -251,6 +311,8 @@ module BambuCompanion
       gcode = bundle.gcode
       preview = bundle.preview
       encoded_preview = preview && [preview.data].pack("m0")
+      packed_path = gcode && write_packed_segments(job, gcode.segments)
+      return false if gcode && !packed_path
       return false unless emit_current(
         job,
         "geometry_begin",
@@ -258,7 +320,8 @@ module BambuCompanion
         segmentCount: bundle.segment_count,
         gcode: gcode && {
           segmentCount: gcode.segments.length,
-          bounds: camel_bounds(gcode.bounds)
+          bounds: camel_bounds(gcode.bounds),
+          path: packed_path
         },
         preview: preview && {
           byteCount: preview.data.bytesize,
@@ -270,20 +333,7 @@ module BambuCompanion
       )
 
       chunk_counts = {}
-      if gcode
-        count = chunk_count(gcode.segments.length, GEOMETRY_CHUNK_SIZE)
-        chunk_counts["gcode"] = count
-        gcode.segments.each_slice(GEOMETRY_CHUNK_SIZE).with_index do |segments, index|
-          return false unless emit_current(
-            job,
-            "geometry_chunk",
-            generation: job.generation,
-            source: "gcode",
-            index: index,
-            segments: segments
-          )
-        end
-      end
+      chunk_counts["gcode"] = 0 if gcode
 
       if encoded_preview
         count = chunk_count(encoded_preview.bytesize, PREVIEW_CHUNK_CHARS)
@@ -321,7 +371,58 @@ module BambuCompanion
       end
     end
 
+    def write_packed_segments(job, segments)
+      FileUtils.mkdir_p(@geometry_directory, mode: 0o700)
+      File.chmod(0o700, @geometry_directory)
+      path = File.join(@geometry_directory, "#{Integer(job.generation)}.f32")
+      temporary = "#{path}.#{Process.pid}.#{Thread.current.object_id}.tmp"
+      begin
+        File.open(temporary, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+          segments.each_slice(4096) do |rows|
+            return unless current?(job)
+
+            values = rows.flat_map do |segment|
+              raise "invalid G-code segment" unless segment.respond_to?(:length) &&
+                                                   segment.length == 6
+
+              segment.map do |value|
+                number = Float(value)
+                raise "non-finite G-code segment" unless number.finite?
+
+                number
+              end
+            end
+            file.write(values.pack("e*"))
+          end
+        end
+        return unless current?(job)
+
+        File.rename(temporary, path)
+        Dir.children(@geometry_directory).each do |name|
+          next unless name.end_with?(".f32")
+          next if name == File.basename(path)
+
+          File.delete(File.join(@geometry_directory, name))
+        rescue Errno::ENOENT
+          next
+        end
+        path
+      ensure
+        FileUtils.rm_f(temporary)
+      end
+    end
+
     def chunk_count(length, size) = (length + size - 1) / size
+
+    def progress_geometry(gcode)
+      return unless gcode
+
+      ProgressGeometry.new(
+        bounds: gcode.bounds,
+        layer_z: gcode.layer_z,
+        layer_z_exact: gcode.layer_z_exact
+      ).freeze
+    end
 
     def publish_error(job, error)
       published = @mutex.synchronize do
@@ -351,12 +452,18 @@ module BambuCompanion
       false
     end
 
-    def state(status:, generation:, segment_count: 0, error: nil)
+    def state(status:, generation:, segment_count: 0, error: nil,
+              load_phase: "", load_progress: nil,
+              loaded_bytes: 0, total_bytes: 0)
       {
         status: status,
         generation: generation,
         segment_count: segment_count,
-        error: error
+        error: error,
+        load_phase: load_phase,
+        load_progress: load_progress,
+        loaded_bytes: loaded_bytes,
+        total_bytes: total_bytes
       }.freeze
     end
 

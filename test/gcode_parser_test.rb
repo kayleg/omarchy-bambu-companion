@@ -60,6 +60,22 @@ class GcodeParserTest < Minitest::Test
     assert_equal first.segments, second.segments
   end
 
+  def test_decimation_merges_connected_moves_instead_of_punching_gaps
+    lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0.2"]
+    100.times { |index| lines << "G1 X#{index + 1} Y0 E1" }
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(
+      StringIO.new(lines.join("\n"))
+    )
+
+    assert_operator geometry.segments.length, :<=, 10
+    assert_equal [0.0, 0.0, 0.2], geometry.segments.first.values_at(0, 1, 2)
+    assert_equal [100.0, 0.0, 0.2], geometry.segments.last.values_at(3, 4, 5)
+    geometry.segments.each_cons(2) do |left, right|
+      assert_equal left.values_at(3, 4, 5), right.values_at(0, 1, 2)
+    end
+  end
+
   def test_rejects_files_without_known_outer_wall_markers
     error = assert_raises(BambuCompanion::GcodeError) do
       BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new("G1 X1 Y1 E1\n"))
@@ -67,8 +83,8 @@ class GcodeParserTest < Minitest::Test
     assert_equal "no_outer_walls", error.code
   end
 
-  def test_defaults_to_forty_thousand_segments
-    assert_equal 40_000, BambuCompanion::GcodeParser::DEFAULT_MAX_SEGMENTS
+  def test_defaults_to_five_hundred_thousand_segments
+    assert_equal 500_000, BambuCompanion::GcodeParser::DEFAULT_MAX_SEGMENTS
 
     lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0.2"]
     30_001.times { |index| lines << "G1 X#{index + 1} Y0 E1" }
@@ -274,7 +290,7 @@ class GcodeParserTest < Minitest::Test
     assert_equal [0.2], geometry.layer_z
   end
 
-  def test_layer_metadata_is_bounded_and_representative_without_changing_segments
+  def test_layer_metadata_is_bounded_while_segments_remain_deterministic
     lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0"]
     25_000.times { |index| lines << "G1 X#{index + 1} Y0 Z#{index + 1} E1" }
     source = lines.join("\n")
@@ -293,15 +309,12 @@ class GcodeParserTest < Minitest::Test
     assert_equal geometry.layer_z.sort, geometry.layer_z
     assert_equal 0.0, geometry.layer_z.first
     assert_equal 25_000.0, geometry.layer_z.last
-    assert_equal [
-      [0.0, 0.0, 0.0, 1.0, 0.0, 1.0],
-      [4096.0, 0.0, 4096.0, 4097.0, 0.0, 4097.0],
-      [8192.0, 0.0, 8192.0, 8193.0, 0.0, 8193.0],
-      [12_288.0, 0.0, 12_288.0, 12_289.0, 0.0, 12_289.0],
-      [16_384.0, 0.0, 16_384.0, 16_385.0, 0.0, 16_385.0],
-      [20_480.0, 0.0, 20_480.0, 20_481.0, 0.0, 20_481.0],
-      [24_576.0, 0.0, 24_576.0, 24_577.0, 0.0, 24_577.0]
-    ], geometry.segments
+    assert_operator geometry.segments.length, :<=, 8
+    assert_equal [0.0, 0.0, 0.0], geometry.segments.first.values_at(0, 1, 2)
+    assert_equal [25_000.0, 0.0, 25_000.0], geometry.segments.last.values_at(3, 4, 5)
+    geometry.segments.each_cons(2) do |left, right|
+      assert_equal left.values_at(3, 4, 5), right.values_at(0, 1, 2)
+    end
 
     midpoint, mode = BambuCompanion::ZProgress.calculate(
       geometry, layer: geometry.layer_z.length / 2, percent: 50

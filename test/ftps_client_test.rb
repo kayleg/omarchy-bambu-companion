@@ -48,6 +48,8 @@ class FtpsClientTest < Minitest::Test
       end
     end
 
+    def size(path) = @files.fetch(path).bytesize
+
     def close
       @closed = true
     end
@@ -94,6 +96,41 @@ class FtpsClientTest < Minitest::Test
       assert_equal "archive-data", File.binread(destination)
       assert_equal [remote], ftp.retrieved
     end
+  end
+
+  def test_download_reports_streamed_bytes_against_the_remote_size
+    object, = client({ "/cache/Benchy.gcode.3mf" => "archive-data" })
+    updates = []
+
+    Dir.mktmpdir do |dir|
+      object.download(
+        hints: { "file" => "Benchy.gcode.3mf" },
+        destination: File.join(dir, "download"),
+        progress: ->(loaded, total) { updates << [loaded, total] }
+      )
+    end
+
+    assert_equal [0, 12], updates.first
+    assert_equal [12, 12], updates.last
+    assert_equal [4, 8, 12], updates.drop(1).map(&:first)
+  end
+
+  def test_download_progress_remains_usable_when_size_is_unsupported
+    object, ftp = client({ "/part.gcode" => "ready" })
+    ftp.define_singleton_method(:size) do |_path|
+      raise Net::FTPPermError, "500 SIZE unsupported"
+    end
+    updates = []
+
+    Dir.mktmpdir do |dir|
+      object.download(
+        hints: { "file" => "part.gcode" }, destination: File.join(dir, "download"),
+        progress: ->(loaded, total) { updates << [loaded, total] }
+      )
+    end
+
+    assert_equal [0, nil], updates.first
+    assert_equal [5, nil], updates.last
   end
 
   def test_rejects_non_positive_download_bounds

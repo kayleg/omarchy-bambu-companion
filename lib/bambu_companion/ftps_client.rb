@@ -78,11 +78,14 @@ module BambuCompanion
       end
     end
 
-    def download(hints:, destination:, cancelled: -> { false })
+    def download(hints:, destination:, cancelled: -> { false }, progress: ->(*) {})
       raise_cancelled if cancelled.call
 
       @attempts.times do |attempt|
-        return download_once(hints: hints, destination: destination, cancelled: cancelled)
+        return download_once(
+          hints: hints, destination: destination, cancelled: cancelled,
+          progress: progress
+        )
       rescue FtpsError => error
         raise unless %w[file_not_found transport].include?(error.code) &&
                      attempt + 1 < @attempts
@@ -96,12 +99,19 @@ module BambuCompanion
 
     private
 
-    def download_once(hints:, destination:, cancelled:)
+    def download_once(hints:, destination:, cancelled:, progress:)
       ftp = @ftp_factory.call(@config, @secret)
       remote = resolve_remote(ftp, hints, cancelled: cancelled)
       raise_cancelled if cancelled.call
 
       bytes = 0
+      total_bytes = remote_size(ftp, remote)
+      if total_bytes && total_bytes > @max_bytes
+        raise FtpsError.new(
+          "too_large", "Print file exceeds #{@max_bytes} bytes"
+        ), cause: nil
+      end
+      progress.call(0, total_bytes)
       temporary = Tempfile.create(
         [".#{File.basename(destination)}-", ".part"],
         File.dirname(destination), mode: 0o600, binmode: true
@@ -117,6 +127,7 @@ module BambuCompanion
           ), cause: nil
         end
         temporary.write(chunk)
+        progress.call(bytes, total_bytes)
       end
       temporary.close
       File.rename(temporary_path, destination)
@@ -136,6 +147,13 @@ module BambuCompanion
 
     def raise_cancelled
       raise FtpsError.new("cancelled", "FTPS download cancelled"), cause: nil
+    end
+
+    def remote_size(ftp, remote)
+      size = Integer(ftp.size(remote))
+      size if size >= 0
+    rescue Net::FTPError, ArgumentError, TypeError, NoMethodError
+      nil
     end
 
     def safely_close(object)

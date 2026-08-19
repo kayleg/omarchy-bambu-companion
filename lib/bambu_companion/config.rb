@@ -8,7 +8,7 @@ module BambuCompanion
       "mqttPort" => 8883,
       "ftpsPort" => 990,
       "username" => "bblp",
-      "maxSegments" => 40_000
+      "maxSegments" => 500_000
     }.freeze
 
     attr_reader :host, :mqtt_port, :ftps_port, :serial, :username,
@@ -39,7 +39,7 @@ module BambuCompanion
       @ftps_port = bounded_integer(ftps_port, "ftpsPort", 1..65_535)
       @serial = clean_token(serial, "serial")
       @username = clean_token(username, "username", allow_dots: true)
-      @max_segments = bounded_integer(max_segments, "maxSegments", 1_000..100_000)
+      @max_segments = bounded_integer(max_segments, "maxSegments", 1_000..1_000_000)
       @mqtt_tls_fingerprint = clean_fingerprint(
         mqtt_tls_fingerprint, "mqttTlsFingerprint"
       )

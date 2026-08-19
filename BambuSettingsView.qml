@@ -129,7 +129,7 @@ Item {
     }
 
     var nextSegments = parseInteger(
-      maxSegmentsInput.text, "Wireframe limit", 1000, 100000)
+      maxSegmentsInput.text, "Wireframe limit", 1000, 1000000)
     if (nextSegments < 0) return
     var nextExplosionFactor = parseInteger(
       explosionFactorInput.text, "Explode factor", 0, 500)
@@ -453,7 +453,7 @@ Item {
             id: maxSegmentsInput
             width: parent.width
             clip: true
-            maximumLength: 6
+            maximumLength: 7
             inputMethodHints: Qt.ImhDigitsOnly
             foreground: form.foreground
             accent: form.accent

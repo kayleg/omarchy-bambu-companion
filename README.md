@@ -65,7 +65,7 @@ local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
 | FTPS port | `990` | Local implicit-FTPS file service |
 | MQTT / FTPS username | `bblp` | Local Bambu service account |
 | LAN access code | — | Password shown by the printer |
-| Wireframe segment limit | `40000` | Detail/performance limit, from 1,000 to 100,000 |
+| Wireframe segment limit | `500000` | Detail cap, 1,000–1,000,000 |
 | Explode factor | `100` | Additional vertical layer-spacing factor, from 0 to 500 |
 | Auto-rotate by default | enabled | Initial rotation state when the viewport loads |
 | Bar summary | enabled | Show or hide status, progress and temperatures in the bar |
@@ -113,6 +113,12 @@ When a job starts, the backend identifies its print file and downloads it over
 FTPS. For a sliced 3MF archive it reads the bounded PNG plate preview and the
 recognized outer-wall moves from the embedded G-code. Direct `.gcode` files
 provide only the route view.
+
+The loading view distinguishes SD-card lookup, FTPS transfer, and local G-code
+processing. When the printer reports the remote file size, the FTPS phase shows
+a byte count and a determinate progress bar; extraction and parsing remain
+indeterminate. Large sliced archives can therefore be slow even though MQTT
+telemetry itself is already connected.
 
 The **Route** and **Image** icon buttons are always visible below the coordinate
 badge. A source that is unavailable is disabled. The 2D image is selected by
@@ -184,9 +190,12 @@ telemetry used by Bambu Handy is outside this plugin's scope.
 - The code is passed to the Ruby backend and GNOME Keyring through standard
   input, not command-line arguments.
 - Downloaded G-code/3MF files use private temporary files and are deleted after
-  parsing, cancellation or failure. No persistent print-file cache is kept.
-- Only the bounded PNG preview and simplified toolpath remain in memory. The
-  route respects the configured segment limit and both sources are replaced
+  parsing, cancellation or failure. No source print-file cache is kept.
+- The bounded PNG preview travels over JSON. The simplified toolpath is written
+  atomically as a private packed `float32` file and loaded directly by the GPU
+  renderer, avoiding a second 500,000-row JavaScript copy. The route respects
+  the configured segment limit; connected moves are merged when simplification
+  is required so contours remain continuous. Both sources are replaced
   atomically by the next preview generation.
 - Bambu printers use local self-signed certificates, so the plugin applies
   explicit trust on first use instead of relying on a public certificate
@@ -288,8 +297,9 @@ omarchy restart shell
   file.
 - Ruby parsers retain a bounded PNG plate preview and streamed, downsampled
   outer-wall G-code.
-- Newline-delimited JSON over stdin/stdout connects the isolated backend to
-  Quickshell.
+- Newline-delimited JSON over stdin/stdout carries control, telemetry and
+  preview metadata between the isolated backend and Quickshell. Large G-code
+  geometry uses the private packed `float32` file announced by that protocol.
 
 The current release supports one printer. Multi-printer dashboards, camera
 streams, cloud access and printer-control actions are intentionally excluded.

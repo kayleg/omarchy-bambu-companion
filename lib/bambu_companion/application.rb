@@ -467,7 +467,9 @@ module BambuCompanion
       {
         status: model[:status], generation: model[:generation],
         segmentCount: model[:segment_count], zCurrent: model[:z_current],
-        zMode: model[:z_mode], error: model[:error]
+        zMode: model[:z_mode], error: model[:error],
+        loadPhase: model[:load_phase], loadProgress: model[:load_progress],
+        loadedBytes: model[:loaded_bytes], totalBytes: model[:total_bytes]
       }
     end
 

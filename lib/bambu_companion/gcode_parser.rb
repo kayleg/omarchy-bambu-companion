@@ -16,7 +16,7 @@ module BambuCompanion
                         keyword_init: true)
 
   class GcodeParser
-    DEFAULT_MAX_SEGMENTS = 40_000
+    DEFAULT_MAX_SEGMENTS = 500_000
     DEFAULT_MAX_LAYER_VALUES = 20_000
     OUTER_MARKERS = [
       /\AFEATURE:\s*Outer wall\z/i,
@@ -72,6 +72,7 @@ module BambuCompanion
       @segments = []
       @source_count = 0
       @sample_stride = 1
+      @last_source_segment = nil
       @layers = []
       @layer_sample_stride = 1
       @layer_source_count = 0
@@ -269,14 +270,60 @@ module BambuCompanion
       record_layer(segment[2])
       record_layer(segment[5])
       source_index = @source_count - 1
-      return unless (source_index % @sample_stride).zero?
-
       if @segments.length >= @max_segments
-        @segments = @segments.each_with_index.filter_map { |value, index| value if index.even? }
-        @sample_stride *= 2
-        return unless (source_index % @sample_stride).zero?
+        reduced = compact_connected_segments
+        unless reduced
+          if connected_segments?(@last_source_segment, segment) &&
+             connected_segments?(@segments.last, segment)
+            @segments[-1] = merge_segments(@segments.last, segment)
+          end
+          @last_source_segment = segment
+          return
+        end
       end
-      @segments << segment
+
+      continues_path = connected_segments?(@last_source_segment, segment)
+      if (source_index % @sample_stride).zero? || !continues_path
+        @segments << segment
+      elsif connected_segments?(@segments.last, segment)
+        @segments[-1] = merge_segments(@segments.last, segment)
+      end
+      @last_source_segment = segment
+    end
+
+    def compact_connected_segments
+      compacted = []
+      index = 0
+      while index < @segments.length
+        first = @segments[index]
+        second = @segments[index + 1]
+        if second && connected_segments?(first, second)
+          compacted << merge_segments(first, second)
+          index += 2
+        else
+          compacted << first
+          index += 1
+        end
+      end
+      return false unless compacted.length < @segments.length
+
+      @segments = compacted
+      @sample_stride *= 2
+      true
+    end
+
+    def connected_segments?(left, right)
+      return false unless left && right
+
+      3.times.all? do |axis|
+        (Float(left[axis + 3]) - Float(right[axis])).abs <= FLOAT_EPSILON
+      end
+    rescue ArgumentError, TypeError
+      false
+    end
+
+    def merge_segments(first, second)
+      [first[0], first[1], first[2], second[3], second[4], second[5]]
     end
 
     def record_layer(value)

@@ -5,12 +5,21 @@ require "json"
 require "stringio"
 require "timeout"
 require "tmpdir"
+require "fileutils"
 require "bambu_companion/gcode_parser"
 require "bambu_companion/print_preview_loader"
 require "bambu_companion/model_worker"
 
 class ModelWorkerTest < Minitest::Test
   TIMEOUT = 2
+
+  def setup
+    @geometry_directory = Dir.mktmpdir("bambu-model-worker")
+  end
+
+  def teardown
+    FileUtils.rm_rf(@geometry_directory)
+  end
 
   class Emitter
     def initialize
@@ -232,11 +241,13 @@ class ModelWorkerTest < Minitest::Test
       @calls = []
     end
 
-    def download(hints:, destination:, cancelled:)
+    def download(hints:, destination:, cancelled:, progress: ->(*) {})
       @calls << { hints: hints, destination: destination, cancelled: cancelled }
       raise TestError.new("cancelled", "cancelled") if cancelled.call
 
+      progress.call(0, @content.bytesize)
       File.binwrite(destination, @content)
+      progress.call(@content.bytesize, @content.bytesize)
       @remote
     end
   end
@@ -250,8 +261,9 @@ class ModelWorkerTest < Minitest::Test
       @cancelled = Queue.new
     end
 
-    def download(hints:, destination:, cancelled:)
+    def download(hints:, destination:, cancelled:, progress: ->(*) {})
       @entered << [hints, destination]
+      progress.call(0, nil)
       @release.pop
       was_cancelled = cancelled.call
       @cancelled << was_cancelled
@@ -286,7 +298,7 @@ class ModelWorkerTest < Minitest::Test
     end
   end
 
-  def test_publishes_complete_current_generation_in_bounded_json_chunks
+  def test_publishes_current_generation_as_a_packed_binary_file
     Dir.mktmpdir do |dir|
       path = File.join(dir, "demo.gcode")
       lines = ["G90", "M83", ";TYPE:WALL-OUTER", "G1 X0 Y0 Z0.2"]
@@ -309,16 +321,38 @@ class ModelWorkerTest < Minitest::Test
       assert_equal 1_205, manifest.fetch(:segmentCount)
       assert_equal 1_205, manifest.fetch(:gcode).fetch(:segmentCount)
       assert_nil manifest.fetch(:preview)
-      chunks = emitter.events.select { |event,| event == "geometry_chunk" }
-      assert_equal([500, 500, 205], chunks.map { |_, payload| payload.fetch(:segments).length })
-      assert_equal([0, 1, 2], chunks.map { |_, payload| payload.fetch(:index) })
-      assert(chunks.all? { |_, payload| payload.fetch(:source) == "gcode" })
-      assert(chunks.all? { |_, payload| payload.fetch(:generation) == job.generation })
+      packed = manifest.fetch(:gcode).fetch(:path)
+      assert File.file?(packed)
+      assert_equal 1_205 * 6 * 4, File.size(packed)
+      assert_equal 1_205 * 6, File.binread(packed).unpack("e*").length
       ending = emitter.events.last.fetch(1)
       assert_equal ["gcode"], ending.fetch(:sources)
-      assert_equal({ "gcode" => 3 }, ending.fetch(:chunks))
+      assert_equal({ "gcode" => 0 }, ending.fetch(:chunks))
       emitter.events.each { |event, payload| JSON.generate(payload.merge(event: event)) }
     end
+  end
+
+  def test_remote_load_reports_download_progress_then_local_processing
+    content = gcode(1)
+    statuses = StatusCollector.new
+    worker = build_worker(
+      ftps_client: RecordingFtps.new(content: content), source: file_source,
+      on_status: statuses
+    )
+    job = worker.submit(hints: { "file" => "remote.gcode" })
+
+    assert worker.process(job)
+    loading = statuses.snapshots.select { |snapshot| snapshot[:status] == "loading" }
+    assert_equal "locating", loading.first.fetch(:load_phase)
+    completed_download = loading.find do |snapshot|
+      snapshot[:load_phase] == "downloading" && snapshot[:load_progress] == 100
+    end
+    refute_nil completed_download
+    assert_equal content.bytesize, completed_download.fetch(:loaded_bytes)
+    assert_equal content.bytesize, completed_download.fetch(:total_bytes)
+    assert_equal "processing", loading.last.fetch(:load_phase)
+    assert_nil loading.last.fetch(:load_progress)
+    assert_equal "ready", statuses.snapshots.last.fetch(:status)
   end
 
   def test_publishes_preview_and_gcode_as_one_ordered_transaction
@@ -335,7 +369,8 @@ class ModelWorkerTest < Minitest::Test
       ftps_client: nil,
       loader: RecordingLoader.new(bundle(preview: preview, gcode: gcode_geometry)),
       emitter: emitter,
-      on_status: statuses
+      on_status: statuses,
+      geometry_directory: @geometry_directory
     )
     job = worker.submit(hints: {}, local_path: "/tmp/dual")
 
@@ -343,27 +378,29 @@ class ModelWorkerTest < Minitest::Test
     begin_event = emitter.events.first
     assert_equal "geometry_begin", begin_event.first
     assert_equal 1, begin_event.last.fetch(:segmentCount)
-    assert_equal({
-      segmentCount: 1,
-      bounds: { minX: nil, maxX: nil, minY: nil, maxY: nil,
-                minZ: 0.2, maxZ: 0.2 }
-    }, begin_event.last.fetch(:gcode))
+    assert_equal 1, begin_event.last.fetch(:gcode).fetch(:segmentCount)
+    assert_equal({ minX: nil, maxX: nil, minY: nil, maxY: nil,
+                   minZ: 0.2, maxZ: 0.2 },
+                 begin_event.last.fetch(:gcode).fetch(:bounds))
     assert_equal({
       byteCount: 3, encodedLength: 4, width: 320, height: 240,
       mimeType: "image/png"
     }, begin_event.last.fetch(:preview))
-    chunks = emitter.events.select { |event,| event == "geometry_chunk" }
-    assert_equal ["gcode"], (chunks.map { |_, payload| payload.fetch(:source) })
-    assert_equal [0], (chunks.map { |_, payload| payload.fetch(:index) })
+    packed = begin_event.last.fetch(:gcode).fetch(:path)
+    assert File.file?(packed)
+    assert_equal 24, File.size(packed)
     preview_chunks = emitter.events.select do |event,|
       event == "geometry_preview_chunk"
     end
     assert_equal ["UE5H"], (preview_chunks.map { |_, payload| payload.fetch(:data) })
     assert_equal [0], (preview_chunks.map { |_, payload| payload.fetch(:index) })
-    assert_equal({ "gcode" => 1, "preview" => 1 }, emitter.events.last.last.fetch(:chunks))
+    assert_equal({ "gcode" => 0, "preview" => 1 }, emitter.events.last.last.fetch(:chunks))
     assert_equal %w[gcode preview], emitter.events.last.last.fetch(:sources)
     assert_equal 1, statuses.snapshots.last.fetch(:segment_count)
     assert_equal 0.2, worker.snapshot(layer_num: 1).fetch(:z_current)
+    retained = worker.instance_variable_get(:@geometry)
+    refute_respond_to retained, :segments
+    assert_equal [0.2], retained.layer_z
   end
 
   def test_large_preview_is_split_below_the_ipc_text_limit
@@ -374,7 +411,8 @@ class ModelWorkerTest < Minitest::Test
     emitter = Emitter.new
     worker = BambuCompanion::ModelWorker.new(
       ftps_client: nil, loader: RecordingLoader.new(bundle(preview: preview)),
-      emitter: emitter, on_status: StatusCollector.new
+      emitter: emitter, on_status: StatusCollector.new,
+      geometry_directory: @geometry_directory
     )
 
     assert worker.process(worker.submit(hints: {}, local_path: "/tmp/preview"))
@@ -394,7 +432,8 @@ class ModelWorkerTest < Minitest::Test
       ftps_client: nil,
       loader: loader,
       emitter: emitter,
-      on_status: StatusCollector.new
+      on_status: StatusCollector.new,
+      geometry_directory: @geometry_directory
     )
     hints = { "file" => "local.gcode.3mf", "plate_idx" => 0 }
     job = worker.submit(hints: hints, local_path: "/tmp/local-job")
@@ -582,7 +621,7 @@ class ModelWorkerTest < Minitest::Test
     emitter = Emitter.new
     statuses = StatusCollector.new
     source = MemorySource.new({ "/old" => gcode(1), "/new" => gcode(2) })
-    publication_mutex = InstrumentedMutex.new(pause_at: 5)
+    publication_mutex = InstrumentedMutex.new(pause_at: 4)
     worker = build_worker(source: source, emitter: emitter, on_status: statuses)
     worker.instance_variable_set(:@publication_mutex, publication_mutex)
     worker.start
@@ -604,7 +643,7 @@ class ModelWorkerTest < Minitest::Test
   def test_submit_winning_publication_race_suppresses_stale_ready_status
     statuses = StatusCollector.new
     source = MemorySource.new({ "/old" => gcode(1), "/new" => gcode(2) })
-    publication_mutex = InstrumentedMutex.new(pause_at: 6)
+    publication_mutex = InstrumentedMutex.new(pause_at: 5)
     worker = build_worker(source: source, on_status: statuses)
     worker.instance_variable_set(:@publication_mutex, publication_mutex)
     worker.start
@@ -986,7 +1025,8 @@ class ModelWorkerTest < Minitest::Test
         end
       ),
       emitter: emitter,
-      on_status: on_status
+      on_status: on_status,
+      geometry_directory: @geometry_directory
     )
   end
 

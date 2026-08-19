@@ -13,7 +13,7 @@ class ConfigTest < Minitest::Test
     assert_equal 990, config.ftps_port
     assert_equal "0309C123456789", config.serial
     assert_equal "bblp", config.username
-    assert_equal 40_000, config.max_segments
+    assert_equal 500_000, config.max_segments
     assert_equal "11" * 32, config.mqtt_tls_fingerprint
     assert_equal "22" * 32, config.ftps_tls_fingerprint
     refute_respond_to config, :to_h
