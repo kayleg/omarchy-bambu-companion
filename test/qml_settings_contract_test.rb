@@ -617,7 +617,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/function saveSettings\(draft, accessCode\).*if \(!setSecret\(replacement\)\).*recoverSecretWrite\(/m,
                  source)
-    assert_match(/function handleProcessRunningChanged\(\).*if \(sessionProcess\.running\).*return.*daemonReady = false.*resetOperationalState\(\).*recoverSecretWrite\(/m,
+    assert_match(/function handleBackendStopped\(\).*resetOperationalState\(\).*recoverSecretWrite\(/m,
                  source)
     assert_match(/message\.event === "error".*reportProcessError\(message\.message\).*recoverSecretWrite\(/m,
                  source)

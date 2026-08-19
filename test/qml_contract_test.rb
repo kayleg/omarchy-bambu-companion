@@ -11,6 +11,8 @@ class QmlContractTest < Minitest::Test
     @telemetry_source = File.read(File.join(@root, "BambuTelemetryPane.qml"))
     @viewport_source = File.read(File.join(@root, "BambuModelViewport.qml"))
     @button_source = File.read(File.join(@root, "BambuButton.qml"))
+    @geometry_source = File.read(File.join(@root, "BambuGeometryAssembler.qml"))
+    @backend_source = File.read(File.join(@root, "BambuBackendSession.qml"))
     manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
     @widget_defaults = manifest.fetch("barWidget").fetch("defaults")
     @widget_schema = manifest.fetch("barWidget").fetch("schema")
@@ -44,14 +46,16 @@ class QmlContractTest < Minitest::Test
     assert_match(/function open\(\)/, @source)
     assert_match(/function close\(\)/, @source)
     assert_includes @source, "readonly property bool opened"
-    assert_includes @source, "Process {"
-    assert_includes @source, "stdout: SplitParser"
-    assert_includes @source, "stdinEnabled: true"
-    assert_includes @source, "command: [root.backendPath]"
+    assert_includes @source, "BambuBackendSession {"
+    assert_includes @backend_source, "property Process sessionProcess: Process {"
+    assert_includes @backend_source, "stdout: SplitParser"
+    assert_includes @backend_source, "stdinEnabled: true"
+    assert_includes @backend_source, "command: [backend.executable]"
     assert_includes @source, "implicitWidth: button.implicitWidth"
     assert_includes @source, "implicitHeight: button.implicitHeight"
-    assert_match(/restartDelay = Math\.min\(60000, restartDelay \* 2\)/, @source)
-    assert_includes @source, "sessionRestart.restart()"
+    assert_match(/restartDelay = Math\.min\(60000, restartDelay \* 2\)/,
+                 @backend_source)
+    assert_includes @backend_source, "restartTimer.restart()"
   end
 
   def test_widget_does_not_override_qquickitem_final_layer_property
@@ -64,15 +68,16 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_process_lifecycle_resets_state_and_schedules_one_restart
-    assert_includes @source, "property bool restartScheduled: false"
-    assert_includes @source, "function resetStreamBuffers()"
-    assert_match(/function handleProcessRunningChanged\(\).*if \(sessionProcess\.running\).*restartScheduled = false.*return.*daemonReady = false.*resetOperationalState\(\).*resetStreamBuffers\(\).*recoverSecretWrite\(.*\).*if \(restartScheduled\) return.*restartScheduled = true.*sessionRestart\.restart\(\)/m,
-                 @source)
-    assert_includes @source, "onRunningChanged: root.handleProcessRunningChanged()"
-    session_process = @source[/Process \{\s*id: sessionProcess.*?\n  \}/m]
-    refute_nil session_process
-    refute_includes session_process, "onExited:"
-    assert_match(/onTriggered:.*root\.restartScheduled = false.*sessionProcess\.running = true/m,
+    assert_includes @backend_source, "property bool restartScheduled: false"
+    assert_includes @backend_source, "function resetBuffers()"
+    assert_match(/function handleRunningChanged\(\).*if \(sessionProcess\.running\).*restartScheduled = false.*return.*if \(!started\) return.*daemonReady = false.*if \(restartScheduled\) return.*resetBuffers\(\).*stopped\(\).*restartScheduled = true.*restartTimer\.restart\(\)/m,
+                 @backend_source)
+    assert_includes @backend_source,
+                    "onRunningChanged: backend.handleRunningChanged()"
+    refute_includes @backend_source, "onExited:"
+    assert_match(/onTriggered:.*backend\.restartScheduled = false.*backend\.sessionProcess\.running = true/m,
+                 @backend_source)
+    assert_match(/function handleBackendStopped\(\).*resetOperationalState\(\).*recoverSecretWrite\(/m,
                  @source)
   end
 
@@ -82,7 +87,8 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, 'Qt.resolvedUrl("native/build")'
     assert_includes @source, "readonly property string nativeRoutePath"
     assert_includes @source, 'Quickshell.env("XDG_DATA_HOME")'
-    assert_includes @source, "/io.github.ypmrg.bambu-companion/qml/native/RouteHost.qml"
+    assert_includes @source,
+                    'nativeDataRoot + "/qml/native/RouteHost.qml"'
     assert_includes @source, 'property string rendererStatus: "compiling"'
     assert_includes @source, "readonly property url nativeRouteUrl"
     assert_includes @source, "function markRendererReady()"
@@ -133,7 +139,7 @@ class QmlContractTest < Minitest::Test
     assert_match(/message\.event === "hello".*daemonReady = Number\(message\.protocol\) === 1.*installationId = String\(message\.installationId \|\| ""\).*sendConfiguration\(\)/m,
                  @source)
     assert_includes @source, '"op": "configure"'
-    assert_match(/message\.event === "hello".*if \(!daemonReady \|\| !installationIdentified\).*resetOperationalState\(\).*processError = "Unsupported backend protocol".*return.*restartDelay = 1000.*sendConfiguration\(\).*if \(!daemonReady\) return/m,
+    assert_match(/message\.event === "hello".*if \(!daemonReady \|\| !installationIdentified\).*resetOperationalState\(\).*processError = "Unsupported backend protocol".*return.*backendSession\.markReady\(\).*sendConfiguration\(\).*if \(!daemonReady\) return/m,
                  @source)
   end
 
@@ -150,29 +156,27 @@ class QmlContractTest < Minitest::Test
     refute_includes @source, "onSettingsChanged:"
     assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return.*resetOperationalState\(\).*sendConfiguration\(\)/m,
                  @source)
-    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*modelGeneration = -1.*geometryBundle = \(\{\}\).*selectedGeometrySource = "gcode".*resetPendingGeometry\(\).*viewMode = nextIdleView\(\)/m,
+    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*geometryAssembler\.reset\(-1\).*viewMode = nextIdleView\(\)/m,
                  @source)
   end
 
   def test_raw_process_chunks_are_reassembled_with_a_hard_line_limit
-    match = @source.match(/readonly property int maxIpcLineChars:\s*(\d+)/)
+    match = @backend_source.match(/property int maxLineChars:\s*(\d+)/)
     refute_nil match
     assert_operator match[1].to_i, :>=, 262_144
     assert_operator match[1].to_i, :<=, 4_194_304
-    assert_includes @source, 'property string stdoutBuffer: ""'
-    assert_includes @source, "property bool stdoutDiscarding: false"
-    assert_includes @source, 'property string stderrBuffer: ""'
-    assert_includes @source, "property bool stderrDiscarding: false"
-    assert_includes @source, "function consumeStreamChunk(chunk, stdoutStream)"
-    assert_match(/buffer\.length \+ part\.length > root\.maxIpcLineChars.*buffer = "".*discarding = true/m,
-                 @source)
-    assert_match(/newlineIndex < 0\) break.*if \(!discarding\).*handleLine/m, @source)
-    assert_match(/discarding = false.*offset = newlineIndex \+ 1/m, @source)
-    assert_equal 4, @source.scan('splitMarker: ""').length
-    assert_match(/stdout: SplitParser.*onRead: function\(chunk\) \{ root\.consumeStdoutChunk\(chunk\) \}/m,
-                 @source)
-    assert_match(/stderr: SplitParser.*onRead: function\(chunk\) \{ root\.consumeStderrChunk\(chunk\) \}/m,
-                 @source)
+    assert_includes @backend_source, 'property string stdoutBuffer: ""'
+    assert_includes @backend_source, "property bool stdoutDiscarding: false"
+    assert_includes @backend_source, 'property string stderrBuffer: ""'
+    assert_includes @backend_source, "property bool stderrDiscarding: false"
+    assert_includes @backend_source, "function consumeChunk(chunk, stdoutStream)"
+    assert_match(/buffer\.length \+ part\.length > maxLineChars.*buffer = "".*discarding = true/m,
+                 @backend_source)
+    assert_match(/newlineIndex < 0\) break.*if \(!discarding\).*lineReceived/m,
+                 @backend_source)
+    assert_match(/discarding = false.*offset = newlineIndex \+ 1/m,
+                 @backend_source)
+    assert_equal 4, (@source + @backend_source).scan('splitMarker: ""').length
   end
 
   def test_secret_and_geometry_safety_contract
@@ -182,18 +186,21 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, '"op": "set_secret"'
     assert_includes @settings_source, "password: true"
     assert_includes @settings_source, "maximumLength: 256"
-    assert_includes @source, "pendingGeometry"
     assert_includes @source, "geometryBundle"
     assert_includes @source, "activeSegmentPath"
     assert_includes @source, "activeSegmentCount"
-    assert_includes @source, "geometry_begin"
-    assert_includes @source, "geometry_end"
-    assert_includes @source, "validSegmentPath"
+    assert_includes @source, "BambuGeometryAssembler {"
+    assert_includes @geometry_source, "pendingGeometry"
+    assert_includes @geometry_source, "geometry_begin"
+    assert_includes @geometry_source, "geometry_end"
+    assert_includes @geometry_source, "validSegmentPath"
+    assert_includes @geometry_source, "required property string segmentDirectory"
+    assert_includes @source, "segmentDirectory: root.geometryDirectory"
   end
 
   def test_actions_require_a_ready_process_and_clear_secret_only_after_accepted_write
     assert_match(/function writeCommand\(command\).*if \(!daemonReady \|\| !sessionProcess\.running\) return false.*try.*sessionProcess\.write.*return true.*catch \(error\).*return false/m,
-                 @source)
+                 @backend_source)
     assert_match(/function setSecret\(value\).*writeCommand\(\{.*"op": "set_secret"/m,
                  @source)
     assert_match(/function clearSecret\(\).*writeCommand\(\{ "op": "clear_secret" \}\)/m,
@@ -201,44 +208,32 @@ class QmlContractTest < Minitest::Test
     assert_match(/function refreshModel\(\)\s*{\s*writeCommand\(\{ "op": "refresh_model" \}\)\s*}/m,
                  @source)
     assert_includes @source, "onReloadRequested: root.refreshModel()"
-    assert_match(/BambuModelViewport\s*{.*daemonReady: root\.daemonReady && sessionProcess\.running/m,
+    assert_match(/BambuModelViewport\s*{.*daemonReady: root\.daemonReady && backendSession\.running/m,
                  @source)
     assert_includes @viewport_source, "enabled: viewport.daemonReady"
   end
 
   def test_geometry_is_transactional_ordered_and_bounded
-    assert_includes @source, "function resetPendingGeometry()"
-    assert_includes @source, "function isNonNegativeInteger(value)"
-    assert_includes @source, "function validPreview(preview)"
-    assert_includes @source, "readonly property int maxPreviewBytes: 524288"
-    assert_match(/function handleGeometry\(message\).*if \(!isNonNegativeInteger\(message\.generation\)\).*if \(event === "geometry_begin"\)/m,
-                 @source)
-    assert_includes @source,
+    assert_includes @geometry_source, "function clearPending()"
+    assert_includes @geometry_source, "function validPreview(preview)"
+    assert_includes @geometry_source, "property int maxPreviewBytes: 524288"
+    assert_includes @geometry_source, "property int maxPreviewChunkChars: 49152"
+    assert_includes @geometry_source,
                     'else if (event === "geometry_preview_chunk") appendPreviewChunk(message, generation)'
-    assert_match(/function beginGeometry\(message, generation\).*message\.segmentCount > root\.segmentLimit\(\).*var hasGcode = message\.gcode !== null.*var hasPreview = message\.preview !== null/m,
-                 @source)
-    assert_match(/hasGcode.*gcode\.segmentCount !== message\.segmentCount.*hasPreview && !validPreview\(message\.preview\).*if \(!hasGcode && !hasPreview\)/m,
-                 @source)
-    assert_match(/pendingGeometry = \{.*generation: generation.*gcode: hasGcode.*path: packedPath.*preview: hasPreview/m,
-                 @source)
-    refute_includes @source, "appendGeometryChunk"
-    refute_includes @source, 'event === "geometry_chunk"'
-    assert_match(/function finishGeometry\(message, generation\).*Object\.keys\(chunks\)\.length !== expectedChunkKeys.*slot && chunks\.gcode !== 0/m,
-                 @source)
-    assert_match(/function validSegmentPath\(path\).*path\.length > 4096.*path\.charAt\(0\) !== "\/".*\.f32/m,
-                 @source)
-    assert_match(/geometryBundle = nextBundle.*selectedGeometrySource = nextBundle\.gcode \? "gcode" : "preview".*resetPendingGeometry\(\)/m,
-                 @source)
+    assert_includes @geometry_source, "message.segmentCount > assembler.maxSegments"
+    assert_includes @geometry_source, "Object.keys(chunks).length !== expected.length"
+    refute_includes @geometry_source, "appendGeometryChunk"
+    refute_includes @geometry_source, 'event === "geometry_chunk"'
+    refute_includes @source, "function beginGeometry"
   end
 
   def test_geometry_is_scoped_to_the_generation_announced_by_state
-    assert_includes @source, "property int modelGeneration: -1"
-    assert_match(/function handleState\(message\).*var nextGeneration = isNonNegativeInteger\(model\.generation\).*if \(nextGeneration !== modelGeneration\).*resetPendingGeometry\(\).*modelGeneration = nextGeneration/m,
+    assert_includes @source, "property alias modelGeneration: geometryAssembler.modelGeneration"
+    assert_match(/function handleState\(message\).*var nextGeneration = isNonNegativeInteger\(model\.generation\).*geometryAssembler\.setGeneration\(nextGeneration\)/m,
                  @source)
-    assert_match(/if \(nextGeneration !== modelGeneration\).*geometryBundle = \(\{\}\).*selectedGeometrySource = "gcode".*resetPendingGeometry\(\).*modelGeneration = nextGeneration/m,
-                 @source)
-    assert_match(/function handleGeometry\(message\).*if \(!isNonNegativeInteger\(message\.generation\)\) return.*if \(generation !== modelGeneration\) return.*if \(event === "geometry_begin"\)/m,
-                 @source)
+    assert_includes @source, "geometryAssembler.handleGeometry(message)"
+    assert_match(/function handleGeometry\(message\).*if \(!isNonNegativeInteger\(message\.generation\)\) return.*if \(generation !== modelGeneration\) return/m,
+                 @geometry_source)
   end
 
   def test_model_download_progress_is_bounded_reset_and_passed_to_the_viewport
@@ -261,12 +256,11 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_geometry_source_selection_uses_only_complete_available_sources
-    assert_includes @source, 'property string selectedGeometrySource: "gcode"'
-    assert_match(/readonly property bool previewAvailable:\s*!!root\.geometryBundle\.preview.*data:image\/png;base64/m,
-                 @source)
-    assert_match(/readonly property bool gcodeGeometryAvailable:\s*!!root\.geometryBundle\.gcode.*gcode\.path/m,
-                 @source)
-    assert_match(/function selectGeometrySource\(source\).*source === "preview".*previewAvailable.*source === "gcode".*gcodeGeometryAvailable.*selectedGeometrySource = source/m,
+    assert_includes @source,
+                    "property alias selectedGeometrySource: geometryAssembler.selectedGeometrySource"
+    assert_includes @source, "readonly property bool previewAvailable: geometryAssembler.previewAvailable"
+    assert_includes @source, "readonly property bool gcodeGeometryAvailable: geometryAssembler.gcodeAvailable"
+    assert_match(/function selectGeometrySource\(source\).*geometryAssembler\.selectSource\(source\)/m,
                  @source)
     assert_match(/readonly property string activeSegmentPath:.*geometryBundle\.gcode.*geometry\.path/m,
                  @source)

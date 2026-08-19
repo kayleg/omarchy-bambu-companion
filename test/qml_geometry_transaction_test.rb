@@ -7,18 +7,18 @@ require "open3"
 class QmlGeometryTransactionTest < Minitest::Test
   FUNCTIONS = %w[
     objectOrEmpty isNonNegativeInteger validPreview validSegmentPath
-    resetPendingGeometry beginGeometry appendPreviewChunk finishGeometry
+    clearPending beginGeometry appendPreviewChunk finishGeometry
   ].freeze
 
   def setup
-    @source = File.read(File.expand_path("../BambuWidget.qml", __dir__))
+    @source = File.read(File.expand_path("../BambuGeometryAssembler.qml", __dir__))
   end
 
   def test_gcode_and_png_preview_replace_the_active_bundle_only_after_end
     result = run_transaction(<<~JAVASCRIPT)
       beginGeometry({ segmentCount: 1,
         gcode: { segmentCount: 1, bounds: { minZ: 0.2, maxZ: 0.2 },
-          path: "/tmp/bambu/geometry/4.f32" },
+          path: "/tmp/bambu/geometry/route-4.f32" },
         preview: { byteCount: 3, width: 320, height: 240,
           mimeType: "image/png", encodedLength: 4 } }, 4)
       appendPreviewChunk({ source: "preview", index: 0, data: "UE5H" }, 4)
@@ -34,7 +34,7 @@ class QmlGeometryTransactionTest < Minitest::Test
 
     assert_equal true, result.fetch("beforeEnd")
     assert_equal "gcode", result.fetch("selected")
-    assert_equal "/tmp/bambu/geometry/4.f32", result.fetch("gcodePath")
+    assert_equal "/tmp/bambu/geometry/route-4.f32", result.fetch("gcodePath")
     assert_equal "data:image/png;base64,UE5H", result.fetch("previewUrl")
     assert_equal 0, result.fetch("pendingKeys")
   end
@@ -50,7 +50,7 @@ class QmlGeometryTransactionTest < Minitest::Test
         && geometryBundle.gcode === undefined
       beginGeometry({ segmentCount: 1,
         gcode: { segmentCount: 1, bounds: {},
-          path: "/tmp/bambu/geometry/5.f32" }, preview: null }, 5)
+          path: "/tmp/bambu/geometry/route-5.f32" }, preview: null }, 5)
       finishGeometry({ sources: ["gcode"], chunks: { gcode: 0 } }, 5)
       console.log(JSON.stringify({ previewOnly: previewOnly,
         gcodeOnly: selectedGeometrySource === "gcode"
@@ -65,7 +65,7 @@ class QmlGeometryTransactionTest < Minitest::Test
     result = run_transaction(<<~JAVASCRIPT)
       beginGeometry({ segmentCount: 500000,
         gcode: { segmentCount: 500000, bounds: { minZ: 0.2, maxZ: 42 },
-          path: "/tmp/bambu/geometry/4.f32" }, preview: null }, 4)
+          path: "/tmp/bambu/geometry/route-4.f32" }, preview: null }, 4)
       finishGeometry({ sources: ["gcode"], chunks: { gcode: 0 } }, 4)
       console.log(JSON.stringify({
         selected: selectedGeometrySource,
@@ -76,14 +76,16 @@ class QmlGeometryTransactionTest < Minitest::Test
     JAVASCRIPT
 
     assert_equal "gcode", result.fetch("selected")
-    assert_equal "/tmp/bambu/geometry/4.f32", result.fetch("path")
+    assert_equal "/tmp/bambu/geometry/route-4.f32", result.fetch("path")
     assert_equal 500_000, result.fetch("count")
     assert_equal 0, result.fetch("pendingKeys")
   end
 
   def test_binary_gcode_path_must_be_absolute_bounded_and_f32
     result = run_transaction(<<~JAVASCRIPT)
-      var paths = ["relative/4.f32", "/tmp/../secret.f32", "/tmp/4.bin",
+      var paths = ["relative/route-4.f32", "/tmp/bambu/geometry/../route-4.f32",
+        "/tmp/bambu/geometry/4.f32", "/tmp/bambu/geometry/route-4.bin",
+        "/tmp/bambu/geometry/route-4.f32/extra",
         "/tmp/" + "a".repeat(4097) + ".f32"]
       var rejected = []
       for (var index = 0; index < paths.length; index++) {
@@ -95,7 +97,7 @@ class QmlGeometryTransactionTest < Minitest::Test
       console.log(JSON.stringify(rejected))
     JAVASCRIPT
 
-    assert_equal [true, true, true, true], result
+    assert_equal [true, true, true, true, true, true], result
   end
 
   def test_invalid_preview_or_incomplete_gcode_preserves_the_active_bundle
@@ -127,7 +129,7 @@ class QmlGeometryTransactionTest < Minitest::Test
         preview: { byteCount: 6, width: 1, height: 1,
           mimeType: "image/png", encodedLength: 8 } }, 4)
       appendPreviewChunk({ source: "preview", index: 0,
-        data: "A".repeat(root.maxPreviewChunkChars + 1) }, 4)
+        data: "A".repeat(assembler.maxPreviewChunkChars + 1) }, 4)
       console.log(JSON.stringify({ outOfOrderRejected: outOfOrderRejected,
         oversizedRejected: Object.keys(pendingGeometry).length === 0,
         previousPreserved: geometryBundle.previous === true }))
@@ -143,17 +145,17 @@ class QmlGeometryTransactionTest < Minitest::Test
   def run_transaction(body)
     functions = FUNCTIONS.map { |name| extract_function(name) }.join("\n")
     script = <<~JAVASCRIPT
-      var root = {
-        segmentLimit: function() { return 1000000 },
+      var assembler = {
+        maxSegments: 1000000,
         maxPreviewBytes: 524288,
         maxPreviewPixels: 4194304,
-        maxPreviewChunkChars: 49152
+        maxPreviewChunkChars: 49152,
+        segmentDirectory: "/tmp/bambu/geometry"
       }
       var pendingGeometry = {}
       var geometryBundle = { previous: true }
       var selectedGeometrySource = "gcode"
       #{functions}
-      root.validSegmentPath = validSegmentPath
       #{body}
     JAVASCRIPT
     output, error, status = Open3.capture3("node", "-e", script)

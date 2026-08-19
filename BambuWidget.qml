@@ -16,7 +16,7 @@ BarWidget {
   property bool initialViewResolved: false
   property bool installationIdentified: false
   property string installationId: ""
-  property bool daemonReady: false
+  property alias daemonReady: backendSession.daemonReady
   property bool connected: false
   property bool connectionVerified: false
   property bool stale: true
@@ -56,8 +56,6 @@ BarWidget {
   property string zMode: "unknown"
   property string processError: ""
   property string processErrorReportUpdate: ""
-  property int restartDelay: 1000
-  property bool restartScheduled: false
   property bool pendingSecretWrite: false
   property bool persistingSettings: false
   property bool tlsProbePending: false
@@ -70,23 +68,11 @@ BarWidget {
   property var pendingTlsDraft: ({})
   property var mqttTlsIdentity: ({})
   property var ftpsTlsIdentity: ({})
-  readonly property int maxIpcLineChars: 1048576
-  readonly property int maxPreviewBytes: 524288
-  readonly property int maxPreviewPixels: 4194304
-  readonly property int maxPreviewChunkChars: 49152
-  property string stdoutBuffer: ""
-  property bool stdoutDiscarding: false
-  property string stderrBuffer: ""
-  property bool stderrDiscarding: false
 
-  property var geometryBundle: ({})
-  property string selectedGeometrySource: "gcode"
-  readonly property bool previewAvailable:
-    !!root.geometryBundle.preview
-      && String(root.geometryBundle.preview.url || "").startsWith("data:image/png;base64,")
-  readonly property bool gcodeGeometryAvailable:
-    !!root.geometryBundle.gcode
-      && String(root.geometryBundle.gcode.path || "").length > 0
+  property alias geometryBundle: geometryAssembler.geometryBundle
+  property alias selectedGeometrySource: geometryAssembler.selectedGeometrySource
+  readonly property bool previewAvailable: geometryAssembler.previewAvailable
+  readonly property bool gcodeGeometryAvailable: geometryAssembler.gcodeAvailable
   readonly property int activeSegmentCount: {
     var geometry = root.geometryBundle.gcode
     if (!geometry) return 0
@@ -101,8 +87,7 @@ BarWidget {
     var geometry = root.geometryBundle.gcode
     return geometry && geometry.bounds ? geometry.bounds : ({})
   }
-  property int modelGeneration: -1
-  property var pendingGeometry: ({})
+  property alias modelGeneration: geometryAssembler.modelGeneration
 
   readonly property string printerName: String(setting("printerName", "3D Printer"))
   readonly property string host: String(setting("host", ""))
@@ -144,11 +129,14 @@ BarWidget {
   readonly property string nativeBuildPath: decodeURIComponent(
     String(Qt.resolvedUrl("native/build")).replace(/^file:\/\//, "")
   )
-  readonly property string nativeRoutePath: {
+  readonly property string nativeDataRoot: {
     var home = Quickshell.env("XDG_DATA_HOME")
     if (!home || home === "") home = Quickshell.env("HOME") + "/.local/share"
-    return home + "/io.github.ypmrg.bambu-companion/qml/native/RouteHost.qml"
+    return home + "/io.github.ypmrg.bambu-companion"
   }
+  readonly property string nativeRoutePath:
+    nativeDataRoot + "/qml/native/RouteHost.qml"
+  readonly property string geometryDirectory: nativeDataRoot + "/geometry"
   property string rendererStatus: "compiling"
   readonly property url nativeRouteUrl: Qt.resolvedUrl("file://" + nativeRoutePath)
   property bool nativeBuildStarted: false
@@ -319,7 +307,7 @@ BarWidget {
       settingsView.reportError("Enter the LAN access code to connect")
       return
     }
-    if (replacement && (!root.daemonReady || !sessionProcess.running)) {
+    if (replacement && (!root.daemonReady || !backendSession.running)) {
       settingsView.reportError("Backend is not ready for the LAN code")
       return
     }
@@ -391,7 +379,7 @@ BarWidget {
   }
 
   function beginTlsProbe(draft) {
-    if (!root.daemonReady || !sessionProcess.running) {
+    if (!root.daemonReady || !backendSession.running) {
       settingsView.reportError("Backend is not ready to check the certificate")
       return false
     }
@@ -497,37 +485,11 @@ BarWidget {
   }
 
   function selectGeometrySource(source) {
-    if ((source === "preview" && root.previewAvailable)
-        || (source === "gcode" && root.gcodeGeometryAvailable)) {
-      selectedGeometrySource = source
-      return true
-    }
-    return false
+    return geometryAssembler.selectSource(source)
   }
 
   function validTlsFingerprint(value) {
     return /^[0-9A-Fa-f]{64}$/.test(String(value || ""))
-  }
-
-  function validPreview(preview) {
-    preview = objectOrEmpty(preview)
-    if (!isNonNegativeInteger(preview.byteCount) || preview.byteCount < 1
-        || preview.byteCount > root.maxPreviewBytes
-        || !isNonNegativeInteger(preview.width) || preview.width < 1
-        || !isNonNegativeInteger(preview.height) || preview.height < 1
-        || preview.width * preview.height > root.maxPreviewPixels
-        || preview.mimeType !== "image/png") return false
-    var expectedLength = 4 * Math.ceil(preview.byteCount / 3)
-    return isNonNegativeInteger(preview.encodedLength)
-      && preview.encodedLength === expectedLength
-  }
-
-  function validSegmentPath(path) {
-    if (typeof path !== "string" || path.length < 5 || path.length > 4096) return false
-    if (path.indexOf("..") !== -1) return false
-    if (path.charAt(0) !== "/") return false
-    if (path.indexOf("\0") !== -1) return false
-    return path.indexOf(".f32", path.length - 4) === path.length - 4
   }
 
   function isFinishedState(state) {
@@ -642,14 +604,7 @@ BarWidget {
   }
 
   function writeCommand(command) {
-    if (!daemonReady || !sessionProcess.running) return false
-    try {
-      sessionProcess.write(JSON.stringify(command) + "\n")
-      return true
-    } catch (error) {
-      reportProcessError("Backend command failed")
-      return false
-    }
+    return backendSession.writeCommand(command)
   }
 
   function sendConfiguration(draft) {
@@ -685,7 +640,7 @@ BarWidget {
 
   function confirmDisconnect() {
     root.disconnectConfirmationOpen = false
-    if (!root.daemonReady || !sessionProcess.running) {
+    if (!root.daemonReady || !backendSession.running) {
       settingsView.reportError("Backend is not ready to disconnect the printer")
       return
     }
@@ -733,74 +688,12 @@ BarWidget {
     writeCommand({ "op": "refresh_model" })
   }
 
-  function consumeStdoutChunk(chunk) {
-    consumeStreamChunk(chunk, true)
-  }
-
-  function resetStreamBuffers() {
-    stdoutBuffer = ""
-    stdoutDiscarding = false
-    stderrBuffer = ""
-    stderrDiscarding = false
-  }
-
-  function handleProcessRunningChanged() {
-    if (sessionProcess.running) {
-      restartScheduled = false
-      return
-    }
-    daemonReady = false
+  function handleBackendStopped() {
     resetOperationalState()
     if (root.disconnectPending) {
       root.failDisconnect("Backend stopped before disconnecting the printer")
     }
-    resetStreamBuffers()
     recoverSecretWrite("Backend stopped before accepting the LAN code. Enter it again")
-    if (restartScheduled) return
-    restartScheduled = true
-    sessionRestart.interval = restartDelay
-    restartDelay = Math.min(60000, restartDelay * 2)
-    sessionRestart.restart()
-  }
-
-  function consumeStderrChunk(chunk) {
-    consumeStreamChunk(chunk, false)
-  }
-
-  function consumeStreamChunk(chunk, stdoutStream) {
-    var buffer = stdoutStream ? stdoutBuffer : stderrBuffer
-    var discarding = stdoutStream ? stdoutDiscarding : stderrDiscarding
-    var text = String(chunk === null || chunk === undefined ? "" : chunk)
-    var offset = 0
-    while (offset < text.length) {
-      var newlineIndex = text.indexOf("\n", offset)
-      var end = newlineIndex < 0 ? text.length : newlineIndex
-      var part = text.slice(offset, end)
-      if (!discarding) {
-        if (buffer.length + part.length > root.maxIpcLineChars) {
-          buffer = ""
-          discarding = true
-        } else {
-          buffer += part
-        }
-      }
-      if (newlineIndex < 0) break
-      if (!discarding) {
-        var line = buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer
-        if (stdoutStream) handleLine(line)
-        else handleErrorLine(line)
-      }
-      buffer = ""
-      discarding = false
-      offset = newlineIndex + 1
-    }
-    if (stdoutStream) {
-      stdoutBuffer = buffer
-      stdoutDiscarding = discarding
-    } else {
-      stderrBuffer = buffer
-      stderrDiscarding = discarding
-    }
   }
 
   function handleErrorLine(line) {
@@ -813,12 +706,7 @@ BarWidget {
     var printer = objectOrEmpty(message.printer)
     var model = objectOrEmpty(message.model)
     var nextGeneration = isNonNegativeInteger(model.generation) ? model.generation : -1
-    if (nextGeneration !== modelGeneration) {
-      geometryBundle = ({})
-      selectedGeometrySource = "gcode"
-      resetPendingGeometry()
-      modelGeneration = nextGeneration
-    }
+    geometryAssembler.setGeneration(nextGeneration)
     connected = printer.connected === true
     stale = printer.stale !== false
     var reportUpdate = String(printer.lastUpdate || "")
@@ -866,10 +754,6 @@ BarWidget {
     }
   }
 
-  function resetPendingGeometry() {
-    pendingGeometry = ({})
-  }
-
   function resetOperationalState() {
     finishReadyTimer.stop()
     finishGraceExpired = false
@@ -907,157 +791,11 @@ BarWidget {
     secretStored = false
     secretStatusKnown = false
     clearTlsProbeState()
-    modelGeneration = -1
-    geometryBundle = ({})
-    selectedGeometrySource = "gcode"
-    resetPendingGeometry()
+    geometryAssembler.reset(-1)
     if (root.viewMode !== "settings"
         && (root.viewMode !== "setup" || root.hasConnectionTarget)) {
       viewMode = nextIdleView()
     }
-  }
-
-  function handleGeometry(message) {
-    message = objectOrEmpty(message)
-    var event = String(message.event || "")
-    if (!isNonNegativeInteger(message.generation)) return
-    var generation = message.generation
-    if (generation !== modelGeneration) return
-    if (event === "geometry_begin") beginGeometry(message, generation)
-    else if (event === "geometry_preview_chunk") appendPreviewChunk(message, generation)
-    else if (event === "geometry_end") finishGeometry(message, generation)
-  }
-
-  function beginGeometry(message, generation) {
-    if (!isNonNegativeInteger(message.segmentCount)
-        || message.segmentCount > root.segmentLimit()) {
-      resetPendingGeometry()
-      return
-    }
-    var hasGcode = message.gcode !== null && message.gcode !== undefined
-    var hasPreview = message.preview !== null && message.preview !== undefined
-    var gcode = objectOrEmpty(message.gcode)
-    if (hasGcode && (!isNonNegativeInteger(gcode.segmentCount)
-        || gcode.segmentCount < 1 || gcode.segmentCount !== message.segmentCount)) {
-      resetPendingGeometry()
-      return
-    }
-    if (!hasGcode && message.segmentCount !== 0) {
-      resetPendingGeometry()
-      return
-    }
-    if (hasPreview && !validPreview(message.preview)) {
-      resetPendingGeometry()
-      return
-    }
-    if (!hasGcode && !hasPreview) {
-      resetPendingGeometry()
-      return
-    }
-    var packedPath = hasGcode ? String(gcode.path || "") : ""
-    if (hasGcode && !root.validSegmentPath(packedPath)) {
-      resetPendingGeometry()
-      return
-    }
-    pendingGeometry = {
-      generation: generation,
-      gcode: hasGcode ? {
-        expectedSegments: gcode.segmentCount,
-        bounds: objectOrEmpty(gcode.bounds),
-        path: packedPath
-      } : null,
-      preview: hasPreview ? {
-        byteCount: message.preview.byteCount,
-        encodedLength: message.preview.encodedLength,
-        width: message.preview.width,
-        height: message.preview.height,
-        parts: [],
-        receivedLength: 0,
-        nextChunk: 0
-      } : null
-    }
-  }
-
-  function appendPreviewChunk(message, generation) {
-    var transaction = objectOrEmpty(pendingGeometry)
-    if (generation !== transaction.generation) return
-    var slot = transaction.preview
-    var data = message.data
-    if (message.source !== "preview" || !slot
-        || !isNonNegativeInteger(message.index)
-        || message.index !== slot.nextChunk
-        || typeof data !== "string" || data.length < 1
-        || data.length > root.maxPreviewChunkChars
-        || slot.receivedLength + data.length > slot.encodedLength
-        || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)
-        || (data.indexOf("=") >= 0
-          && slot.receivedLength + data.length !== slot.encodedLength)) {
-      resetPendingGeometry()
-      return
-    }
-    slot.parts.push(data)
-    slot.receivedLength += data.length
-    slot.nextChunk += 1
-  }
-
-  function finishGeometry(message, generation) {
-    var transaction = objectOrEmpty(pendingGeometry)
-    if (generation !== transaction.generation) return
-    var expected = []
-    if (transaction.gcode) expected.push("gcode")
-    if (transaction.preview) expected.push("preview")
-    var announced = message.sources
-    var chunks = objectOrEmpty(message.chunks)
-    var expectedChunkKeys = expected.length
-    if (!Array.isArray(announced) || announced.length !== expected.length
-        || Object.keys(chunks).length !== expectedChunkKeys) {
-      resetPendingGeometry()
-      return
-    }
-    for (var index = 0; index < expected.length; index++) {
-      if (announced[index] !== expected[index]) {
-        resetPendingGeometry()
-        return
-      }
-    }
-    var slot = transaction.gcode
-    if (slot && chunks.gcode !== 0) {
-      resetPendingGeometry()
-      return
-    }
-    var preview = transaction.preview
-    if (preview && (!isNonNegativeInteger(chunks.preview)
-        || preview.nextChunk !== chunks.preview
-        || preview.receivedLength !== preview.encodedLength)) {
-      resetPendingGeometry()
-      return
-    }
-    var nextBundle = ({})
-    if (slot) nextBundle.gcode = {
-      bounds: slot.bounds, path: slot.path,
-      segmentCount: slot.expectedSegments
-    }
-    if (preview) {
-      var encoded = preview.parts.join("")
-      var expectedPadding = preview.byteCount % 3 === 0
-        ? 0 : 3 - preview.byteCount % 3
-      var suffix = expectedPadding === 0 ? ""
-        : (expectedPadding === 1 ? "=" : "==")
-      if (!encoded.endsWith(suffix)
-          || (expectedPadding > 0
-            && encoded[encoded.length - expectedPadding - 1] === "=")) {
-        resetPendingGeometry()
-        return
-      }
-      nextBundle.preview = {
-        url: "data:image/png;base64," + encoded,
-        width: preview.width,
-        height: preview.height
-      }
-    }
-    geometryBundle = nextBundle
-    selectedGeometrySource = nextBundle.gcode ? "gcode" : "preview"
-    resetPendingGeometry()
   }
 
   function handleLine(line) {
@@ -1072,13 +810,13 @@ BarWidget {
       daemonReady = Number(message.protocol) === 1
       installationId = String(message.installationId || "")
       installationIdentified = installationId !== ""
-      resetPendingGeometry()
+      geometryAssembler.clearPending()
       if (!daemonReady || !installationIdentified) {
         resetOperationalState()
         processError = "Unsupported backend protocol"
         return
       }
-      restartDelay = 1000
+      backendSession.markReady()
       processError = ""
       processErrorReportUpdate = ""
       if (root.requiresSetupConfirmation) {
@@ -1138,7 +876,7 @@ BarWidget {
     } else if (message.event === "state") {
       handleState(message)
     } else if (String(message.event || "").indexOf("geometry_") === 0) {
-      handleGeometry(message)
+      geometryAssembler.handleGeometry(message)
     } else if (message.event === "error") {
       if (root.disconnectPending
           && message.requestId === root.disconnectRequestId
@@ -1192,6 +930,7 @@ BarWidget {
   }
   Component.onCompleted: {
     componentReady = true
+    backendSession.start()
     Qt.callLater(root.resolveInitialView)
     nativeBuild.running = true
     if (!nativeBuild.running && !nativeBuildStarted)
@@ -1200,20 +939,19 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  Process {
-    id: sessionProcess
-    command: [root.backendPath]
-    stdinEnabled: true
-    running: true
-    stdout: SplitParser {
-      splitMarker: ""
-      onRead: function(chunk) { root.consumeStdoutChunk(chunk) }
-    }
-    stderr: SplitParser {
-      splitMarker: ""
-      onRead: function(chunk) { root.consumeStderrChunk(chunk) }
-    }
-    onRunningChanged: root.handleProcessRunningChanged()
+  BambuGeometryAssembler {
+    id: geometryAssembler
+    maxSegments: root.segmentLimit()
+    segmentDirectory: root.geometryDirectory
+  }
+
+  BambuBackendSession {
+    id: backendSession
+    executable: root.backendPath
+    onLineReceived: function(line) { root.handleLine(line) }
+    onErrorLineReceived: function(line) { root.handleErrorLine(line) }
+    onStopped: root.handleBackendStopped()
+    onWriteFailed: root.reportProcessError("Backend command failed")
   }
 
   Process {
@@ -1245,16 +983,6 @@ BarWidget {
     onTriggered: {
       if (root.isFinishedState(root.gcodeState))
         root.finishGraceExpired = true
-    }
-  }
-
-  Timer {
-    id: sessionRestart
-    interval: 1000
-    repeat: false
-    onTriggered: {
-      root.restartScheduled = false
-      if (!sessionProcess.running) sessionProcess.running = true
     }
   }
 
@@ -1452,7 +1180,7 @@ BarWidget {
               errorActive: root.errorActive || root.modelErrorActive
               fontFamily: root.fontFamily
               panelActive: root.popupOpen && root.viewMode === "status"
-              daemonReady: root.daemonReady && sessionProcess.running
+              daemonReady: root.daemonReady && backendSession.running
               printing: root.connected && root.gcodeState === "RUNNING"
               previewAvailable: root.previewAvailable
               gcodeAvailable: root.gcodeGeometryAvailable
@@ -1513,7 +1241,7 @@ BarWidget {
             errorColor: root.errorColor
             dim: root.dim
             fontFamily: root.fontFamily
-            daemonReady: root.daemonReady && sessionProcess.running
+            daemonReady: root.daemonReady && backendSession.running
             allowBack: true
             canDisconnect: root.hasConnectionTarget || root.hasUsableSecret
             requireAccessCode: !root.hasUsableSecret
