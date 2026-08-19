@@ -4,6 +4,12 @@
   <img src="preview.png" alt="Bambu Companion dashboard with live telemetry and G-code preview" width="900">
 </p>
 
+> [!IMPORTANT]
+> **FTPS transfer speed:** FTPS transfers on Bambu Lab printers (such as the P1
+> and A1 series) are slow because of hardware limits in the built-in ESP Wi-Fi
+> module and SD card I/O speeds. The processor is designed for low-power tasks,
+> not heavy data transfers.
+
 Monitor a Bambu Lab printer from the Omarchy Quattro bar. Bambu Companion
 shows live print telemetry, the slicer's 2D plate preview and a lightweight,
 interactive wireframe extracted from the sliced G-code.
