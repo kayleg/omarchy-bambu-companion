@@ -7,12 +7,12 @@ class RepositoryContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   REQUIRED = %w[
     .gitignore manifest.json BambuWidget.qml bambu-companion daemon.rb Gemfile Gemfile.lock
-    README.md LICENSE tests/test-all
+    README.md LICENSE tests/test-all native/build
   ].freeze
 
   def test_required_installable_files_exist
     REQUIRED.each { |path| assert File.file?(File.join(ROOT, path)), "missing #{path}" }
-    %w[bambu-companion tests/test-all tests/test-wrapper tests/fake-bundle tests/fake-gem].each do |path|
+    %w[bambu-companion tests/test-all tests/test-wrapper tests/fake-bundle tests/fake-gem native/build].each do |path|
       assert File.executable?(File.join(ROOT, path)), "#{path} must be executable"
     end
   end
@@ -57,6 +57,13 @@ class RepositoryContractTest < Minitest::Test
     assert_includes readme, "Omarchy Quattro"
     assert_includes readme, "tests/test-all"
     assert_includes readme, "development only"
+    assert_includes readme, "COMPILING ROUTE RENDERER"
+    assert_includes readme, "cmake"
+    assert_includes readme, "g++"
+    assert_includes readme, "GcodeRoute"
+    refute_includes readme, "samples large routes within fixed budgets"
+    refute_includes readme, "Canvas renderer"
+    refute_includes readme, "Canvas rendering"
   end
 
   def test_readme_documents_explicit_first_use_certificate_approval

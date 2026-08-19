@@ -142,8 +142,10 @@ Preview controls:
 Printed paths use the configured accent color; remaining paths stay subdued.
 While printing, a small animated point loops over the outer-wall segments of
 the nearest current layer. It gives the route visual motion; it is not the
-printer's real-time nozzle position. The renderer samples large routes within
-fixed budgets and coalesces drag frames so rotation stays responsive.
+printer's real-time nozzle position. The route is drawn on the GPU, so
+auto-rotate and drag show every stored segment. If the renderer is compiling
+or cannot be built, the route view stays empty (`COMPILING ROUTE RENDERER`)
+and the 2D preview remains available.
 
 ### Supported print files
 
@@ -201,6 +203,8 @@ telemetry used by Bambu Handy is outside this plugin's scope.
 - Local printer access and a valid LAN access code.
 - `ruby`, `gem`, `flock` and GNU `readlink`.
 - `secret-tool`/GNOME Keyring recommended for persistent secret storage.
+- `cmake` and `g++` are needed to compile the G-code route view. The rest of
+  the plugin works without them.
 
 The launcher installs the exact Bundler version from `Gemfile.lock` when
 `bundle` is unavailable, then installs all locked gems under the plugin's
@@ -250,9 +254,10 @@ tests/test-all
 
 This verifies the production bundle, Ruby and shell syntax, high-signal
 RuboCop and ShellCheck rules, JSON/QML contracts, launcher isolation, parser
-behavior and Canvas rendering. `minitest`, `rubocop`, `shellcheck`, `qmllint`
-and Node.js are development only; none is a runtime dependency of the installed
-plugin.
+behavior and GPU projection math. `minitest`, `rubocop`, `shellcheck`,
+`qmllint` and Node.js are development only; none is a runtime dependency of
+the installed plugin. Node.js is required for extracted QML JavaScript tests
+and `g++` is required for projection tests.
 
 Validate a checkout inside Omarchy Quattro with:
 
@@ -276,7 +281,8 @@ omarchy restart shell
 ## Architecture
 
 - `BambuWidget.qml` and the smaller QML components implement the bar,
-  dashboard, settings and Canvas renderer.
+  dashboard, settings and GPU `GcodeRoute` item compiled into the user data
+  directory.
 - `daemon.rb` launches the Ruby backend.
 - MQTT provides printer telemetry; implicit FTPS provides the active print
   file.

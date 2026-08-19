@@ -4,10 +4,12 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-for command_name in ruby bundle node qmllint rubocop shellcheck; do
+for command_name in ruby bundle node g++ qmllint rubocop shellcheck; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     if [[ "$command_name" == node ]]; then
-      echo "Bambu Companion checks require Node.js for the development-only Canvas harness." >&2
+      echo "Bambu Companion checks require Node.js for the development-only viewport JavaScript harness." >&2
+    elif [[ "$command_name" == g++ ]]; then
+      echo "Bambu Companion checks require g++ for the development-only projection math tests." >&2
     else
       echo "Bambu Companion checks require the development command: $command_name" >&2
     fi
@@ -30,9 +32,9 @@ while IFS= read -r -d '' ruby_file; do
   ruby -c "$ruby_file"
 done < <(find lib test -name '*.rb' -print0)
 ruby -c daemon.rb
-bash -n bambu-companion tests/test-wrapper tests/fake-bundle tests/test-all
+bash -n bambu-companion native/build tests/test-wrapper tests/fake-bundle tests/test-all
 rubocop --cache false daemon.rb lib test
-shellcheck bambu-companion tests/test-wrapper tests/fake-bundle tests/fake-gem tests/test-all
+shellcheck bambu-companion native/build tests/test-wrapper tests/fake-bundle tests/fake-gem tests/test-all
 qmllint ./*.qml
 
 echo "All local Bambu Companion checks passed."

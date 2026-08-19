@@ -1,0 +1,95 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+script_dir="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
+source_root="${BAMBU_NATIVE_SOURCE_ROOT:-$script_dir}"
+if [[ -n "${BAMBU_NATIVE_DATA_ROOT:-}" ]]; then
+  data_root="$BAMBU_NATIVE_DATA_ROOT"
+elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+  data_root="$XDG_DATA_HOME/io.github.ypmrg.bambu-companion"
+elif [[ -n "${HOME:-}" ]]; then
+  data_root="$HOME/.local/share/io.github.ypmrg.bambu-companion"
+else
+  echo "bambu-native: XDG_DATA_HOME or HOME must be set" >&2
+  exit 1
+fi
+data_root="$(readlink -m -- "$data_root")"
+if [[ "$data_root" == "/" ]]; then
+  echo "bambu-native: refusing root as data directory" >&2
+  exit 1
+fi
+for command_name in flock pkg-config sha256sum; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "bambu-native: required command not found: $command_name" >&2
+    exit 1
+  fi
+done
+
+lock_path="$data_root/native-build.lock"
+final="$data_root/qml/native"
+mkdir -p "$data_root/qml"
+exec 9>"$lock_path"
+flock 9
+
+qt_version="$(pkg-config --modversion Qt6Core 2>/dev/null || echo none)"
+sources=(
+  CMakeLists.txt
+  RouteHost.qml
+  gcode_route.cpp
+  gcode_route.hpp
+  gcode_route.frag
+  gcode_route.vert
+  projection.hpp
+  segments.hpp
+)
+for source in "${sources[@]}"; do
+  if [[ ! -f "$source_root/$source" ]]; then
+    echo "bambu-native: missing source: $source" >&2
+    exit 1
+  fi
+done
+stamp_src="$({
+  for source in "${sources[@]}"; do
+    sha256sum "$source_root/$source" | awk '{print $1}'
+  done
+} | sha256sum | awk '{print $1}')"
+stamp="${stamp_src} ${qt_version}"
+
+if [[ -f "$final/RouteHost.qml" && -f "$final/.stamp" && "$(cat "$final/.stamp")" == "$stamp" ]]; then
+  exit 0
+fi
+for command_name in cmake g++ nproc; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "bambu-native: required command not found: $command_name" >&2
+    exit 1
+  fi
+done
+
+build_dir="$data_root/qml/native-build"
+staging="$data_root/qml/native.new.$$"
+cleanup() {
+  rm -rf -- "$staging" "$build_dir"
+}
+trap cleanup EXIT
+cleanup
+mkdir -p "$staging"
+
+cmake -S "$source_root" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$build_dir" -j"$(nproc)"
+cmake --install "$build_dir" --prefix="$staging"
+
+printf '%s\n' "$stamp" > "$staging/.stamp"
+if [[ ! -f "$staging/RouteHost.qml" ]]; then
+  echo "bambu-native: install did not produce RouteHost.qml" >&2
+  exit 1
+fi
+
+old="$data_root/qml/native.old.$$"
+rm -rf -- "$old"
+if [[ -e "$final" ]]; then mv "$final" "$old"; fi
+if ! mv "$staging" "$final"; then
+  if [[ -e "$old" ]]; then mv "$old" "$final"; fi
+  exit 1
+fi
+rm -rf -- "$old"
