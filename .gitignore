@@ -2,6 +2,7 @@
 .worktrees/
 .ruby-lsp/
 .superpowers/
+docs/superpowers/
 coverage/
 *.log
 *.tmp
