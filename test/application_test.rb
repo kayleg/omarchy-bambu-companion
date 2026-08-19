@@ -718,7 +718,7 @@ class ApplicationTest < Minitest::Test
   end
 
   def test_model_retry_window_is_bounded_even_when_the_error_is_permanent
-    assert_equal 6, BambuCompanion::Application::MODEL_MAX_RETRIES
+    assert_equal 6, BambuCompanion::PrinterConnection::MODEL_MAX_RETRIES
 
     now = 0.0
     sessions = []
@@ -828,8 +828,9 @@ class ApplicationTest < Minitest::Test
       session_factory: lambda { |**arguments| sessions << Session.new(arguments); sessions.last }
     )
     app.handle("op" => "configure", "protocol" => 1, "config" => printer_config)
+    connection = app.instance_variable_get(:@connection)
     state_mutex = BlockingFirstMutex.new
-    app.instance_variable_set(:@state_mutex, state_mutex)
+    connection.instance_variable_set(:@state_mutex, state_mutex)
     stale_report = Thread.new do
       sessions.first.report(
         "print" => { "subtask_name" => "stale-job.gcode", "mc_percent" => 99 }
@@ -918,9 +919,10 @@ class ApplicationTest < Minitest::Test
     replacement_done = Queue.new
     block_mutex = Mutex.new
     blocked = false
-    original_active_runtime = app.method(:active_runtime?)
-    app.define_singleton_method(:active_runtime?) do |runtime_id|
-      result = original_active_runtime.call(runtime_id)
+    connection = app.instance_variable_get(:@connection)
+    original_active = connection.method(:active?)
+    connection.define_singleton_method(:active?) do
+      result = original_active.call
       should_block = block_mutex.synchronize do
         next false if blocked
 
@@ -979,8 +981,9 @@ class ApplicationTest < Minitest::Test
     release_first = Queue.new
     calls_mutex = Mutex.new
     calls = 0
-    original_emit_state = app.method(:emit_state)
-    app.define_singleton_method(:emit_state) do |**arguments|
+    connection = app.instance_variable_get(:@connection)
+    original_emit_state = connection.method(:emit_state)
+    connection.define_singleton_method(:emit_state) do |worker|
       first = calls_mutex.synchronize do
         calls += 1
         calls == 1
@@ -989,7 +992,7 @@ class ApplicationTest < Minitest::Test
         first_entered << true
         release_first.pop
       end
-      original_emit_state.call(**arguments)
+      original_emit_state.call(worker)
     end
     older = Thread.new { sessions.first.report("print" => { "mc_percent" => 10 }) }
     first_entered.pop
@@ -1686,8 +1689,7 @@ class ApplicationTest < Minitest::Test
     app, = build_app(input: StringIO.new)
     config = test_printer_config("maxSegments" => 12_345)
 
-    worker = app.send(
-      :build_worker,
+    worker = BambuCompanion::ModelWorker.for_printer(
       config: config,
       secret: nil,
       emitter: Object.new,
@@ -1727,7 +1729,7 @@ class ApplicationTest < Minitest::Test
     end
   end
 
-  def test_daemon_exits_with_constant_fatal_when_async_stdout_writer_fails
+  def test_daemon_reports_the_error_class_when_async_stdout_writer_fails
     root = File.expand_path("..", __dir__)
     stdin = stdout = stderr = wait = nil
     stdin, stdout, stderr, wait = Open3.popen3(RbConfig.ruby, File.join(root, "daemon.rb"))
@@ -1741,7 +1743,7 @@ class ApplicationTest < Minitest::Test
     fatal = stderr.read
 
     refute status.success?
-    assert_equal "bambu-companion: fatal error\n", fatal
+    assert_equal "bambu-companion: fatal error (BambuCompanion::IpcOutputError)\n", fatal
     refute_includes fatal, SECRET
   ensure
     stdin&.close
@@ -1754,7 +1756,7 @@ class ApplicationTest < Minitest::Test
   end
 
 
-  def test_daemon_fatal_error_is_constant_and_never_prints_secret_cause
+  def test_daemon_fatal_error_reports_only_the_class_and_never_the_secret_cause
     root = File.expand_path("..", __dir__)
     script = <<~RUBY
       $LOAD_PATH.unshift #{File.join(root, "lib").inspect}
@@ -1774,7 +1776,7 @@ class ApplicationTest < Minitest::Test
 
     refute status.success?
     assert_empty stdout
-    assert_equal "bambu-companion: fatal error\n", stderr
+    assert_equal "bambu-companion: fatal error (RuntimeError)\n", stderr
     refute_includes stderr, SECRET
   end
 end

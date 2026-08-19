@@ -3,15 +3,8 @@
 require "digest"
 require_relative "config"
 require_relative "ipc"
+require_relative "printer_connection"
 require_relative "secret_store"
-require_relative "printer_state"
-require_relative "mqtt_session"
-require_relative "ftps_client"
-require_relative "gcode_source"
-require_relative "gcode_parser"
-require_relative "three_mf_preview"
-require_relative "print_preview_loader"
-require_relative "model_worker"
 require_relative "tls_certificate"
 
 module BambuCompanion
@@ -19,10 +12,7 @@ module BambuCompanion
     PROTOCOL = 1
     MAX_IPC_LINE_BYTES = IpcLineFramer::DEFAULT_MAX_LINE_BYTES
     MAX_ACCESS_CODE_BYTES = SecretStore::MAX_SECRET_BYTES
-    RUNTIME_JOIN_SECONDS = 0.5
-    MODEL_HINT_KEYS = %i[file url gcode_file subtask_name plate_idx].freeze
-    MODEL_RETRY_DELAYS = [5.0, 10.0, 20.0, 30.0].freeze
-    MODEL_MAX_RETRIES = 6
+    THREAD_JOIN_SECONDS = 0.5
 
     def self.installation_id(root = File.expand_path("../..", __dir__))
       candidates = [root, File.join(root, ".git"), File.join(root, ".git", "config")]
@@ -44,27 +34,20 @@ module BambuCompanion
                    tls_probe: TlsProbe.new)
       @input = input
       @secret_store = secret_store
-      @mqtt_factory = mqtt_factory || ->(**arguments) { MqttSession.new(**arguments) }
-      @worker_factory = worker_factory || method(:build_worker)
+      @mqtt_factory = mqtt_factory
+      @worker_factory = worker_factory
       @installation_id = String(installation_id)
       @monotonic_clock = monotonic_clock
       @tls_probe = tls_probe
       @control_mutex = Mutex.new
-      @state_mutex = Mutex.new
       @publication_mutex = Mutex.new
-      @runtime_id = 0
+      @configuration_id = 0
       @sequence = 0
       @shutdown = false
       @run_thread = nil
       @config = nil
       @secret = nil
-      @printer = PrinterState.new
-      @last_hints = {}.freeze
-      @model_retry_attempt = 0
-      @model_retry_at = nil
-      @mqtt = nil
-      @mqtt_thread = nil
-      @worker = nil
+      @connection = nil
       @tls_probe_generation = 0
       @tls_probe_thread = nil
       @emitter = AsyncIpcEmitter.new(
@@ -86,23 +69,7 @@ module BambuCompanion
               installationId: @installation_id
             )
             IpcLineFramer.new(@input, max_line_bytes: MAX_IPC_LINE_BYTES).each do |line|
-              begin
-                raise IpcError if line.equal?(IpcLineFramer::OVERSIZED)
-
-                handle(IpcReader.parse(line))
-              rescue IpcError
-                emit_error(
-                  scope: "config", code: "invalid_ipc", message: "Invalid IPC command",
-                  retryable: true
-                )
-              rescue IpcOutputError
-                raise
-              rescue StandardError => error
-                emit_error(
-                  scope: "internal", code: "command_failed", message: error.message,
-                  retryable: true
-                )
-              end
+              handle_line(line)
               break if shutdown_requested?
             end
           end
@@ -118,20 +85,15 @@ module BambuCompanion
       end
     end
 
-    def handle(command)
-      case command_value(command, "op")
-      when "configure"
-        configure(command)
-      when "set_secret"
-        set_secret(command)
-      when "clear_secret"
-        clear_secret(command)
-      when "refresh_model"
-        refresh_model
-      when "probe_tls"
-        probe_tls(command)
-      when "shutdown"
-        request_shutdown
+    def handle(raw_command)
+      command = normalize_command(raw_command)
+      case command["op"]
+      when "configure" then configure(command)
+      when "set_secret" then set_secret(command)
+      when "clear_secret" then clear_secret(command)
+      when "refresh_model" then refresh_model
+      when "probe_tls" then probe_tls(command)
+      when "shutdown" then request_shutdown
       else
         emit_error(
           scope: "config", code: "unknown_op",
@@ -147,15 +109,34 @@ module BambuCompanion
 
     private
 
-    def command_value(command, key, default = nil)
-      return command[key] if command.key?(key)
+    def handle_line(line)
+      raise IpcError if line.equal?(IpcLineFramer::OVERSIZED)
 
-      symbol = key.to_sym
-      command.key?(symbol) ? command[symbol] : default
+      handle(IpcReader.parse(line))
+    rescue IpcError
+      emit_error(
+        scope: "config", code: "invalid_ipc", message: "Invalid IPC command",
+        retryable: true
+      )
+    rescue IpcOutputError
+      raise
+    rescue StandardError => error
+      emit_error(
+        scope: "internal", code: "command_failed", message: error.message,
+        retryable: true
+      )
+    end
+
+    def normalize_command(command)
+      command.to_h.each_with_object({}) do |(key, value), normalized|
+        normalized[String(key)] = value
+      end
+    rescue NoMethodError, TypeError
+      raise ConfigError, "IPC command must be an object"
     end
 
     def supported_protocol?(command)
-      return true if command_value(command, "protocol") == PROTOCOL
+      return true if command["protocol"] == PROTOCOL
 
       emit_error(
         scope: "config", code: "unsupported_protocol",
@@ -167,42 +148,49 @@ module BambuCompanion
     def configure(command)
       return unless supported_protocol?(command)
 
-      raw = command_value(command, "config", {})
-      candidate = Config.from_h(raw || {})
+      candidate = Config.from_h(command["config"] || {})
       cancel_tls_probe
-      runtime_id = replace_runtime(candidate)
+      configuration_id = replace_configuration(candidate)
+      return unless configuration_id
 
       found = lookup_secret(candidate.serial)
       if !found.is_a?(String) || found.empty? || found.bytesize > MAX_ACCESS_CODE_BYTES
-        set_current_secret(nil)
-        @emitter.emit("secret_required", storageAvailable: storage_available?)
+        return unless set_current_secret(configuration_id, nil)
+
+        available = storage_available?
+        publish_configuration(configuration_id) do
+          @emitter.emit("secret_required", storageAvailable: available)
+        end
         return
       end
 
-      set_current_secret(String(found))
-      @emitter.emit("secret_status", stored: true)
+      return unless set_current_secret(configuration_id, String(found))
+
+      publish_configuration(configuration_id) do
+        @emitter.emit("secret_status", stored: true)
+      end
       unless candidate.trusted_tls?
-        @emitter.emit("tls_required")
+        publish_configuration(configuration_id) { @emitter.emit("tls_required") }
         return
       end
 
-      start_runtime(runtime_id)
+      start_connection(configuration_id)
     end
 
     def probe_tls(command)
       return unless supported_protocol?(command)
 
-      request_id = command_value(command, "requestId")
+      request_id = command["requestId"]
       unless request_id.is_a?(Integer) && request_id.between?(0, 2_147_483_647)
         raise ConfigError, "requestId is invalid"
       end
 
-      config = Config.from_h(command_value(command, "config", {}) || {})
+      config = Config.from_h(command["config"] || {})
       start_tls_probe(config, request_id)
     end
 
     def set_secret(command)
-      config = current_config
+      configuration_id, config = current_configuration
       unless config
         emit_error(
           scope: "secret", code: "invalid_state",
@@ -211,32 +199,36 @@ module BambuCompanion
         return
       end
 
-      value = command_value(command, "accessCode")
-      unless value.is_a?(String) && !value.strip.empty?
-        raise ConfigError, "LAN access code is empty"
-      end
-      secret = value.strip
-      if secret.bytesize > MAX_ACCESS_CODE_BYTES
-        raise ConfigError, "LAN access code is too long"
-      end
+      value = command["accessCode"]
+      raise ConfigError, "LAN access code is empty" unless value.is_a?(String) && !value.strip.empty?
 
-      persist = command_value(command, "persist", true)
+      secret = value.strip
+      raise ConfigError, "LAN access code is too long" if secret.bytesize > MAX_ACCESS_CODE_BYTES
+
+      persist = command.fetch("persist", true)
       raise ConfigError, "persist must be boolean" unless [true, false].include?(persist)
 
-      runtime_id = restart_runtime
-      set_current_secret(secret)
+      replacement = restart_connection(configuration_id)
+      return unless replacement
+
+      configuration_id, config = replacement
+      return unless set_current_secret(configuration_id, secret)
+
       stored = persist ? store_secret(config.serial, secret) : false
-      @emitter.emit("secret_status", stored: !!stored)
-      start_runtime(runtime_id)
+      publish_configuration(configuration_id) do
+        @emitter.emit("secret_status", stored: !!stored)
+      end
+      start_connection(configuration_id)
     end
 
     def clear_secret(command)
-      request_id = command_value(command, "requestId")
+      request_id = command["requestId"]
       valid_request_id = request_id.nil? || (request_id.is_a?(Integer) &&
         request_id.between?(0, 2_147_483_647))
       raise ConfigError, "requestId is invalid" unless valid_request_id
 
-      unless current_config
+      configuration_id, config = current_configuration
+      unless config
         payload = {
           scope: "secret", code: "invalid_state",
           message: "A printer configuration is required", retryable: false
@@ -246,294 +238,134 @@ module BambuCompanion
         return
       end
 
-      invalidate_runtime
-      stop_runtime
-      set_current_secret(nil)
+      replacement = restart_connection(configuration_id)
+      return unless replacement
+
+      configuration_id, = replacement
       cleared = clear_stored_secrets
-      if cleared
-        payload = { stored: false }
+      publish_configuration(configuration_id) do
+        payload = if cleared
+                    { stored: false }
+                  else
+                    {
+                      scope: "secret", code: "clear_failed",
+                      message: "Unable to clear stored LAN access code", retryable: true
+                    }
+                  end
         payload[:requestId] = request_id unless request_id.nil?
-        @emitter.emit("secret_status", payload)
-      else
-        payload = {
-          scope: "secret", code: "clear_failed",
-          message: "Unable to clear stored LAN access code", retryable: true
-        }
-        payload[:requestId] = request_id unless request_id.nil?
-        @emitter.emit("error", payload)
+        @emitter.emit(cleared ? "secret_status" : "error", payload)
+
+        required = { storageAvailable: storage_available? }
+        required[:requestId] = request_id unless request_id.nil?
+        @emitter.emit("secret_required", required)
       end
-      payload = { storageAvailable: storage_available? }
-      payload[:requestId] = request_id unless request_id.nil?
-      @emitter.emit("secret_required", payload)
     end
 
     def refresh_model
-      config, worker, hints = @control_mutex.synchronize do
-        [@config, @worker, @last_hints]
-      end
-      return unless config && worker
-
-      unless hints.empty?
-        worker.submit(hints: hints)
-        arm_model_retry(worker)
-      end
-    rescue StandardError => error
-      emit_error(
-        scope: "gcode", code: "refresh_failed", message: error.message,
-        retryable: true
-      )
+      connection = @control_mutex.synchronize { @connection unless @shutdown }
+      connection&.refresh_preview
     end
 
-    def replace_runtime(config)
-      runtime_id = invalidate_runtime
-      stop_runtime
-      @state_mutex.synchronize do
-        @printer = PrinterState.new
+    def replace_configuration(config)
+      connection = nil
+      configuration_id = @publication_mutex.synchronize do
+        values = @control_mutex.synchronize do
+          next if @shutdown
+
+          @configuration_id += 1
+          connection = @connection
+          @connection = nil
+          @config = config
+          @secret = nil
+          @configuration_id
+        end
+        connection&.stop
+        values
       end
-      @control_mutex.synchronize do
-        @config = config
-        @secret = nil
-        @last_hints = {}.freeze
-        reset_model_retry_unlocked
-      end
-      runtime_id
+      configuration_id
     end
 
-    def restart_runtime
-      runtime_id = invalidate_runtime
-      stop_runtime
-      runtime_id
+    def restart_connection(expected_id)
+      connection = nil
+      replacement = @publication_mutex.synchronize do
+        values = @control_mutex.synchronize do
+          next unless !@shutdown && @configuration_id == expected_id && @config
+
+          @configuration_id += 1
+          connection = @connection
+          @connection = nil
+          @secret = nil
+          [@configuration_id, @config]
+        end
+        connection&.stop if values
+        values
+      end
+      replacement
     end
 
-    def start_runtime(runtime_id)
-      config, secret = @control_mutex.synchronize { [@config, @secret] }
-      return unless active_runtime?(runtime_id) && config && secret
+    def start_connection(configuration_id)
+      config, secret = @control_mutex.synchronize do
+        next unless current_configuration_unlocked?(configuration_id)
+
+        [@config, @secret]
+      end
+      return unless config && secret
       unless config.trusted_tls?
-        @emitter.emit("tls_required")
+        publish_configuration(configuration_id) { @emitter.emit("tls_required") }
         return
       end
 
-      worker = @worker_factory.call(
-        config: config, secret: secret, emitter: @emitter,
-        on_status: ->(*) { emit_state(runtime_id: runtime_id, worker: worker) }
+      connection = PrinterConnection.new(
+        config: config,
+        secret: secret,
+        emitter: @emitter,
+        mqtt_factory: @mqtt_factory,
+        worker_factory: @worker_factory,
+        monotonic_clock: @monotonic_clock,
+        next_sequence: -> { next_sequence }
       )
-      attach_worker(runtime_id, worker)
-      worker.start
-      return cleanup_unattached(worker: worker) unless active_runtime?(runtime_id)
+      attached = @publication_mutex.synchronize do
+        @control_mutex.synchronize do
+          next false unless current_configuration_unlocked?(configuration_id)
+          next false unless @config.equal?(config) && @secret.equal?(secret) && !@connection
 
-      session = @mqtt_factory.call(
-        config: config, secret: secret,
-        on_report: ->(report) { handle_report(report, runtime_id: runtime_id, worker: worker) },
-        on_connection: lambda do |connected, error|
-          handle_connection(connected, error, runtime_id: runtime_id, worker: worker)
-        end,
-        on_error: ->(error) { emit_network_error(error, runtime_id: runtime_id) }
-      )
-      start_session_thread(runtime_id, session)
-    rescue StandardError => error
-      cleanup_failed_runtime(runtime_id, worker: worker, session: session)
-      emit_runtime_error(
-        runtime_id: runtime_id,
-        scope: "internal", code: "runtime_start", message: error.message,
-        retryable: true
-      )
-    end
-
-    def start_session_thread(runtime_id, session)
-      gate = Queue.new
-      thread = Thread.new do
-        gate.pop
-        begin
-          session.run
-        rescue MQTT::Exception, StandardError => error
-          emit_network_error(error, runtime_id: runtime_id)
+          @connection = connection
+          true
         end
       end
-      thread.report_on_exception = false
-      attached = @control_mutex.synchronize do
-        next false unless active_runtime_unlocked?(runtime_id)
+      return connection.stop unless attached
 
-        @mqtt = session
-        @mqtt_thread = thread
-        true
-      end
-      unless attached
-        thread.kill
-        thread.join
-        session.stop
-        return
-      end
-
-      gate << true
+      connection.start
     end
 
-    def handle_report(report, runtime_id:, worker:, load_model: true)
-      printer = current_printer_for(runtime_id)
-      return unless printer
-
-      update = @state_mutex.synchronize { printer.update(report) }
-      hints = update.snapshot.slice(*MODEL_HINT_KEYS).freeze
-      @control_mutex.synchronize do
-        @last_hints = hints if active_runtime_unlocked?(runtime_id)
-      end
-      if load_model && update.load_model && active_runtime?(runtime_id)
-        worker.submit(hints: hints)
-        arm_model_retry(worker)
-      elsif load_model
-        retry_model_if_due(
-          runtime_id: runtime_id, worker: worker,
-          hints: hints, printer_snapshot: update.snapshot
-        )
-      end
-      emit_state(runtime_id: runtime_id, worker: worker)
-    rescue ModelWorker::StoppedError
-      nil
-    rescue StandardError => error
-      emit_runtime_error(
-        runtime_id: runtime_id,
-        scope: "internal", code: "report_processing", message: error.message,
-        retryable: true
-      )
-    end
-
-    def handle_connection(connected, _error, runtime_id:, worker:)
-      printer = current_printer_for(runtime_id)
-      return unless printer
-
-      @state_mutex.synchronize do
-        connected ? printer.connected! : printer.disconnected!
-      end
-      emit_state(runtime_id: runtime_id, worker: worker)
-    end
-
-    def emit_network_error(error, runtime_id:)
-      if error.is_a?(TlsCertificateError)
-        emit_runtime_error(
-          runtime_id: runtime_id,
-          scope: "tls", code: error.code, message: error.message,
-          retryable: false
-        )
-        return
-      end
-
-      authentication = MqttSession.authentication_error?(error)
-      emit_runtime_error(
-        runtime_id: runtime_id,
-        scope: "mqtt", code: authentication ? "authentication" : "connection",
-        message: error.message, retryable: !authentication
-      )
-    end
-
-    def emit_state(runtime_id:, worker:)
+    def publish_configuration(configuration_id)
       @publication_mutex.synchronize do
-        printer = current_printer_for(runtime_id)
-        next unless printer
+        next false unless current_configuration?(configuration_id)
 
-        printer_snapshot = @state_mutex.synchronize { printer.snapshot }
-        model = worker.snapshot(printer_snapshot)
-        @emitter.emit(
-          "state", sequence: next_sequence,
-          printer: printer_payload(printer_snapshot), model: model_payload(model)
-        )
-      end
-    rescue ModelWorker::StoppedError
-      nil
-    rescue IpcOutputError
-      raise
-    rescue StandardError => error
-      emit_runtime_error(
-        runtime_id: runtime_id,
-        scope: "internal", code: "state_snapshot", message: error.message,
-        retryable: true
-      )
-    end
-
-    def printer_payload(state)
-      {
-        connected: state[:connected], stale: state[:stale],
-        lastUpdate: state[:last_update], gcodeState: state[:gcode_state],
-        subtaskName: state[:subtask_name], percent: state[:percent],
-        nozzleTemp: state[:nozzle_temp], nozzleTargetTemp: state[:nozzle_target_temp],
-        bedTemp: state[:bed_temp], bedTargetTemp: state[:bed_target_temp],
-        layer: state[:layer], totalLayers: state[:total_layers],
-        remainingMinutes: state[:remaining_minutes], speedLevel: state[:speed_level],
-        speedMagnitude: state[:speed_magnitude], wifiSignal: state[:wifi_signal],
-        coolingFanSpeed: state[:cooling_fan_speed],
-        heatbreakFanSpeed: state[:heatbreak_fan_speed]
-      }
-    end
-
-    def model_payload(model)
-      {
-        status: model[:status], generation: model[:generation],
-        segmentCount: model[:segment_count], zCurrent: model[:z_current],
-        zMode: model[:z_mode], error: model[:error],
-        loadPhase: model[:load_phase], loadProgress: model[:load_progress],
-        loadedBytes: model[:loaded_bytes], totalBytes: model[:total_bytes]
-      }
-    end
-
-    def retry_model_if_due(runtime_id:, worker:, hints:, printer_snapshot:)
-      unless printer_snapshot[:gcode_state].to_s.upcase == "RUNNING" && !hints.empty?
-        clear_model_retry(worker)
-        return false
-      end
-
-      model = worker.snapshot(printer_snapshot)
-      status = model[:status].to_s
-      if status == "ready"
-        clear_model_retry(worker)
-        return false
-      end
-      return false unless status == "error"
-      return clear_model_retry(worker) if model.dig(:error, :code) == "certificate_changed"
-      return false unless take_model_retry_slot(runtime_id, worker)
-
-      worker.submit(hints: hints)
-      true
-    end
-
-    def arm_model_retry(worker)
-      now = @monotonic_clock.call
-      @control_mutex.synchronize do
-        next false unless @worker.equal?(worker)
-
-        @model_retry_attempt = 0
-        @model_retry_at = now + MODEL_RETRY_DELAYS.first
+        yield
         true
       end
     end
 
-    def clear_model_retry(worker)
+    def set_current_secret(configuration_id, secret)
       @control_mutex.synchronize do
-        next false unless @worker.equal?(worker)
+        next false unless current_configuration_unlocked?(configuration_id)
 
-        reset_model_retry_unlocked
+        @secret = secret
         true
       end
     end
 
-    def take_model_retry_slot(runtime_id, worker)
-      now = @monotonic_clock.call
-      @control_mutex.synchronize do
-        next false unless active_runtime_unlocked?(runtime_id) && @worker.equal?(worker)
-        next false unless @model_retry_at && now >= @model_retry_at
-        next false if @model_retry_attempt >= MODEL_MAX_RETRIES
-
-        @model_retry_attempt += 1
-        if @model_retry_attempt >= MODEL_MAX_RETRIES
-          @model_retry_at = nil
-        else
-          delay_index = [@model_retry_attempt, MODEL_RETRY_DELAYS.length - 1].min
-          @model_retry_at = now + MODEL_RETRY_DELAYS[delay_index]
-        end
-        true
-      end
+    def current_configuration
+      @control_mutex.synchronize { [@configuration_id, @config] unless @shutdown }
     end
 
-    def reset_model_retry_unlocked
-      @model_retry_attempt = 0
-      @model_retry_at = nil
+    def current_configuration?(configuration_id)
+      @control_mutex.synchronize { current_configuration_unlocked?(configuration_id) }
+    end
+
+    def current_configuration_unlocked?(configuration_id)
+      !@shutdown && @configuration_id == configuration_id
     end
 
     def start_tls_probe(config, request_id)
@@ -548,7 +380,8 @@ module BambuCompanion
         gate.pop
         begin
           result = @tls_probe.probe(
-            host: config.host, mqtt_port: config.mqtt_port,
+            host: config.host,
+            mqtt_port: config.mqtt_port,
             ftps_port: config.ftps_port,
             cancelled: -> { tls_probe_cancelled?(generation) }
           )
@@ -632,80 +465,15 @@ module BambuCompanion
       stop_thread(thread)
     end
 
-    def build_worker(config:, secret:, emitter:, on_status:)
-      ModelWorker.new(
-        ftps_client: secret && FtpsClient.new(config: config, secret: secret),
-        loader: PrintPreviewLoader.new(
-          source: GcodeSource.new,
-          gcode_parser: GcodeParser.new(max_segments: config.max_segments),
-          preview_source: ThreeMfPreview.new
-        ),
-        emitter: emitter,
-        on_status: on_status
-      )
-    end
-
-    def attach_worker(runtime_id, worker)
-      attached = @control_mutex.synchronize do
-        next false unless active_runtime_unlocked?(runtime_id)
-
-        @worker = worker
-        true
-      end
-      return if attached
-
-      worker.stop
-    end
-
-    def cleanup_failed_runtime(runtime_id, worker: nil, session: nil)
-      attached_worker = attached_session = attached_thread = nil
-      @control_mutex.synchronize do
-        if @runtime_id == runtime_id
-          attached_worker = @worker
-          attached_session = @mqtt
-          attached_thread = @mqtt_thread
-          @worker = @mqtt = @mqtt_thread = nil
-        end
-      end
-      safely_stop(session || attached_session)
-      stop_thread(attached_thread)
-      safely_stop(worker || attached_worker)
-    end
-
-    def cleanup_unattached(worker: nil, session: nil)
-      safely_stop(session)
-      safely_stop(worker)
-    end
-
-    def stop_runtime
-      session = session_thread = worker = nil
-      @control_mutex.synchronize do
-        session = @mqtt
-        session_thread = @mqtt_thread
-        worker = @worker
-        @mqtt = @mqtt_thread = @worker = nil
-        reset_model_retry_unlocked
-      end
-      safely_stop(session)
-      stop_thread(session_thread)
-      safely_stop(worker)
-    end
-
-    def safely_stop(runtime)
-      runtime&.stop
-    rescue MQTT::Exception, StandardError
-      nil
-    end
-
     def stop_thread(thread)
       return unless thread
       return if thread.equal?(Thread.current)
 
-      unless thread.join(RUNTIME_JOIN_SECONDS)
+      unless thread.join(THREAD_JOIN_SECONDS)
         thread.kill
-        thread.join(RUNTIME_JOIN_SECONDS)
+        thread.join(THREAD_JOIN_SECONDS)
       end
-    rescue MQTT::Exception, StandardError
+    rescue StandardError
       thread.kill if thread&.alive?
     end
 
@@ -714,8 +482,7 @@ module BambuCompanion
     rescue StandardError
       emit_error(
         scope: "secret", code: "lookup_failed",
-        message: "Unable to read stored LAN access code",
-        retryable: true
+        message: "Unable to read stored LAN access code", retryable: true
       )
       nil
     end
@@ -725,8 +492,7 @@ module BambuCompanion
     rescue StandardError
       emit_error(
         scope: "secret", code: "store_failed",
-        message: "Unable to store LAN access code",
-        retryable: true
+        message: "Unable to store LAN access code", retryable: true
       )
       false
     end
@@ -742,8 +508,7 @@ module BambuCompanion
     rescue StandardError
       emit_error(
         scope: "secret", code: "storage_unavailable",
-        message: "Secret storage unavailable",
-        retryable: true
+        message: "Secret storage unavailable", retryable: true
       )
       false
     end
@@ -754,56 +519,22 @@ module BambuCompanion
       )
     end
 
-    def emit_runtime_error(runtime_id:, scope:, code:, message:, retryable:)
-      @publication_mutex.synchronize do
-        next false unless active_runtime?(runtime_id)
-
-        emit_error(
-          scope: scope, code: code, message: message, retryable: retryable
-        )
-      end
-    end
-
     def next_sequence
       @sequence += 1
     end
 
-    def set_current_secret(secret)
-      @control_mutex.synchronize { @secret = secret }
-    end
-
-    def current_config
-      @control_mutex.synchronize { @config }
-    end
-
-    def current_printer_for(runtime_id)
-      @control_mutex.synchronize do
-        @printer if active_runtime_unlocked?(runtime_id)
-      end
-    end
-
-    def invalidate_runtime
-      @publication_mutex.synchronize do
-        @control_mutex.synchronize { @runtime_id += 1 }
-      end
-    end
-
-    def active_runtime?(runtime_id)
-      @control_mutex.synchronize { active_runtime_unlocked?(runtime_id) }
-    end
-
-    def active_runtime_unlocked?(runtime_id)
-      !@shutdown && @runtime_id == runtime_id
-    end
-
     def request_shutdown
+      connection = nil
       @publication_mutex.synchronize do
         @control_mutex.synchronize do
           unless @shutdown
             @shutdown = true
-            @runtime_id += 1
+            @configuration_id += 1
+            connection = @connection
+            @connection = nil
           end
         end
+        connection&.stop
       end
     end
 
@@ -825,7 +556,6 @@ module BambuCompanion
     def shutdown
       request_shutdown
       cancel_tls_probe
-      stop_runtime
       @emitter.close
     end
   end

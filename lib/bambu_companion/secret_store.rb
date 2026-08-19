@@ -13,7 +13,7 @@ module BambuCompanion
     MAX_CAPTURE_BYTES = 4096
     READ_CHUNK_BYTES = 4096
 
-    CommandResult = Struct.new(:stdout, :success?, :stdout_present?, keyword_init: true)
+    CommandResult = Data.define(:stdout, :success?, :stdout_present?)
 
     def initialize(runner: nil, executable_resolver: nil,
                    timeout_seconds: DEFAULT_TIMEOUT_SECONDS,

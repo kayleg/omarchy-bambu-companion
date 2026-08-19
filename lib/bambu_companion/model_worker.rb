@@ -2,7 +2,13 @@
 
 require "monitor"
 require "tempfile"
-require "fileutils"
+require_relative "ftps_client"
+require_relative "gcode_parser"
+require_relative "gcode_source"
+require_relative "geometry_store"
+require_relative "print_preview_loader"
+require_relative "preview_publication"
+require_relative "three_mf_preview"
 
 module BambuCompanion
   module ZProgress
@@ -73,31 +79,31 @@ module BambuCompanion
       end
     end
 
-    Job = Struct.new(:generation, :hints, :local_path, keyword_init: true)
-    ProgressGeometry = Struct.new(:bounds, :layer_z, :layer_z_exact,
-                                  keyword_init: true)
+    Job = Data.define(:generation, :hints, :local_path)
+    ProgressGeometry = Data.define(:bounds, :layer_z, :layer_z_exact)
     STOP = Object.new.freeze
-    PREVIEW_CHUNK_CHARS = 49_152
     STOP_JOIN_SECONDS = 0.25
-    PLUGIN_DATA_NAME = "io.github.ypmrg.bambu-companion"
 
-    def self.default_geometry_directory
-      root = ENV["BAMBU_NATIVE_DATA_ROOT"]
-      if root.nil? || root.empty?
-        share = ENV["XDG_DATA_HOME"]
-        share = File.join(Dir.home, ".local/share") if share.nil? || share.empty?
-        root = File.join(share, PLUGIN_DATA_NAME)
-      end
-      File.join(root, "geometry")
+    def self.for_printer(config:, secret:, emitter:, on_status:)
+      new(
+        ftps_client: secret && FtpsClient.new(config: config, secret: secret),
+        loader: PrintPreviewLoader.new(
+          source: GcodeSource.new,
+          gcode_parser: GcodeParser.new(max_segments: config.max_segments),
+          preview_source: ThreeMfPreview.new
+        ),
+        emitter: emitter,
+        on_status: on_status
+      )
     end
 
     def initialize(ftps_client:, loader:, emitter:, on_status:,
-                   geometry_directory: nil)
+                   geometry_directory: nil, geometry_store: nil)
       @ftps_client = ftps_client
       @loader = loader
       @emitter = emitter
       @on_status = on_status
-      @geometry_directory = geometry_directory || self.class.default_geometry_directory
+      @geometry_store = geometry_store || GeometryStore.new(directory: geometry_directory)
       @queue = SizedQueue.new(1)
       @mutex = Mutex.new
       # Direct same-thread callback reentry is supported. A callback must not
@@ -135,7 +141,7 @@ module BambuCompanion
           )
           job = Job.new(
             generation: @generation, hints: copied_hints, local_path: copied_path
-          ).freeze
+          )
           replace_queued(job)
           job
         end
@@ -308,58 +314,12 @@ module BambuCompanion
     end
 
     def publish_geometry(job, bundle)
-      gcode = bundle.gcode
-      preview = bundle.preview
-      encoded_preview = preview && [preview.data].pack("m0")
-      packed_path = gcode && write_packed_segments(job, gcode.segments)
-      return false if gcode && !packed_path
-      return false unless emit_current(
-        job,
-        "geometry_begin",
-        generation: job.generation,
-        segmentCount: bundle.segment_count,
-        gcode: gcode && {
-          segmentCount: gcode.segments.length,
-          bounds: camel_bounds(gcode.bounds),
-          path: packed_path
-        },
-        preview: preview && {
-          byteCount: preview.data.bytesize,
-          encodedLength: encoded_preview.bytesize,
-          width: preview.width,
-          height: preview.height,
-          mimeType: preview.media_type
-        }
+      publication = PreviewPublication.new(
+        bundle: bundle, generation: job.generation, geometry_store: @geometry_store
       )
-
-      chunk_counts = {}
-      chunk_counts["gcode"] = 0 if gcode
-
-      if encoded_preview
-        count = chunk_count(encoded_preview.bytesize, PREVIEW_CHUNK_CHARS)
-        chunk_counts["preview"] = count
-        count.times do |index|
-          data = encoded_preview.byteslice(
-            index * PREVIEW_CHUNK_CHARS, PREVIEW_CHUNK_CHARS
-          )
-          return false unless emit_current(
-            job,
-            "geometry_preview_chunk",
-            generation: job.generation,
-            source: "preview",
-            index: index,
-            data: data
-          )
-        end
+      publication.publish(cancelled: -> { !current?(job) }) do |event, payload|
+        emit_current(job, event, payload)
       end
-
-      emit_current(
-        job,
-        "geometry_end",
-        generation: job.generation,
-        sources: bundle.sources.map(&:to_s),
-        chunks: chunk_counts
-      )
     end
 
     def emit_current(job, event, payload)
@@ -371,49 +331,6 @@ module BambuCompanion
       end
     end
 
-    def write_packed_segments(job, segments)
-      FileUtils.mkdir_p(@geometry_directory, mode: 0o700)
-      File.chmod(0o700, @geometry_directory)
-      path = File.join(@geometry_directory, "#{Integer(job.generation)}.f32")
-      temporary = "#{path}.#{Process.pid}.#{Thread.current.object_id}.tmp"
-      begin
-        File.open(temporary, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
-          segments.each_slice(4096) do |rows|
-            return unless current?(job)
-
-            values = rows.flat_map do |segment|
-              raise "invalid G-code segment" unless segment.respond_to?(:length) &&
-                                                   segment.length == 6
-
-              segment.map do |value|
-                number = Float(value)
-                raise "non-finite G-code segment" unless number.finite?
-
-                number
-              end
-            end
-            file.write(values.pack("e*"))
-          end
-        end
-        return unless current?(job)
-
-        File.rename(temporary, path)
-        Dir.children(@geometry_directory).each do |name|
-          next unless name.end_with?(".f32")
-          next if name == File.basename(path)
-
-          File.delete(File.join(@geometry_directory, name))
-        rescue Errno::ENOENT
-          next
-        end
-        path
-      ensure
-        FileUtils.rm_f(temporary)
-      end
-    end
-
-    def chunk_count(length, size) = (length + size - 1) / size
-
     def progress_geometry(gcode)
       return unless gcode
 
@@ -421,7 +338,7 @@ module BambuCompanion
         bounds: gcode.bounds,
         layer_z: gcode.layer_z,
         layer_z_exact: gcode.layer_z_exact
-      ).freeze
+      )
     end
 
     def publish_error(job, error)
@@ -448,7 +365,8 @@ module BambuCompanion
       end
     rescue StoppedError
       raise
-    rescue StandardError
+    rescue StandardError => error
+      warn "bambu-companion: model status callback failed (#{error.class})"
       false
     end
 
@@ -479,14 +397,6 @@ module BambuCompanion
                     else item
                     end
       end
-    end
-
-    def camel_bounds(bounds)
-      {
-        minX: bounds[:min_x], maxX: bounds[:max_x],
-        minY: bounds[:min_y], maxY: bounds[:max_y],
-        minZ: bounds[:min_z], maxZ: bounds[:max_z]
-      }
     end
   end
 end

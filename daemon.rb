@@ -11,9 +11,9 @@ begin
   application.run
 rescue Interrupt
   exit 0
-rescue StandardError
+rescue StandardError => error
   begin
-    $stderr.write("bambu-companion: fatal error\n")
+    $stderr.write("bambu-companion: fatal error (#{error.class})\n")
     $stderr.flush
   rescue StandardError
     nil

@@ -5,7 +5,7 @@ require "time"
 module BambuCompanion
   class PrinterState
     MAX_STRING_BYTES = 4096
-    Update = Struct.new(:snapshot, :load_model, keyword_init: true)
+    Update = Data.define(:snapshot, :load_model)
 
     FIELD_MAP = {
       "nozzle_temper" => [:nozzle_temp, :float],
