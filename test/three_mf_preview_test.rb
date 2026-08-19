@@ -109,6 +109,29 @@ class ThreeMfPreviewTest < Minitest::Test
     end
   end
 
+  def test_rejects_oversized_archive_containers
+    with_archive("Metadata/plate_1.png" => PNG_1X1) do |path|
+      object = described_class(max_archive_bytes: File.size(path) - 1)
+
+      error = assert_raises(BambuCompanion::PreviewError) { object.extract(path) }
+
+      assert_equal "too_large", error.code
+    end
+  end
+
+  def test_rejects_archives_with_too_many_entries
+    with_archive(
+      "Metadata/plate_1.png" => PNG_1X1,
+      "Metadata/info.txt" => "first"
+    ) do |path|
+      error = assert_raises(BambuCompanion::PreviewError) do
+        described_class(max_archive_entries: 1).extract(path)
+      end
+
+      assert_equal "too_large", error.code
+    end
+  end
+
   private
 
   def extractor = described_class

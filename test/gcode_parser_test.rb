@@ -211,6 +211,64 @@ class GcodeParserTest < Minitest::Test
     assert_equal "cancelled", error.code
   end
 
+  def test_checks_cancellation_during_long_parses
+    checks = 0
+    cancelled = lambda do
+      checks += 1
+      checks == 2
+    end
+    lines = Array.new(300, "G1 X1 Y1 E1\n")
+
+    error = assert_raises(BambuCompanion::GcodeError) do
+      BambuCompanion::GcodeParser.new.parse(LineOnlyIo.new(lines), cancelled: cancelled)
+    end
+
+    assert_equal "cancelled", error.code
+    assert_equal 2, checks
+  end
+
+  def test_rejects_oversized_lines_even_without_gcode_source_wrapper
+    line = "X" * (BambuCompanion::GcodeParser::MAX_LINE_BYTES + 1)
+
+    error = assert_raises(BambuCompanion::GcodeError) do
+      BambuCompanion::GcodeParser.new.parse(StringIO.new(line))
+    end
+
+    assert_equal "too_large", error.code
+  end
+
+  def test_ignores_oversized_numeric_tokens
+    huge_number = "1" * (BambuCompanion::GcodeParser::MAX_NUMBER_DIGITS + 1)
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G1 X#{huge_number} Y0 E1
+      G1 X1 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [[0.0, 0.0, 0.2, 1.0, 0.0, 0.2]], geometry.segments
+  end
+
+  def test_ignores_lines_with_an_excessive_parameter_count
+    parameters = Array.new(BambuCompanion::GcodeParser::MAX_PARAMETERS_PER_LINE + 1, "X1").join(" ")
+    gcode = <<~GCODE
+      G90
+      M83
+      ;TYPE:WALL-OUTER
+      G1 X0 Y0 Z0.2
+      G1 #{parameters} E1
+      G1 X2 Y0 E1
+    GCODE
+
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10).parse(StringIO.new(gcode))
+
+    assert_equal [[0.0, 0.0, 0.2, 2.0, 0.0, 0.2]], geometry.segments
+  end
+
   def test_consumes_line_oriented_io_without_reading_the_whole_source
     io = LineOnlyIo.new([
       ";TYPE:WALL-OUTER\n",

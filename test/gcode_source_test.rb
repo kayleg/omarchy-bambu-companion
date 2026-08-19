@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "fileutils"
+require "stringio"
 require "tmpdir"
 require "zip"
 require "bambu_companion/gcode_source"
@@ -55,6 +56,19 @@ class GcodeSourceTest < Minitest::Test
     end
   end
 
+  def test_rejects_non_positive_limits
+    assert_raises(ArgumentError) { BambuCompanion::LimitedLineIO.new(StringIO.new, 0) }
+    assert_raises(ArgumentError) do
+      BambuCompanion::LimitedLineIO.new(StringIO.new, 1, max_line_bytes: 0)
+    end
+    assert_raises(ArgumentError) do
+      BambuCompanion::GcodeSource.new(max_archive_bytes: 0)
+    end
+    assert_raises(ArgumentError) do
+      BambuCompanion::GcodeSource.new(max_archive_entries: 0)
+    end
+  end
+
   def test_yields_only_the_line_oriented_source
     Dir.mktmpdir do |dir|
       path = File.join(dir, "part.gcode")
@@ -102,6 +116,42 @@ class GcodeSourceTest < Minitest::Test
     with_zip("a.gcode" => "A", "b.gcode" => "B") do |path|
       error = assert_raises(BambuCompanion::SourceError) { read_source(path) }
       assert_equal "ambiguous_archive", error.code
+    end
+  end
+
+  def test_rejects_archives_with_too_many_entries
+    with_zip(
+      "Metadata/plate_1.gcode" => "G1 X1\n",
+      "Metadata/info.txt" => "first",
+      "Metadata/more.txt" => "second"
+    ) do |path|
+      source = BambuCompanion::GcodeSource.new(max_archive_entries: 2)
+      error = assert_raises(BambuCompanion::SourceError) do
+        source.open(path) { |io| io.each_line.to_a }
+      end
+
+      assert_equal "too_large", error.code
+    end
+  end
+
+  def test_rejects_oversized_archive_containers_before_opening_zip
+    with_zip("Metadata/plate_1.gcode" => "G1 X1\n") do |path|
+      source = BambuCompanion::GcodeSource.new(max_archive_bytes: File.size(path) - 1)
+      error = assert_raises(BambuCompanion::SourceError) do
+        source.open(path) { |io| io.each_line.to_a }
+      end
+
+      assert_equal "too_large", error.code
+    end
+  end
+
+  def test_ignores_archive_entries_with_oversized_names
+    name = ("directory/" * 110) + "part.gcode"
+    assert_operator name.bytesize, :>, BambuCompanion::Archive::MAX_ENTRY_NAME_BYTES
+    with_zip(name => "G1 X1\n") do |path|
+      error = assert_raises(BambuCompanion::SourceError) { read_source(path) }
+
+      assert_equal "entry_not_found", error.code
     end
   end
 

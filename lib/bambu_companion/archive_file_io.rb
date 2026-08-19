@@ -1,6 +1,24 @@
 # frozen_string_literal: true
 
 module BambuCompanion
+  module Archive
+    MAX_BYTES = 1 << 30
+    MAX_ENTRIES = 4096
+    MAX_ENTRY_NAME_BYTES = 1024
+
+    module_function
+
+    def safe_entry_name?(name)
+      value = String(name).tr("\\", "/")
+      return false if value.empty? || value.bytesize > MAX_ENTRY_NAME_BYTES
+      return false if value.start_with?("/") || value.match?(/\A[A-Za-z]:/)
+
+      value.split("/").none? { |part| part.empty? || part == "." || part == ".." }
+    rescue TypeError
+      false
+    end
+  end
+
   class ArchiveFileIO
     def initialize(io)
       @io = io

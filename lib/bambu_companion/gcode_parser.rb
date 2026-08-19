@@ -12,19 +12,22 @@ module BambuCompanion
     end
   end
 
-  Geometry = Struct.new(:segments, :bounds, :layer_z, :layer_z_exact,
-                        keyword_init: true)
+  Geometry = Data.define(:segments, :bounds, :layer_z, :layer_z_exact)
 
   class GcodeParser
     DEFAULT_MAX_SEGMENTS = 500_000
     DEFAULT_MAX_LAYER_VALUES = 20_000
+    MAX_LINE_BYTES = 1 << 20
+    MAX_PARAMETERS_PER_LINE = 32
+    MAX_NUMBER_DIGITS = 32
     OUTER_MARKERS = [
       /\AFEATURE:\s*Outer wall\z/i,
       /\ATYPE:\s*External perimeter\z/i,
       /\ATYPE:\s*WALL-OUTER\z/i
     ].freeze
     FEATURE_MARKER = /\A(?:FEATURE|TYPE):/i
-    PARAMETER = /([XYZEIJR])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/
+    NUMBER = /-?(?:\d{1,#{MAX_NUMBER_DIGITS}}(?:\.\d{0,#{MAX_NUMBER_DIGITS}})?|\.\d{1,#{MAX_NUMBER_DIGITS}})(?:[eE][+-]?\d{1,4})?/
+    PARAMETER = /([XYZEIJR])\s*(#{NUMBER})(?![\d.eE+-])/
     ZERO = BigDecimal("0")
     EPSILON = BigDecimal("1e-7")
     FLOAT_EPSILON = EPSILON.to_f
@@ -42,8 +45,12 @@ module BambuCompanion
     def parse(io, cancelled: -> { false })
       reset
       io.each_line.with_index do |raw_line, index|
-        if (index % 4096).zero? && cancelled.call
+        if (index % 256).zero? && cancelled.call
           raise GcodeError.new("cancelled", "G-code parsing cancelled")
+        end
+        raw_line = raw_line.to_s
+        if raw_line.bytesize > MAX_LINE_BYTES
+          raise GcodeError.new("too_large", "G-code line exceeds #{MAX_LINE_BYTES} bytes")
         end
 
         parse_line(raw_line)
@@ -89,7 +96,8 @@ module BambuCompanion
       return if stripped.empty?
 
       command = stripped.split(/\s+/, 2).first.upcase
-      parameters = stripped.scan(PARAMETER).to_h.transform_values! { |value| BigDecimal(value) }
+      parameters = parse_parameters(stripped)
+      return unless parameters
       return unless parameters.values.all? { |value| finite_float?(value) }
 
       case command
@@ -107,6 +115,22 @@ module BambuCompanion
       when "G0", "G00", "G1", "G01", "G2", "G02", "G3", "G03"
         move(command, parameters)
       end
+    end
+
+    def parse_parameters(line)
+      parameters = {}
+      matches = 0
+      valid = true
+      line.scan(PARAMETER) do |axis, value|
+        matches += 1
+        if matches > MAX_PARAMETERS_PER_LINE
+          valid = false
+          break
+        end
+
+        parameters[axis] = BigDecimal(value)
+      end
+      parameters if valid
     end
 
     def update_feature(comment)

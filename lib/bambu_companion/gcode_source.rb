@@ -21,6 +21,9 @@ module BambuCompanion
       @io = io
       @limit = Integer(limit)
       @max_line_bytes = Integer(max_line_bytes)
+      raise ArgumentError, "limit must be positive" unless @limit.positive?
+      raise ArgumentError, "max_line_bytes must be positive" unless @max_line_bytes.positive?
+
       @read = 0
     end
 
@@ -89,9 +92,19 @@ module BambuCompanion
   end
 
   class GcodeSource
-    def initialize(max_uncompressed_bytes: 1 << 30)
+    DEFAULT_MAX_UNCOMPRESSED_BYTES = 1 << 30
+
+    def initialize(max_uncompressed_bytes: DEFAULT_MAX_UNCOMPRESSED_BYTES,
+                   max_archive_bytes: Archive::MAX_BYTES,
+                   max_archive_entries: Archive::MAX_ENTRIES)
       @max_uncompressed_bytes = Integer(max_uncompressed_bytes)
       raise ArgumentError, "max_uncompressed_bytes must be positive" unless @max_uncompressed_bytes.positive?
+
+      @max_archive_bytes = Integer(max_archive_bytes)
+      raise ArgumentError, "max_archive_bytes must be positive" unless @max_archive_bytes.positive?
+
+      @max_archive_entries = Integer(max_archive_entries)
+      raise ArgumentError, "max_archive_entries must be positive" unless @max_archive_entries.positive?
     end
 
     def open(path, hints = {})
@@ -118,7 +131,7 @@ module BambuCompanion
 
     def select_entry(entries, hints)
       candidates = entries.select do |entry|
-        entry.file? && safe_entry_name?(entry.name) && entry.name.downcase.end_with?(".gcode")
+        entry.file? && Archive.safe_entry_name?(entry.name) && entry.name.downcase.end_with?(".gcode")
       end
       raise SourceError.new("entry_not_found", "Archive contains no G-code entry") if candidates.empty?
 
@@ -162,7 +175,7 @@ module BambuCompanion
 
     def exact_entry(entries, name)
       normalized = String(name).tr("\\", "/")
-      return unless safe_entry_name?(normalized)
+      return unless Archive.safe_entry_name?(normalized)
 
       exact = entries.find { |entry| entry.name == normalized }
       return exact if exact
@@ -174,17 +187,12 @@ module BambuCompanion
       raise SourceError.new("ambiguous_archive", "Archive contains ambiguous G-code entry names")
     end
 
-    def safe_entry_name?(name)
-      normalized = String(name).tr("\\", "/")
-      return false if normalized.empty? || normalized.start_with?("/") || normalized.match?(/\A[A-Za-z]:/)
-
-      normalized.split("/").none? { |component| component.empty? || component == "." || component == ".." }
-    end
-
     def open_archive(path, hints)
       File.open(path, "rb") do |file|
+        check_archive_size!(file.stat.size)
         archive_io = ArchiveFileIO.new(file)
         archive = open_archive_buffer(archive_io)
+        check_archive_entries!(archive.entries.length)
         entry = select_entry(archive.entries, hints)
         if entry.encrypted?
           raise SourceError.new("encrypted_archive", "Encrypted G-code entries are not supported")
@@ -216,6 +224,18 @@ module BambuCompanion
       return if Integer(size) <= @max_uncompressed_bytes
 
       raise SourceError.new("too_large", "G-code exceeds #{@max_uncompressed_bytes} bytes")
+    end
+
+    def check_archive_size!(size)
+      return if Integer(size) <= @max_archive_bytes
+
+      raise SourceError.new("too_large", "3MF archive exceeds #{@max_archive_bytes} bytes")
+    end
+
+    def check_archive_entries!(count)
+      return if Integer(count) <= @max_archive_entries
+
+      raise SourceError.new("too_large", "3MF archive contains too many entries")
     end
   end
 end

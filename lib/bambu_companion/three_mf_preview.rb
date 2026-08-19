@@ -27,11 +27,19 @@ module BambuCompanion
       "Auxiliaries/.thumbnails/thumbnail_small.png"
     ].freeze
 
-    def initialize(max_bytes: DEFAULT_MAX_BYTES, max_pixels: DEFAULT_MAX_PIXELS)
+    def initialize(max_bytes: DEFAULT_MAX_BYTES, max_pixels: DEFAULT_MAX_PIXELS,
+                   max_archive_bytes: Archive::MAX_BYTES,
+                   max_archive_entries: Archive::MAX_ENTRIES)
       @max_bytes = Integer(max_bytes)
       @max_pixels = Integer(max_pixels)
       raise ArgumentError, "max_bytes must be positive" unless @max_bytes.positive?
       raise ArgumentError, "max_pixels must be positive" unless @max_pixels.positive?
+
+      @max_archive_bytes = Integer(max_archive_bytes)
+      raise ArgumentError, "max_archive_bytes must be positive" unless @max_archive_bytes.positive?
+
+      @max_archive_entries = Integer(max_archive_entries)
+      raise ArgumentError, "max_archive_entries must be positive" unless @max_archive_entries.positive?
     end
 
     def extract(path, hints: {}, cancelled: -> { false })
@@ -40,9 +48,11 @@ module BambuCompanion
 
       check_cancelled!(cancelled)
       File.open(path, "rb") do |file|
+        check_archive_size!(file.stat.size)
         preview = nil
         archive_io = ArchiveFileIO.new(file)
         Zip::File.open_buffer(archive_io) do |archive|
+          check_archive_entries!(archive.entries.length)
           preview = select_preview(archive.entries, archive_io, hints, cancelled)
         end
         preview
@@ -63,7 +73,7 @@ module BambuCompanion
     end
 
     def select_preview(entries, archive, hints, cancelled)
-      candidates = entries.select { |entry| entry.file? && safe_name?(entry.name) }
+      candidates = entries.select { |entry| entry.file? && Archive.safe_entry_name?(entry.name) }
       preview_names(candidates, hints).each do |name|
         entry = unique_entry(candidates, name)
         break if entry == :ambiguous
@@ -124,7 +134,7 @@ module BambuCompanion
       PreviewImage.new(
         data: data.freeze, width: dimensions[0], height: dimensions[1],
         media_type: "image/png"
-      ).freeze
+      )
     rescue Zip::Error
       nil
     ensure
@@ -168,11 +178,16 @@ module BambuCompanion
       end
     end
 
-    def safe_name?(name)
-      value = String(name).tr("\\", "/")
-      return false if value.empty? || value.start_with?("/") || value.match?(/\A[A-Za-z]:/)
+    def check_archive_size!(size)
+      return if Integer(size) <= @max_archive_bytes
 
-      value.split("/").none? { |part| part.empty? || part == "." || part == ".." }
+      raise PreviewError.new("too_large", "3MF archive exceeds #{@max_archive_bytes} bytes"), cause: nil
+    end
+
+    def check_archive_entries!(count)
+      return if Integer(count) <= @max_archive_entries
+
+      raise PreviewError.new("too_large", "3MF archive contains too many entries"), cause: nil
     end
 
     def check_cancelled!(cancelled)
