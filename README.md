@@ -48,7 +48,9 @@ until the first fresh status report is received; only then does the live
 dashboard appear.
 
 1. Enable local network access on the printer and obtain its serial number and
-   LAN access code from the printer's network settings.
+   LAN access code from the printer's network settings. On firmware that offers
+   **Developer Mode**, enable it so third-party clients can use the local MQTT
+   and FTPS services.
 2. Open the Bambu Companion widget.
 3. Enter the printer address, serial number and LAN access code.
 4. Select **Save & Connect** to check the printer certificate. No LAN code is
@@ -61,8 +63,16 @@ without saved certificate identities must approve their printer once after
 updating; later connections are automatic while those identities remain the
 same.
 
-The exact printer menu names vary by model and firmware. This plugin uses the
-local Bambu MQTT and FTPS services; it does not connect to Bambu Cloud.
+The exact printer menu names and local-service requirements vary by model and
+firmware. LAN Only Mode and Developer Mode are separate settings on printers
+that provide both. Current firmware can require Developer Mode to expose MQTT
+and FTPS to unsupported third-party clients; without those services the plugin
+cannot connect. Bambu describes this mode in its
+[third-party integration update](https://blog.bambulab.com/updates-and-third-party-integration-with-bambu-connect/)
+and notes that the exposed protocols are not officially supported APIs.
+
+This plugin connects directly to the printer. It does not connect to Bambu
+Cloud or implement Bambu Connect authorization.
 
 ### Configuration
 
@@ -124,6 +134,13 @@ FTPS. For a sliced 3MF archive it reads the bounded PNG plate preview and the
 recognized outer-wall moves from the embedded G-code. Direct `.gcode` files
 provide only the route view.
 
+On newer printers and firmware, including current H2D, H2S and P2S releases,
+jobs kept only in internal storage may not be visible over FTPS. To use print
+previews on those printers, enable **Store Sent Files on External Storage** in
+the printer's print options and keep the appropriate USB drive or SD card
+installed. If the active file is not exposed, live MQTT telemetry continues but
+the Image and Route previews remain unavailable.
+
 The loading view distinguishes SD-card lookup, FTPS transfer, and local G-code
 processing. When the printer reports the remote file size, the FTPS phase shows
 a byte count and a determinate progress bar; extraction and parsing remain
@@ -179,13 +196,38 @@ when neither visual source is usable.
 
 ## Printer compatibility
 
-Bambu Companion has been live-tested with a Bambu Lab A1 Mini. It is expected
-to work with A1-series and other Bambu printers exposing the same local MQTT,
-implicit-FTPS and G-code conventions, but compatibility with every model and
-firmware version is not guaranteed.
+Bambu Companion has been live-tested only with a Bambu Lab A1 Mini. The table
+below records expectations from the shared Bambu LAN protocols and file
+formats; it is not a hardware test matrix or a compatibility guarantee.
 
-The printer must expose its local services and provide a LAN access code. Cloud
-telemetry used by Bambu Handy is outside this plugin's scope.
+| Printer family | Expected support | Important limitations |
+| --- | --- | --- |
+| A1 Mini | Live-tested | Compatibility can still change with firmware updates |
+| A1 | Expected | Uses the same basic telemetry and file conventions; not live-tested |
+| P1P / P1S | Expected | Core monitoring should work; print preview has not been live-tested |
+| X1 / X1C / X1E | Expected | Core monitoring should work; print-file availability and preview timing can vary |
+| A2L / P2S / H2S | Experimental | Core monitoring is expected; newer storage behavior can prevent previews |
+| H2D / H2C / X2D | Experimental | Basic monitoring is expected, but dual-nozzle telemetry and toolpaths are only partially represented |
+
+Larger build volumes are not inherently a problem: the viewport derives its
+bounds from the active G-code rather than assuming an A1 Mini bed size.
+Model-specific features are a separate limitation:
+
+- The dashboard reads the common single-nozzle temperature fields. On
+  dual-nozzle printers it does not display both nozzles independently.
+- The G-code route parser does not track dual-tool state, so H2D, H2C and X2D
+  route accuracy has not been verified.
+- Chamber temperature, active chamber heating, door state, additional fans,
+  air-duct state, AMS details and other model-specific telemetry are not shown.
+- Laser, cutting and plotting jobs are outside the plugin's scope. Bambu also
+  prevents Developer Mode from being used with laser and cutting functions on
+  applicable H2 printers.
+
+Every printer must expose local MQTT and implicit FTPS and provide a LAN access
+code. A successful MQTT connection confirms only telemetry compatibility; it
+does not guarantee that the active print file is accessible for Image or Route
+previews. Firmware can change these undocumented interfaces independently of
+the plugin.
 
 ## Security and local storage
 
