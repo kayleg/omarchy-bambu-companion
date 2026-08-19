@@ -47,16 +47,18 @@ class HtmlUiTranslationContractTest < Minitest::Test
   def test_viewport_has_lightweight_canvas_overlays_and_local_rotation_control
     source = component_source("BambuModelViewport.qml")
 
-    assert_includes source, "Canvas {"
-    assert_includes source, "renderStrategy: Canvas.Immediate"
-    assert_includes source, "readonly property int motionSegmentBudget: 10000"
-    assert_includes source, "readonly property int stillSegmentBudget: 40000"
-    assert_match(/function renderBudget\(\).*dragging \|\| autoRotate\s*\? motionSegmentBudget : stillSegmentBudget/m,
-                 source)
-    assert_includes source, "interval: 50"
-    assert_includes source, "function drawBuildPlateGrid(context)"
-    assert_match(/running:\s*viewport\.panelActive.*modelCanvas\.autoRotate/m, source)
-    assert_match(/text:\s*modelCanvas\.autoRotate \? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF"/,
+    refute_match(/Canvas\s*\{/, source)
+    refute_includes source, "motionSegmentBudget"
+    refute_includes source, "stillSegmentBudget"
+    refute_includes source, "packedSegments"
+    refute_includes source, "function requestVisiblePaint"
+    refute_includes source, "onPaint:"
+    assert_match(/Loader\s*\{.*id:\s*routeLoader.*source:.*nativeRouteUrl/m, source)
+    assert_includes source, 'property string rendererStatus'
+    assert_includes source, 'id: routeCamera'
+    assert_includes source, "interval: 16"
+    assert_match(/running:\s*viewport\.panelActive.*routeCamera\.autoRotate/m, source)
+    assert_match(/text:\s*routeCamera\.autoRotate \? "AUTO-ROTATE ON" : "AUTO-ROTATE OFF"/,
                  source)
     assert_includes source, "DRAG TO ROTATE · WHEEL TO ZOOM · HOLD TO PAUSE"
     assert_includes source, "PRINTED"
@@ -75,11 +77,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  source)
     assert_match(/pitch:\s*clampPitch\(startPitch \+ deltaY \/ viewportHeight \* Math\.PI\)/,
                  source)
-    assert_match(/function projectionFrame\(viewportWidth, viewportHeight, yawAngle, pitchAngle, padding\)/,
-                 source)
-    assert_match(/onPositionChanged: function\(mouse\).*mouse\.x - modelCanvas\.lastDragX.*mouse\.y - modelCanvas\.lastDragY/m,
-                 source)
-    assert_match(/function drawFrame\(context\).*if \(viewport\.zCurrent >= projectionMaxZ\).*drawSegments\(context, true/m,
+    assert_match(/onPositionChanged: function\(mouse\).*mouse\.x - routeCamera\.lastDragX.*mouse\.y - routeCamera\.lastDragY/m,
                  source)
   end
 

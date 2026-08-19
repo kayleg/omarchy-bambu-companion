@@ -69,8 +69,43 @@ class QmlContractTest < Minitest::Test
     assert_match(/function handleProcessRunningChanged\(\).*if \(sessionProcess\.running\).*restartScheduled = false.*return.*daemonReady = false.*resetOperationalState\(\).*resetStreamBuffers\(\).*recoverSecretWrite\(.*\).*if \(restartScheduled\) return.*restartScheduled = true.*sessionRestart\.restart\(\)/m,
                  @source)
     assert_includes @source, "onRunningChanged: root.handleProcessRunningChanged()"
-    refute_includes @source, "onExited:"
+    session_process = @source[/Process \{\s*id: sessionProcess.*?\n  \}/m]
+    refute_nil session_process
+    refute_includes session_process, "onExited:"
     assert_match(/onTriggered:.*root\.restartScheduled = false.*sessionProcess\.running = true/m,
+                 @source)
+  end
+
+  def test_native_build_process_compiles_the_route_renderer
+    assert_includes @source, "id: nativeBuild"
+    assert_includes @source, "readonly property string nativeBuildPath"
+    assert_includes @source, 'Qt.resolvedUrl("native/build")'
+    assert_includes @source, "readonly property string nativeRoutePath"
+    assert_includes @source, 'Quickshell.env("XDG_DATA_HOME")'
+    assert_includes @source, "/io.github.ypmrg.bambu-companion/qml/native/RouteHost.qml"
+    assert_includes @source, 'property string rendererStatus: "compiling"'
+    assert_includes @source, "readonly property url nativeRouteUrl"
+    assert_includes @source, "function markRendererReady()"
+    assert_includes @source, "function markRendererUnavailable()"
+    native_build = @source[/Process \{\s*id: nativeBuild.*?\n  \}/m]
+    refute_nil native_build
+    assert_match(/command: \[root\.nativeBuildPath\]/, native_build)
+    assert_includes native_build, "running: false"
+    assert_match(/stdout: SplitParser\s*\{\s*splitMarker: ""\s*onRead: function\(_\) \{\}/m,
+                 native_build)
+    assert_match(/stderr: SplitParser\s*\{\s*splitMarker: ""\s*onRead: function\(chunk\) \{\s*console\.warn\(String\(chunk\)\.trim\(\)\)\s*\}/m,
+                 native_build)
+    assert_match(/onExited: function\(exitCode\).*exitCode === 0.*root\.markRendererReady\(\).*root\.markRendererUnavailable\(\)/m,
+                 native_build)
+    assert_match(/onStarted:.*nativeBuildStarted = true/m, native_build)
+    assert_match(/onRunningChanged:.*handleNativeBuildRunningChanged/m, native_build)
+    assert_match(/function handleNativeBuildRunningChanged\(\).*if \(nativeBuild\.running\).*return.*if \(componentReady && !nativeBuildStarted\).*root\.markRendererUnavailable\(\)/m,
+                 @source)
+    assert_match(/Component\.onCompleted:\s*\{.*componentReady = true.*Qt\.callLater\(root\.resolveInitialView\).*nativeBuild\.running = true.*if \(!nativeBuild\.running && !nativeBuildStarted\).*root\.markRendererUnavailable\(\)/m,
+                 @source)
+    assert_match(/BambuModelViewport\s*\{.*id: modelPane.*rendererStatus: root\.rendererStatus.*nativeRouteUrl: root\.nativeRouteUrl.*onRendererLoadFailed: root\.markRendererUnavailable\(\)/m,
+                 @source)
+    assert_match(/function segmentLimit\(\).*finiteNumber\(root\.maxSegments, 500000\)/m,
                  @source)
   end
 
@@ -133,7 +168,7 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/newlineIndex < 0\) break.*if \(!discarding\).*handleLine/m, @source)
     assert_match(/discarding = false.*offset = newlineIndex \+ 1/m, @source)
-    assert_equal 2, @source.scan('splitMarker: ""').length
+    assert_equal 4, @source.scan('splitMarker: ""').length
     assert_match(/stdout: SplitParser.*onRead: function\(chunk\) \{ root\.consumeStdoutChunk\(chunk\) \}/m,
                  @source)
     assert_match(/stderr: SplitParser.*onRead: function\(chunk\) \{ root\.consumeStderrChunk\(chunk\) \}/m,
@@ -149,10 +184,11 @@ class QmlContractTest < Minitest::Test
     assert_includes @settings_source, "maximumLength: 256"
     assert_includes @source, "pendingGeometry"
     assert_includes @source, "geometryBundle"
-    assert_includes @source, "activeSegments"
+    assert_includes @source, "activeSegmentPath"
+    assert_includes @source, "activeSegmentCount"
     assert_includes @source, "geometry_begin"
     assert_includes @source, "geometry_end"
-    assert_includes @source, "nextChunk"
+    assert_includes @source, "validSegmentPath"
   end
 
   def test_actions_require_a_ready_process_and_clear_secret_only_after_accepted_write
@@ -183,11 +219,13 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/hasGcode.*gcode\.segmentCount !== message\.segmentCount.*hasPreview && !validPreview\(message\.preview\).*if \(!hasGcode && !hasPreview\)/m,
                  @source)
-    assert_match(/pendingGeometry = \{.*generation: generation.*gcode: hasGcode.*preview: hasPreview/m,
+    assert_match(/pendingGeometry = \{.*generation: generation.*gcode: hasGcode.*path: packedPath.*preview: hasPreview/m,
                  @source)
-    assert_match(/function appendGeometryChunk\(message, generation\).*generation !== transaction\.generation.*message\.source !== "gcode".*message\.index !== slot\.nextChunk.*slot\.segments\.length \+ chunk\.length > slot\.expectedSegments/m,
+    refute_includes @source, "appendGeometryChunk"
+    refute_includes @source, 'event === "geometry_chunk"'
+    assert_match(/function finishGeometry\(message, generation\).*Object\.keys\(chunks\)\.length !== expectedChunkKeys.*slot && chunks\.gcode !== 0/m,
                  @source)
-    assert_match(/function finishGeometry\(message, generation\).*Object\.keys\(chunks\)\.length !== expectedChunkKeys.*slot\.segments\.length !== slot\.expectedSegments.*slot\.nextChunk !== chunks\.gcode/m,
+    assert_match(/function validSegmentPath\(path\).*path\.length > 4096.*path\.charAt\(0\) !== "\/".*\.f32/m,
                  @source)
     assert_match(/geometryBundle = nextBundle.*selectedGeometrySource = nextBundle\.gcode \? "gcode" : "preview".*resetPendingGeometry\(\)/m,
                  @source)
@@ -203,6 +241,17 @@ class QmlContractTest < Minitest::Test
                  @source)
   end
 
+  def test_model_download_progress_is_bounded_reset_and_passed_to_the_viewport
+    assert_includes @source, 'property string modelLoadPhase: ""'
+    assert_includes @source, "property int modelLoadProgress: -1"
+    assert_match(/function handleState\(message\).*modelLoadPhase = String\(model\.loadPhase \|\| ""\).*modelLoadProgress = Math\.max\(-1, Math\.min\(100,.*model\.loadProgress/m,
+                 @source)
+    assert_match(/function resetOperationalState\(\).*modelLoadPhase = "".*modelLoadProgress = -1.*modelLoadedBytes = 0.*modelTotalBytes = 0/m,
+                 @source)
+    assert_match(/BambuModelViewport\s*\{.*modelLoadPhase: root\.modelLoadPhase.*modelLoadProgress: root\.modelLoadProgress.*modelLoadedBytes: root\.modelLoadedBytes.*modelTotalBytes: root\.modelTotalBytes/m,
+                 @source)
+  end
+
   def test_fresh_printer_report_clears_recovered_process_error
     assert_includes @source, 'property string processErrorReportUpdate: ""'
     assert_match(/function reportProcessError\(message\).*processError = String\(message \|\| ""\).*processErrorReportUpdate = processError === "" \? "" : lastUpdate/m,
@@ -211,23 +260,17 @@ class QmlContractTest < Minitest::Test
                  @source)
   end
 
-  def test_each_geometry_segment_has_six_finite_numeric_coordinates
-    assert_match(/function isValidSegment\(segment\).*Array\.isArray\(segment\).*segment\.length !== 6.*typeof segment\[index\] !== "number".*!isFinite\(segment\[index\]\).*return false.*return true/m,
-                 @source)
-    assert_match(/function handleGeometry\(message\).*slot\.segments\.length \+ chunk\.length > slot\.expectedSegments.*for \(var segmentIndex = 0; segmentIndex < chunk\.length; segmentIndex\+\+\).*if \(!isValidSegment\(chunk\[segmentIndex\]\)\).*resetPendingGeometry\(\).*return.*slot\.segments = slot\.segments\.concat\(chunk\)/m,
-                 @source)
-  end
-
   def test_geometry_source_selection_uses_only_complete_available_sources
     assert_includes @source, 'property string selectedGeometrySource: "gcode"'
     assert_match(/readonly property bool previewAvailable:\s*!!root\.geometryBundle\.preview.*data:image\/png;base64/m,
                  @source)
-    assert_match(/readonly property bool gcodeGeometryAvailable:\s*!!root\.geometryBundle\.gcode.*segments\.length > 0/m,
+    assert_match(/readonly property bool gcodeGeometryAvailable:\s*!!root\.geometryBundle\.gcode.*gcode\.path/m,
                  @source)
     assert_match(/function selectGeometrySource\(source\).*source === "preview".*previewAvailable.*source === "gcode".*gcodeGeometryAvailable.*selectedGeometrySource = source/m,
                  @source)
-    assert_match(/readonly property var activeSegments:.*geometryBundle\.gcode.*segments/m,
+    assert_match(/readonly property string activeSegmentPath:.*geometryBundle\.gcode.*geometry\.path/m,
                  @source)
+    assert_match(/segmentValue:\s*root\.activeSegmentCount\.toLocaleString/m, @source)
     assert_match(/BambuModelViewport\s*\{.*previewAvailable: root\.previewAvailable.*gcodeAvailable: root\.gcodeGeometryAvailable.*selectedSource: root\.selectedGeometrySource.*previewSource: root\.previewAvailable.*onSourceRequested: function\(source\).*root\.selectGeometrySource\(source\)/m,
                  @source)
   end

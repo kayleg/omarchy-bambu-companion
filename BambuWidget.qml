@@ -48,6 +48,10 @@ BarWidget {
   property string modelStatus: "idle"
   property string modelErrorCode: ""
   property string modelError: ""
+  property string modelLoadPhase: ""
+  property int modelLoadProgress: -1
+  property real modelLoadedBytes: 0
+  property real modelTotalBytes: 0
   property real zCurrent: NaN
   property string zMode: "unknown"
   property string processError: ""
@@ -82,11 +86,16 @@ BarWidget {
       && String(root.geometryBundle.preview.url || "").startsWith("data:image/png;base64,")
   readonly property bool gcodeGeometryAvailable:
     !!root.geometryBundle.gcode
-      && Array.isArray(root.geometryBundle.gcode.segments)
-      && root.geometryBundle.gcode.segments.length > 0
-  readonly property var activeSegments: {
+      && String(root.geometryBundle.gcode.path || "").length > 0
+  readonly property int activeSegmentCount: {
     var geometry = root.geometryBundle.gcode
-    return geometry && Array.isArray(geometry.segments) ? geometry.segments : []
+    if (!geometry) return 0
+    var count = Number(geometry.segmentCount)
+    return isNonNegativeInteger(count) ? count : 0
+  }
+  readonly property string activeSegmentPath: {
+    var geometry = root.geometryBundle.gcode
+    return geometry ? String(geometry.path || "") : ""
   }
   readonly property var activeBounds: {
     var geometry = root.geometryBundle.gcode
@@ -101,7 +110,7 @@ BarWidget {
   readonly property int ftpsPort: Number(setting("ftpsPort", 990))
   readonly property string serial: String(setting("serial", ""))
   readonly property string username: String(setting("username", "bblp"))
-  readonly property int maxSegments: Number(setting("maxSegments", 40000))
+  readonly property int maxSegments: Number(setting("maxSegments", 500000))
   readonly property int explosionFactor: Math.max(0, Math.min(500,
     Math.round(finiteNumber(Number(setting("explosionFactor", 100)), 100))))
   readonly property bool autoRotate: setting("autoRotate", true) !== false
@@ -132,6 +141,17 @@ BarWidget {
   readonly property string backendPath: decodeURIComponent(
     String(Qt.resolvedUrl("bambu-companion")).replace(/^file:\/\//, "")
   )
+  readonly property string nativeBuildPath: decodeURIComponent(
+    String(Qt.resolvedUrl("native/build")).replace(/^file:\/\//, "")
+  )
+  readonly property string nativeRoutePath: {
+    var home = Quickshell.env("XDG_DATA_HOME")
+    if (!home || home === "") home = Quickshell.env("HOME") + "/.local/share"
+    return home + "/io.github.ypmrg.bambu-companion/qml/native/RouteHost.qml"
+  }
+  property string rendererStatus: "compiling"
+  readonly property url nativeRouteUrl: Qt.resolvedUrl("file://" + nativeRoutePath)
+  property bool nativeBuildStarted: false
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
   readonly property color successColor: "#39FF88"
@@ -489,14 +509,6 @@ BarWidget {
     return /^[0-9A-Fa-f]{64}$/.test(String(value || ""))
   }
 
-  function isValidSegment(segment) {
-    if (!Array.isArray(segment) || segment.length !== 6) return false
-    for (var index = 0; index < segment.length; index++) {
-      if (typeof segment[index] !== "number" || !isFinite(segment[index])) return false
-    }
-    return true
-  }
-
   function validPreview(preview) {
     preview = objectOrEmpty(preview)
     if (!isNonNegativeInteger(preview.byteCount) || preview.byteCount < 1
@@ -508,6 +520,14 @@ BarWidget {
     var expectedLength = 4 * Math.ceil(preview.byteCount / 3)
     return isNonNegativeInteger(preview.encodedLength)
       && preview.encodedLength === expectedLength
+  }
+
+  function validSegmentPath(path) {
+    if (typeof path !== "string" || path.length < 5 || path.length > 4096) return false
+    if (path.indexOf("..") !== -1) return false
+    if (path.charAt(0) !== "/") return false
+    if (path.indexOf("\0") !== -1) return false
+    return path.indexOf(".f32", path.length - 4) === path.length - 4
   }
 
   function isFinishedState(state) {
@@ -522,8 +542,21 @@ BarWidget {
   }
 
   function segmentLimit() {
-    var configured = finiteNumber(root.maxSegments, 40000)
-    return Math.max(0, Math.min(100000, Math.floor(configured)))
+    var configured = finiteNumber(root.maxSegments, 500000)
+    return Math.max(0, Math.min(1000000, Math.floor(configured)))
+  }
+
+  function markRendererReady() {
+    rendererStatus = "ready"
+  }
+  function markRendererUnavailable() {
+    rendererStatus = "unavailable"
+  }
+
+  function handleNativeBuildRunningChanged() {
+    if (nativeBuild.running) return
+    if (componentReady && !nativeBuildStarted)
+      root.markRendererUnavailable()
   }
 
   function formatTemp(value) {
@@ -816,6 +849,11 @@ BarWidget {
     heatbreakFanSpeed = finiteNumber(printer.heatbreakFanSpeed, NaN)
     lastUpdate = reportUpdate
     modelStatus = String(model.status || "idle")
+    modelLoadPhase = String(model.loadPhase || "")
+    modelLoadProgress = Math.max(-1, Math.min(100,
+      Math.floor(finiteNumber(model.loadProgress, -1))))
+    modelLoadedBytes = Math.max(0, finiteNumber(model.loadedBytes, 0))
+    modelTotalBytes = Math.max(0, finiteNumber(model.totalBytes, 0))
     zCurrent = finiteNumber(model.zCurrent, NaN)
     zMode = String(model.zMode || "unknown")
     var error = objectOrEmpty(model.error)
@@ -857,6 +895,10 @@ BarWidget {
     modelStatus = "idle"
     modelErrorCode = ""
     modelError = ""
+    modelLoadPhase = ""
+    modelLoadProgress = -1
+    modelLoadedBytes = 0
+    modelTotalBytes = 0
     zCurrent = NaN
     zMode = "unknown"
     processError = ""
@@ -882,7 +924,6 @@ BarWidget {
     var generation = message.generation
     if (generation !== modelGeneration) return
     if (event === "geometry_begin") beginGeometry(message, generation)
-    else if (event === "geometry_chunk") appendGeometryChunk(message, generation)
     else if (event === "geometry_preview_chunk") appendPreviewChunk(message, generation)
     else if (event === "geometry_end") finishGeometry(message, generation)
   }
@@ -913,13 +954,17 @@ BarWidget {
       resetPendingGeometry()
       return
     }
+    var packedPath = hasGcode ? String(gcode.path || "") : ""
+    if (hasGcode && !root.validSegmentPath(packedPath)) {
+      resetPendingGeometry()
+      return
+    }
     pendingGeometry = {
       generation: generation,
       gcode: hasGcode ? {
         expectedSegments: gcode.segmentCount,
         bounds: objectOrEmpty(gcode.bounds),
-        segments: [],
-        nextChunk: 0
+        path: packedPath
       } : null,
       preview: hasPreview ? {
         byteCount: message.preview.byteCount,
@@ -931,32 +976,6 @@ BarWidget {
         nextChunk: 0
       } : null
     }
-  }
-
-  function appendGeometryChunk(message, generation) {
-    var transaction = objectOrEmpty(pendingGeometry)
-    if (generation !== transaction.generation) return
-    var slot = transaction.gcode
-    if (message.source !== "gcode" || !slot) {
-      resetPendingGeometry()
-      return
-    }
-    var chunk = message.segments
-    if (!isNonNegativeInteger(message.index)
-        || message.index !== slot.nextChunk || !Array.isArray(chunk)
-        || chunk.length === 0
-        || slot.segments.length + chunk.length > slot.expectedSegments) {
-      resetPendingGeometry()
-      return
-    }
-    for (var segmentIndex = 0; segmentIndex < chunk.length; segmentIndex++) {
-      if (!isValidSegment(chunk[segmentIndex])) {
-        resetPendingGeometry()
-        return
-      }
-    }
-    slot.segments = slot.segments.concat(chunk)
-    slot.nextChunk += 1
   }
 
   function appendPreviewChunk(message, generation) {
@@ -1002,9 +1021,7 @@ BarWidget {
       }
     }
     var slot = transaction.gcode
-    if (slot && (!isNonNegativeInteger(chunks.gcode)
-        || slot.segments.length !== slot.expectedSegments
-        || slot.nextChunk !== chunks.gcode)) {
+    if (slot && chunks.gcode !== 0) {
       resetPendingGeometry()
       return
     }
@@ -1017,7 +1034,8 @@ BarWidget {
     }
     var nextBundle = ({})
     if (slot) nextBundle.gcode = {
-      segments: slot.segments.slice(0), bounds: slot.bounds
+      bounds: slot.bounds, path: slot.path,
+      segmentCount: slot.expectedSegments
     }
     if (preview) {
       var encoded = preview.parts.join("")
@@ -1175,6 +1193,9 @@ BarWidget {
   Component.onCompleted: {
     componentReady = true
     Qt.callLater(root.resolveInitialView)
+    nativeBuild.running = true
+    if (!nativeBuild.running && !nativeBuildStarted)
+      root.markRendererUnavailable()
   }
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -1193,6 +1214,28 @@ BarWidget {
       onRead: function(chunk) { root.consumeStderrChunk(chunk) }
     }
     onRunningChanged: root.handleProcessRunningChanged()
+  }
+
+  Process {
+    id: nativeBuild
+    command: [root.nativeBuildPath]
+    running: false
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(_) {}
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { console.warn(String(chunk).trim()) }
+    }
+    onStarted: nativeBuildStarted = true
+    onExited: function(exitCode) {
+      if (exitCode === 0)
+        root.markRendererReady()
+      else
+        root.markRendererUnavailable()
+    }
+    onRunningChanged: root.handleNativeBuildRunningChanged()
   }
 
   Timer {
@@ -1389,7 +1432,7 @@ BarWidget {
               portsValue: "MQTT " + root.mqttPort + " · FTPS " + root.ftpsPort
               wifiValue: root.wifiSignal || "--"
               reportValue: root.formatLastUpdate()
-              segmentValue: root.activeSegments.length.toLocaleString(Qt.locale(), "f", 0)
+              segmentValue: root.activeSegmentCount.toLocaleString(Qt.locale(), "f", 0)
                 + " SEGMENTS"
               modelState: root.modelStatus.toUpperCase()
               dimensionsValue: root.formatDimensions()
@@ -1416,17 +1459,24 @@ BarWidget {
               selectedSource: root.selectedGeometrySource
               previewSource: root.previewAvailable
                 ? root.geometryBundle.preview.url : ""
-              activeSegments: root.activeSegments
+              activeSegmentPath: root.activeSegmentPath
               activeBounds: root.activeBounds
               zCurrent: root.zCurrent
               autoRotateDefault: root.autoRotate
               explosionFactor: root.explosionFactor
               modelStatus: root.modelStatus
               modelError: root.modelError || root.processError
+              modelLoadPhase: root.modelLoadPhase
+              modelLoadProgress: root.modelLoadProgress
+              modelLoadedBytes: root.modelLoadedBytes
+              modelTotalBytes: root.modelTotalBytes
+              rendererStatus: root.rendererStatus
+              nativeRouteUrl: root.nativeRouteUrl
               onSourceRequested: function(source) {
                 root.selectGeometrySource(source)
               }
               onReloadRequested: root.refreshModel()
+              onRendererLoadFailed: root.markRendererUnavailable()
             }
           }
 
