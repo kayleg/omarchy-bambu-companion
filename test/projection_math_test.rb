@@ -82,7 +82,7 @@ class ProjectionMathTest < Minitest::Test
       binary = File.join(dir, "test_projection")
       _out, error, status = Open3.capture3(
         "g++", "-std=c++17", "-O0", "-I", File.join(ROOT, "native"),
-        File.join(ROOT, "native/test_projection.cpp"), "-o", binary
+        File.join(ROOT, "test/native/projection_test.cpp"), "-o", binary
       )
       assert status.success?, "g++ failed: #{error}"
       output, error, status = Open3.capture3(binary)

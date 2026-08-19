@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-for command_name in ruby bundle node g++ qmllint rubocop shellcheck; do
+for command_name in ruby bundle node g++ shellcheck; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     if [[ "$command_name" == node ]]; then
       echo "Bambu Companion checks require Node.js for the development-only viewport JavaScript harness." >&2
@@ -17,24 +17,36 @@ for command_name in ruby bundle node g++ qmllint rubocop shellcheck; do
   fi
 done
 
-if ! minitest_lib="$(ruby -e 'spec = Gem::Specification.find_by_name("minitest"); puts spec.full_require_paths.first')"; then
-  echo "Bambu Companion checks require the development-only minitest gem." >&2
+qmllint_command="${QMLLINT:-}"
+if [[ -z "$qmllint_command" ]]; then
+  qmllint_command="$(command -v qmllint || true)"
+fi
+if [[ -z "$qmllint_command" ]]; then
+  for candidate in /usr/lib/qt6/bin/qmllint /usr/lib/qt6/libexec/qmllint; do
+    if [[ -x "$candidate" ]]; then
+      qmllint_command="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "$qmllint_command" ]]; then
+  echo "Bambu Companion checks require the development command: qmllint" >&2
   exit 127
 fi
 
 bundle check
-bundle exec ruby -I"$minitest_lib" -Itest \
+bundle exec ruby -Itest \
   -e 'Dir["test/**/*_test.rb"].sort.each { |file| require_relative file }'
-tests/test-wrapper
+test/system/launcher_test.sh
 ruby -rjson -e 'JSON.parse(File.read("manifest.json"))'
 
 while IFS= read -r -d '' ruby_file; do
   ruby -c "$ruby_file"
 done < <(find lib test -name '*.rb' -print0)
 ruby -c daemon.rb
-bash -n bambu-companion native/build tests/test-wrapper tests/fake-bundle tests/test-all
-rubocop --cache false daemon.rb lib test
-shellcheck bambu-companion native/build tests/test-wrapper tests/fake-bundle tests/fake-gem tests/test-all
-qmllint ./*.qml
+bash -n bambu-companion native/build test/system/launcher_test.sh test/support/fake-bundle bin/test
+bundle exec rubocop --cache false daemon.rb lib test
+shellcheck bambu-companion native/build test/system/launcher_test.sh test/support/fake-bundle test/support/fake-gem bin/test
+"$qmllint_command" ./*.qml
 
 echo "All local Bambu Companion checks passed."

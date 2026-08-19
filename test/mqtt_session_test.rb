@@ -306,7 +306,7 @@ class MqttSessionTest < Minitest::Test
     assert_equal 0, client.connect_calls
     refute runner.alive?
   ensure
-    release_factory << true if release_factory&.empty?
+    release_factory << true if release_factory && release_factory.empty?
     session&.stop
     runner&.kill
     runner&.join

@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_root="$(mktemp -d /tmp/bambu-companion-wrapper.XXXXXX)"
 trap 'rm -r -- "$test_root"' EXIT
 
 mkdir -p "$test_root/bin" "$test_root/data"
-cp "$repo_root/tests/fake-bundle" "$test_root/bin/bundle"
+cp "$repo_root/test/support/fake-bundle" "$test_root/bin/bundle"
 chmod +x "$test_root/bin/bundle"
 ln -s "$repo_root/bambu-companion" "$test_root/bin/bambu-companion"
 log="$test_root/bundle.log"
@@ -37,6 +37,7 @@ grep -qx "BUNDLE_CACHE_PATH=$test_root/data/io.github.ypmrg.bambu-companion/bund
 grep -qx "BUNDLE_USER_HOME=$test_root/data/io.github.ypmrg.bambu-companion/bundler-user" "$environment_log"
 grep -qx "BUNDLE_USER_CACHE=$test_root/data/io.github.ypmrg.bambu-companion/bundler-user/cache" "$environment_log"
 grep -qx 'BUNDLE_IGNORE_CONFIG=true' "$environment_log"
+grep -qx 'BUNDLE_WITHOUT=development' "$environment_log"
 grep -qx 'BUNDLE_PATH__SYSTEM=' "$environment_log"
 for directory in \
   "$test_root/data/io.github.ypmrg.bambu-companion" \
@@ -78,7 +79,7 @@ mkdir -p "$bootstrap_bin" "$bootstrap_data"
 for command_name in chmod dirname flock mkdir readlink ruby; do
   ln -s "$(command -v "$command_name")" "$bootstrap_bin/$command_name"
 done
-cp "$repo_root/tests/fake-gem" "$bootstrap_bin/gem"
+cp "$repo_root/test/support/fake-gem" "$bootstrap_bin/gem"
 chmod +x "$bootstrap_bin/gem"
 bootstrap_gem_log="$bootstrap_root/gem.log"
 bootstrap_bundle_log="$bootstrap_root/bundle.log"
@@ -88,7 +89,7 @@ bootstrap_output="$({
   PATH="$bootstrap_bin" \
   XDG_DATA_HOME="$bootstrap_data" \
   FAKE_GEM_LOG="$bootstrap_gem_log" \
-  FAKE_BUNDLE_SOURCE="$repo_root/tests/fake-bundle" \
+  FAKE_BUNDLE_SOURCE="$repo_root/test/support/fake-bundle" \
   FAKE_BUNDLE_LOG="$bootstrap_bundle_log" \
   FAKE_BUNDLE_ENV_LOG="$bootstrap_environment_log" \
   FAKE_BUNDLE_CHECK_EXIT=1 \
@@ -112,7 +113,7 @@ grep -qx "GEM_PATH=$bundler_home" "$bootstrap_environment_log"
 PATH="$bootstrap_bin" \
 XDG_DATA_HOME="$bootstrap_data" \
 FAKE_GEM_LOG="$bootstrap_gem_log" \
-FAKE_BUNDLE_SOURCE="$repo_root/tests/fake-bundle" \
+FAKE_BUNDLE_SOURCE="$repo_root/test/support/fake-bundle" \
 FAKE_BUNDLE_LOG="$bootstrap_root/second-bundle.log" \
 "$repo_root/bambu-companion" >/dev/null
 [[ "$(wc -l <"$bootstrap_gem_log")" == 1 ]]
@@ -122,12 +123,12 @@ mkdir -p "$bootstrap_failure_root/bin"
 for command_name in chmod dirname flock mkdir readlink ruby; do
   ln -s "$(command -v "$command_name")" "$bootstrap_failure_root/bin/$command_name"
 done
-cp "$repo_root/tests/fake-gem" "$bootstrap_failure_root/bin/gem"
+cp "$repo_root/test/support/fake-gem" "$bootstrap_failure_root/bin/gem"
 chmod +x "$bootstrap_failure_root/bin/gem"
 if PATH="$bootstrap_failure_root/bin" \
   XDG_DATA_HOME="$bootstrap_failure_root/data" \
   FAKE_GEM_LOG="$bootstrap_failure_root/gem.log" \
-  FAKE_BUNDLE_SOURCE="$repo_root/tests/fake-bundle" \
+  FAKE_BUNDLE_SOURCE="$repo_root/test/support/fake-bundle" \
   FAKE_GEM_INSTALL_EXIT=1 \
   "$repo_root/bambu-companion" \
   >"$bootstrap_failure_root/out" 2>"$bootstrap_failure_root/err"; then

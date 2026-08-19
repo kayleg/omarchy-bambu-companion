@@ -10,6 +10,7 @@ log_bundle_environment() {
   printf 'BUNDLE_USER_HOME=%s\n' "${BUNDLE_USER_HOME:-}"
   printf 'BUNDLE_USER_CACHE=%s\n' "${BUNDLE_USER_CACHE:-}"
   printf 'BUNDLE_IGNORE_CONFIG=%s\n' "${BUNDLE_IGNORE_CONFIG:-}"
+  printf 'BUNDLE_WITHOUT=%s\n' "${BUNDLE_WITHOUT:-}"
   printf 'BUNDLE_PATH__SYSTEM=%s\n' "${BUNDLE_PATH__SYSTEM:-}"
   printf 'GEM_HOME=%s\n' "${GEM_HOME:-}"
   printf 'GEM_PATH=%s\n' "${GEM_PATH:-}"

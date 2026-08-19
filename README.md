@@ -1,5 +1,9 @@
 # Bambu Companion for Omarchy Quattro
 
+<p align="center">
+  <img src="preview.png" alt="Bambu Companion dashboard with live telemetry and G-code preview" width="900">
+</p>
+
 Monitor a Bambu Lab printer from the Omarchy Quattro bar. Bambu Companion
 shows live print telemetry, the slicer's 2D plate preview and a lightweight,
 interactive wireframe extracted from the sliced G-code.
@@ -258,7 +262,7 @@ journalctl -t omarchy-shell -b --no-pager \
 Run all local checks from the repository root:
 
 ```bash
-tests/test-all
+bin/test
 ```
 
 This verifies the production bundle, Ruby and shell syntax, high-signal
@@ -272,7 +276,7 @@ Validate a checkout inside Omarchy Quattro with:
 
 ```bash
 omarchy plugin validate "$PWD"
-tests/test-all
+bin/test
 ```
 
 For an unpublished checkout in a disposable Quattro VM:

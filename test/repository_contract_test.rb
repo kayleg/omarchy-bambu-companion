@@ -7,12 +7,13 @@ class RepositoryContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   REQUIRED = %w[
     .gitignore manifest.json BambuWidget.qml bambu-companion daemon.rb Gemfile Gemfile.lock
-    README.md LICENSE tests/test-all native/build
+    README.md LICENSE bin/test native/build
   ].freeze
 
   def test_required_installable_files_exist
     REQUIRED.each { |path| assert File.file?(File.join(ROOT, path)), "missing #{path}" }
-    %w[bambu-companion tests/test-all tests/test-wrapper tests/fake-bundle tests/fake-gem native/build].each do |path|
+    %w[bambu-companion bin/test test/system/launcher_test.sh
+       test/support/fake-bundle test/support/fake-gem native/build].each do |path|
       assert File.executable?(File.join(ROOT, path)), "#{path} must be executable"
     end
   end
@@ -55,7 +56,7 @@ class RepositoryContractTest < Minitest::Test
       assert_includes readme, text
     end
     assert_includes readme, "Omarchy Quattro"
-    assert_includes readme, "tests/test-all"
+    assert_includes readme, "bin/test"
     assert_includes readme, "development only"
     assert_includes readme, "COMPILING ROUTE RENDERER"
     assert_includes readme, "cmake"
@@ -129,7 +130,7 @@ class RepositoryContractTest < Minitest::Test
     assert File.file?(rubocop_path), "missing .rubocop.yml"
 
     rubocop_config = File.read(rubocop_path)
-    test_all = File.read(File.join(ROOT, "tests/test-all"))
+    test_all = File.read(File.join(ROOT, "bin/test"))
 
     assert_includes rubocop_config, "DisabledByDefault: true"
     assert_match(/^Lint:\n\s+Enabled: true$/m, rubocop_config)
