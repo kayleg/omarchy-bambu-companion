@@ -275,7 +275,7 @@ Item {
         Rectangle {
           id: versionIndicator
           anchors.left: parent.left
-          anchors.verticalCenter: versionText.verticalCenter
+          anchors.verticalCenter: parent.verticalCenter
           width: Style.space(6)
           height: width
           radius: width / 2
@@ -288,7 +288,7 @@ Item {
           id: versionText
           anchors.left: versionIndicator.right
           anchors.leftMargin: Style.space(6)
-          anchors.top: parent.top
+          anchors.verticalCenter: parent.verticalCenter
           text: "v" + pane.appVersion
           color: pane.foreground
           font.family: pane.fontFamily
@@ -300,7 +300,7 @@ Item {
           visible: pane.updateAvailable
           enabled: !pane.updateBusy
           anchors.right: parent.right
-          anchors.top: parent.top
+          anchors.verticalCenter: parent.verticalCenter
           width: Style.space(30)
           height: Style.space(28)
           text: "\uf019"
@@ -318,7 +318,7 @@ Item {
           anchors.leftMargin: Style.space(8)
           anchors.right: updateButton.visible ? updateButton.left : parent.right
           anchors.rightMargin: updateButton.visible ? Style.space(6) : 0
-          anchors.verticalCenter: versionText.verticalCenter
+          anchors.verticalCenter: parent.verticalCenter
           text: pane.updateInstalling ? "UPDATING"
             : (pane.updateBusy ? "CHECKING"
               : (pane.updateError !== "" ? "UPDATE FAILED"
