@@ -109,20 +109,15 @@ remove it.
 serial number, trusted certificates and LAN code. It preserves the printer
 name and visual preferences so the plugin is ready for a new connection.
 
-### Desktop app and launcher
+### Tiled window
 
-Select **Open app** at the bottom of the widget panel to move the dashboard
-into its own window. It is a normal Wayland application window, so Hyprland
-tiles, focuses, resizes and moves it between workspaces like other Omarchy
-apps. The window and bar panel share one background printer session; opening
-both does not create a second MQTT or FTPS connection.
-
-The launcher entry is opt-in. In **Settings → Desktop**, select **Add to app
-launcher** to install a standard per-user desktop entry and icon. Bambu
-Companion will then appear in the Omarchy launcher as an application. Use
-**Remove from app launcher** before removing the plugin if you no longer want
-the entry. Neither installing nor updating the plugin changes the app launcher
-without this explicit action.
+Select **Open app**, next to **Settings** at the bottom of the widget panel, to
+move the dashboard into its own window. It is a normal Wayland application
+window, so Hyprland tiles, focuses, resizes and moves it between workspaces
+like other Omarchy apps. The window is opened from the bar plugin only; no
+standalone launcher entry is installed. The window and bar panel share one
+background printer session, so opening both does not create a second MQTT or
+FTPS connection.
 
 The **Application** section at the bottom of the information sidebar shows the
 running plugin version. It checks the git-managed installation for a newer
@@ -134,8 +129,7 @@ git checkouts continue to show their current version without an update action.
 ## Features
 
 - Compact bar icon with optional status, progress and temperature summary.
-- Full dashboard in a normal, resizable tiled application window.
-- Optional Omarchy launcher entry managed from the plugin's Settings view.
+- Full dashboard in a normal, resizable tiled window opened from the widget.
 - Live connection, print state, progress and remaining-time reporting.
 - Current and target nozzle/bed temperatures.
 - Current layer, total layers and exact or estimated Z progress.
@@ -263,8 +257,7 @@ the plugin.
 - The plugin does not overwrite user configuration without explicit consent:
   printer settings are written only with **Save & Connect** or
   **Trust & Connect**, cleared only after confirming **Disconnect printer**, and
-  the bar-summary preference changes only when its toggle is changed. The
-  desktop entry is installed or removed only with its Settings action.
+  the bar-summary preference changes only when its toggle is changed.
 - The LAN access code is never stored in plugin settings, the repository,
   process arguments or normal logs.
 - `secret-tool` stores the code in GNOME Keyring when available. Otherwise it
@@ -297,9 +290,9 @@ the plugin.
 - `cmake` and `g++` are needed to compile the G-code route view. The rest of
   the plugin works without them.
 
-The launcher installs the exact Bundler version from `Gemfile.lock` when
-`bundle` is unavailable, then installs all locked gems under the plugin's
-private data directory.
+The `bambu-companion` bootstrap script installs the exact Bundler version from
+`Gemfile.lock` when `bundle` is unavailable, then installs all locked gems
+under the plugin's private data directory.
 
 ## Troubleshooting
 
@@ -344,7 +337,7 @@ bin/test
 ```
 
 This verifies the production bundle, Ruby and shell syntax, high-signal
-RuboCop and ShellCheck rules, JSON/QML contracts, launcher isolation, parser
+RuboCop and ShellCheck rules, JSON/QML contracts, runtime isolation, parser
 behavior and GPU projection math. `minitest`, `rubocop`, `shellcheck`,
 `qmllint` and Node.js are development only; none is a runtime dependency of
 the installed plugin. Node.js is required for extracted QML JavaScript tests

@@ -36,7 +36,6 @@ Item {
     if (!root.service) return
     if (root.viewMode !== "settings") root.viewMode = root.nextIdleView()
     if (root.viewMode === "setup") settingsView.load(root.service.settingsDraft())
-    root.service.refreshDesktopEntry()
     root.focusPanelTop()
   }
 
@@ -340,9 +339,6 @@ Item {
           secretRequired: root.service.secretRequired
           secretStored: root.service.secretStored
           secretStatusKnown: root.service.secretStatusKnown
-          desktopEntryInstalled: root.service.desktopEntryInstalled
-          desktopEntryBusy: root.service.desktopEntryBusy
-          desktopEntryError: root.service.desktopEntryError
           onBackRequested: {
             root.backToStatus()
           }
@@ -351,11 +347,6 @@ Item {
               settingsView.showBarSummary = root.service.showBarSummary
               settingsView.reportError("Bar summary setting could not be saved")
             }
-          }
-          onDesktopEntryToggled: function(enabled) {
-            if (!root.service.setDesktopEntryEnabled(enabled)
-                && !root.service.desktopEntryError)
-              settingsView.reportError("Desktop entry change is already in progress")
           }
           onForgetCodeRequested: {
             if (root.service.clearSecret()) settingsView.clearAccessCode()

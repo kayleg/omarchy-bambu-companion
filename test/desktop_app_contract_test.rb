@@ -11,11 +11,7 @@ class DesktopAppContractTest < Minitest::Test
     @app = File.read(File.join(ROOT, "BambuApp.qml"))
     @widget = File.read(File.join(ROOT, "BambuWidget.qml"))
     @dashboard = File.read(File.join(ROOT, "BambuDashboard.qml"))
-    @settings = File.read(File.join(ROOT, "BambuSettingsView.qml"))
     @service = File.read(File.join(ROOT, "BambuService.qml"))
-    @desktop_entry = File.read(
-      File.join(ROOT, "io.github.ypmrg.bambu-companion.desktop")
-    )
   end
 
   def test_manifest_exposes_one_shared_service_to_the_widget_and_app
@@ -60,6 +56,9 @@ class DesktopAppContractTest < Minitest::Test
                  @widget)
     assert_match(/appButtonVisible: root\.showOpenAppButton.*onAppRequested: root\.openAppRequested\(\)/m,
                  @dashboard)
+    telemetry = File.read(File.join(ROOT, "BambuTelemetryPane.qml"))
+    assert_match(/id: actionRow.*text: "SETTINGS".*text: "OPEN APP"/m,
+                 telemetry)
     refute_includes @widget, "BambuBackendSession {"
     refute_includes @app, "BambuBackendSession {"
     refute_match(/onAttentionRequested/, @dashboard)
@@ -69,26 +68,20 @@ class DesktopAppContractTest < Minitest::Test
                  @app)
   end
 
-  def test_launcher_entry_is_explicit_standard_and_reversible
-    assert_includes @settings, "signal desktopEntryToggled(bool enabled)"
-    assert_includes @settings, 'text: "DESKTOP"'
-    assert_includes @settings, '"ADD TO APP LAUNCHER"'
-    assert_includes @settings, '"REMOVE FROM APP LAUNCHER"'
-    assert_match(/onDesktopEntryToggled: function\(enabled\).*root\.service\.setDesktopEntryEnabled\(enabled\).*!root\.service\.desktopEntryError/m,
-                 @dashboard)
-    assert_match(/function runDesktopEntryAction\(action\).*desktopEntryProcess\.command = \[root\.desktopEntryManagerPath, action\].*desktopEntryProcess\.running = true/m,
-                 @service)
-    assert_match(/function setDesktopEntryEnabled\(enabled\).*runDesktopEntryAction\(enabled === true \? "install" : "uninstall"\)/m,
-                 @service)
-    refute_match(/onDesktopEntryErrorChanged/, @dashboard)
+  def test_no_standalone_launcher_surface_is_shipped
+    %w[
+      bambu-companion-desktop-entry
+      io.github.ypmrg.bambu-companion.desktop
+      assets/bambu-companion.svg
+      test/system/desktop_entry_test.sh
+    ].each do |path|
+      refute File.exist?(File.join(ROOT, path)), "unexpected #{path}"
+    end
 
-    assert_includes @desktop_entry, "Type=Application"
-    assert_includes @desktop_entry,
-                    'Exec=omarchy-shell shell summon io.github.ypmrg.bambu-companion "{}"'
-    assert_includes @desktop_entry, "TryExec=omarchy-shell"
-    assert_includes @desktop_entry, "Terminal=false"
-    assert_includes @desktop_entry, "Icon=io.github.ypmrg.bambu-companion"
-    assert_includes @desktop_entry, "X-Bambu-Companion-Managed=true"
+    settings = File.read(File.join(ROOT, "BambuSettingsView.qml"))
+    [settings, @dashboard, @service].each do |source|
+      refute_match(/desktopEntry|app-only|app-and-bar|launcher entry/i, source)
+    end
   end
 
   def test_sidebar_exposes_the_current_version_and_native_plugin_update

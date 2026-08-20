@@ -182,12 +182,8 @@ class QmlContractTest < Minitest::Test
                  @backend_source)
     assert_match(/discarding = false.*offset = newlineIndex \+ 1/m,
                  @backend_source)
-    desktop_process = @service_source[/Process \{\s*id: desktopEntryProcess.*?\n  \}/m]
     plugin_update_process = @service_source[/Process \{\s*id: pluginUpdateProcess.*?\n  \}/m]
-    refute_nil desktop_process
     refute_nil plugin_update_process
-    assert_match(/stderr: SplitParser/, desktop_process)
-    refute_match(/stdout: SplitParser/, desktop_process)
     assert_match(/stdout: SplitParser.*stderr: SplitParser/m, plugin_update_process)
   end
 

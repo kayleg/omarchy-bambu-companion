@@ -68,10 +68,6 @@ Item {
   property var mqttTlsIdentity: ({})
   property var ftpsTlsIdentity: ({})
 
-  property bool desktopEntryInstalled: false
-  readonly property bool desktopEntryBusy: desktopEntryProcess.running
-  property string desktopEntryError: ""
-
   readonly property string currentVersion: root.manifest && root.manifest.version
     ? String(root.manifest.version) : "unknown"
   property bool pluginUpdateAvailable: false
@@ -141,9 +137,6 @@ Item {
   )
   readonly property string nativeBuildPath: decodeURIComponent(
     String(Qt.resolvedUrl("native/build")).replace(/^file:\/\//, "")
-  )
-  readonly property string desktopEntryManagerPath: decodeURIComponent(
-    String(Qt.resolvedUrl("bambu-companion-desktop-entry")).replace(/^file:\/\//, "")
   )
   readonly property string pluginUpdateCheckPath: decodeURIComponent(
     String(Qt.resolvedUrl("bambu-companion-update-check")).replace(/^file:\/\//, "")
@@ -224,7 +217,6 @@ Item {
     root.refreshSettings()
     backendSession.start()
     nativeBuild.running = true
-    root.refreshDesktopEntry()
     root.refreshPluginUpdate()
     if (!nativeBuild.running && !root.nativeBuildStarted)
       root.markRendererUnavailable()
@@ -429,29 +421,6 @@ Item {
     secretStatusKnown = true
     root.attentionRequested("settings", message)
     return true
-  }
-
-  function runDesktopEntryAction(action) {
-    if (root.desktopEntryBusy) return false
-    desktopEntryProcess.action = action
-    root.desktopEntryError = ""
-    desktopEntryProcess.errorOutput = ""
-    desktopEntryProcess.command = [root.desktopEntryManagerPath, action]
-    desktopEntryProcess.running = true
-    if (!desktopEntryProcess.running) {
-      desktopEntryProcess.action = ""
-      root.desktopEntryError = "Desktop entry helper could not be started"
-      return false
-    }
-    return true
-  }
-
-  function refreshDesktopEntry() {
-    return root.runDesktopEntryAction("status")
-  }
-
-  function setDesktopEntryEnabled(enabled) {
-    return root.runDesktopEntryAction(enabled === true ? "install" : "uninstall")
   }
 
   function runPluginUpdateAction(action) {
@@ -961,42 +930,6 @@ Item {
         root.markRendererUnavailable()
     }
     onRunningChanged: root.handleNativeBuildRunningChanged()
-  }
-
-  Process {
-    id: desktopEntryProcess
-    property string action: ""
-    property string errorOutput: ""
-    command: [root.desktopEntryManagerPath, "status"]
-    running: false
-    stderr: SplitParser {
-      splitMarker: ""
-      onRead: function(chunk) {
-        var line = String(chunk || "").trim()
-        if (line) desktopEntryProcess.errorOutput += line + "\n"
-      }
-    }
-    onExited: function(exitCode) {
-      var action = desktopEntryProcess.action
-      if (action === "status") {
-        if (exitCode === 0) {
-          root.desktopEntryInstalled = true
-        } else if (exitCode === 1) {
-          root.desktopEntryInstalled = false
-        } else {
-          root.desktopEntryError = desktopEntryProcess.errorOutput.trim()
-            || "Desktop entry status could not be read"
-        }
-      } else if (exitCode === 0) {
-        root.desktopEntryInstalled = action === "install"
-      } else {
-        root.desktopEntryError = desktopEntryProcess.errorOutput.trim()
-          || "Desktop entry could not be "
-            + (action === "install" ? "installed" : "removed")
-      }
-      desktopEntryProcess.action = ""
-      desktopEntryProcess.errorOutput = ""
-    }
   }
 
   Process {
