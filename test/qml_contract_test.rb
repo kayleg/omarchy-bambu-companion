@@ -130,9 +130,9 @@ class QmlContractTest < Minitest::Test
     assert_match(/Timer \{\s*id: finishReadyTimer\s*interval: 60000\s*repeat: false\s*onTriggered:.*if \(root\.isFinishedState\(root\.gcodeState\)\).*root\.finishGraceExpired = true/m,
                  @source)
 
-    assert_match(/function compactLabel\(\).*var state = root\.connected \? root\.displayGcodeState : "OFFLINE"/m,
+    assert_match(/function statusSummary\(separator\).*if \(!root\.connected\) return "OFFLINE".*root\.displayGcodeState/m,
                  @source)
-    assert_match(/function tooltipText\(\).*root\.service\.displayGcodeState/m,
+    assert_match(/function tooltipText\(\).*root\.service\.statusSummary\(" · "\)/m,
                  @widget_source)
     assert_match(/printerState: root\.service\.displayGcodeState/, @dashboard_source)
     assert_match(/function resetOperationalState\(\).*finishReadyTimer\.stop\(\).*finishGraceExpired = false/m,
@@ -144,7 +144,7 @@ class QmlContractTest < Minitest::Test
     assert_match(/message\.event === "hello".*daemonReady = Number\(message\.protocol\) === 1.*installationId = String\(message\.installationId \|\| ""\).*sendConfiguration\(\)/m,
                  @source)
     assert_includes @source, '"op": "configure"'
-    assert_match(/message\.event === "hello".*if \(!daemonReady \|\| !installationIdentified\).*resetOperationalState\(\).*processError = "Unsupported backend protocol".*return.*backendSession\.markReady\(\).*sendConfiguration\(\).*if \(!daemonReady\) return/m,
+    assert_match(/message\.event === "hello".*if \(!daemonReady \|\| !installationIdentified\).*resetOperationalState\(\).*reportProcessError\("Unsupported backend protocol"\).*return.*backendSession\.markReady\(\).*sendConfiguration\(\).*if \(!daemonReady\) return/m,
                  @source)
   end
 
@@ -162,7 +162,7 @@ class QmlContractTest < Minitest::Test
     refute_includes @source, "onSettingsChanged:"
     assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return.*resetOperationalState\(\).*sendConfiguration\(\)/m,
                  @source)
-    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*geometryAssembler\.reset\(-1\)/m,
+    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*reportProcessError\(""\).*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*geometryAssembler\.reset\(-1\)/m,
                  @service_source)
   end
 
@@ -261,9 +261,9 @@ class QmlContractTest < Minitest::Test
 
   def test_fresh_printer_report_clears_recovered_process_error
     assert_includes @source, 'property string processErrorReportUpdate: ""'
-    assert_match(/function reportProcessError\(message\).*processError = String\(message \|\| ""\).*processErrorReportUpdate = processError === "" \? "" : lastUpdate/m,
+    assert_match(/function reportProcessError\(message, hideInBar\).*processError = String\(message \|\| ""\).*processErrorReportUpdate = processError === "" \? "" : lastUpdate.*processErrorAffectsBar = processError !== "" && hideInBar !== true/m,
                  @source)
-    assert_match(/var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*if \(hasFreshReport\) \{.*connectionVerified = true.*if \(processError !== "" && reportUpdate !== processErrorReportUpdate\).*processError = "".*processErrorReportUpdate = ""/m,
+    assert_match(/var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*if \(hasFreshReport\) \{.*if \(processError !== "" && reportUpdate !== processErrorReportUpdate\).*reportProcessError\(""\)/m,
                  @service_source)
   end
 
@@ -353,7 +353,7 @@ class QmlContractTest < Minitest::Test
     refute_includes @source, "barPrintActive"
     assert_match(/readonly property bool barFinishActive: root\.connected && !root\.stale\s*&& root\.isFinishedState\(root\.displayGcodeState\)/m,
                  @service_source)
-    assert_match(/readonly property color printerIconColor: !root\.service \? root\.foreground\s*: \(root\.service\.errorActive \? root\.errorColor\s*: \(root\.service\.barFinishActive \? root\.successColor : root\.foreground\)\)/m,
+    assert_match(/readonly property color printerIconColor: !root\.service \? root\.foreground\s*: \(root\.service\.barErrorActive \? root\.errorColor\s*: \(root\.service\.barFinishActive \? root\.successColor : root\.foreground\)\)/m,
                  @widget_source)
     assert_match(/Image\s*{.*id: sourceImage.*source: icon\.source.*visible: false.*layer\.enabled: true/m,
                  @printer_icon_source)
@@ -388,6 +388,10 @@ class QmlContractTest < Minitest::Test
     assert_includes @dashboard_source, 'readonly property color successColor: "#39FF88"'
     assert_match(/readonly property bool errorActive: root\.printerHasError\(\)\s*\|\| root\.processError !== ""/m,
                  @service_source)
+    assert_match(/readonly property bool barErrorActive: root\.printerHasError\(\)\s*\|\| root\.processErrorAffectsBar/m,
+                 @service_source)
+    assert_match(/reportProcessError\(message\.message,\s*message\.scope === "mqtt" && message\.code === "connection"\)/m,
+                 @service_source)
     global_error_definition = @service_source[
       /readonly property bool errorActive:.*?(?=\n  readonly property)/m
     ]
@@ -410,13 +414,14 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_vertical_bar_is_icon_only
-    assert_match(/function compactLabel\(\).*if \(!root\.hasConnectionTarget\) return "SETUP".*if \(!root\.connectionVerified\) return "WAIT"/m,
+    assert_match(/function statusSummary\(separator\).*if \(!root\.hasConnectionTarget\) return "SETUP".*if \(!root\.printerStateKnown\) return "CONNECTING".*if \(!root\.connected\) return "OFFLINE"/m,
                  @service_source)
+    refute_includes @service_source, 'return "WAIT"'
     assert_match(/Text\s*{.*height: parent\.height.*verticalAlignment: Text\.AlignVCenter.*visible: !root\.vertical && \(!root\.service \|\| root\.service\.showBarSummary\)\s*width: Math\.min\(implicitWidth, Style\.space\(220\)\)\s*text: root\.compactLabel\(\)/m,
                  @widget_source)
-    assert_match(/formatTemp\(root\.service\.nozzleTemp\).*formatTemp\(root\.service\.bedTemp\)/m,
-                 @widget_source)
-    assert_match(/function tooltipText\(\).*!root\.service\.connectionVerified \? "CONNECTING".*root\.service\.percent.*formatTemp\(root\.service\.nozzleTemp\).*formatTemp\(root\.service\.bedTemp\)/m,
+    assert_match(/formatTemp\(root\.nozzleTemp\).*formatTemp\(root\.bedTemp\)/m,
+                 @service_source)
+    assert_match(/function compactLabel\(\).*service\.statusSummary\(" "\).*function tooltipText\(\).*service\.statusSummary\(" · "\)/m,
                  @widget_source)
   end
 

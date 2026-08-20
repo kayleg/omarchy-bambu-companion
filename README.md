@@ -148,6 +148,11 @@ git checkouts continue to show their current version without an update action.
 - Automatic reconnect after temporary network loss.
 - Monitoring-only operation: no pause, resume, stop, upload or speed commands.
 
+An unavailable configured printer is shown as `OFFLINE` with the normal theme
+color; the dashboard remains accessible while reconnection continues. With no
+printer configured, the initial Settings view can be closed to inspect the
+dashboard, whose preview area points back to Settings for configuration.
+
 After a completed print, `FINISH` remains visible for 60 seconds and then
 settles to `READY`. Starting another job cancels that delay immediately.
 

@@ -124,12 +124,12 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes instances.fetch(1), 'title: "FTPS"'
   end
 
-  def test_unpinned_or_rejected_certificate_forces_setup_without_overwriting_pins
+  def test_unpinned_or_rejected_certificate_requires_probe_without_forcing_initial_setup
     source = application_source
 
     assert_includes source, "readonly property bool hasTrustedTlsPins:"
-    assert_match(/readonly property bool requiresSetupConfirmation:.*!root\.hasTrustedTlsPins/m,
-                 source)
+    assert_equal "readonly property bool requiresInitialSetup: !root.hasConnectionTarget",
+                 source[/readonly property bool requiresInitialSetup:[^\n]*/]
     assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*beginTlsProbe\(draft\).*return/m,
                  source)
     assert_match(/message\.scope === "tls".*message\.code === "certificate_changed".*handleTlsMismatch/m,
@@ -266,22 +266,22 @@ class QmlSettingsContractTest < Minitest::Test
     refute_match(/parent\.width - \(form\.allowBack \? parent\.spacing \+ Style\.space\(70\) : 0\)/m, source)
   end
 
-  def test_widget_forces_first_run_setup_and_waits_for_a_confirmed_connection
+  def test_widget_forces_only_initial_setup_and_accepts_an_offline_snapshot
     service = service_source
     dashboard = dashboard_source
 
-    assert_includes service, "property bool connectionVerified: false"
-    assert_match(/function nextIdleView\(\).*root\.service\.requiresSetupConfirmation.*return "setup".*root\.service\.connectionVerified.*return "status".*return "connecting"/m,
+    assert_includes service, "property bool printerStateKnown: false"
+    assert_match(/function nextIdleView\(\).*root\.service\.requiresInitialSetup.*return "setup".*root\.service\.printerStateKnown.*return "status".*return "connecting"/m,
                  dashboard)
-    assert_match(/function handleState\(message\).*connected = printer\.connected === true.*var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*var hasFreshReport = connected && printer\.stale === false\s*&& reportUpdate !== "".*if \(hasFreshReport\).*connectionVerified = true.*statusAvailable\(\)/m,
+    assert_match(/function handleState\(message\).*var stateWasUnknown = !root\.printerStateKnown.*printerStateKnown = true.*connected = printer\.connected === true.*if \(stateWasUnknown\) root\.statusAvailable\(\)/m,
                  service)
-    assert_match(/function resetOperationalState\(\).*connectionVerified = false/m,
+    assert_match(/function resetOperationalState\(\).*printerStateKnown = false/m,
                  service)
     assert_match(/Component\.onCompleted:.*componentReady = true.*viewMode = root\.nextIdleView\(\)/m,
                  dashboard)
     assert_match(/function onStatusAvailable\(\).*viewMode === "connecting".*viewMode = "status"/m,
                  dashboard)
-    assert_match(/function backToStatus\(\).*root\.service\.connectionVerified.*enterConnecting\(\).*return.*viewMode = "status"/m,
+    assert_match(/function backToStatus\(\).*!root\.service\.requiresInitialSetup && !root\.service\.printerStateKnown.*enterConnecting\(\).*return.*viewMode = "status"/m,
                  dashboard)
   end
 
@@ -295,12 +295,14 @@ class QmlSettingsContractTest < Minitest::Test
                  close_function)
     assert_match(/onSurfaceActiveChanged:.*!root\.componentReady.*root\.surfaceActive.*root\.open\(\).*root\.close\(\)/m,
                  dashboard)
-    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, widget)
-    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, close_handler)
-    assert_match(/root\.viewMode === "settings" && root\.service\.hasConnectionTarget\s*&& !root\.service\.requiresSetupConfirmation.*root\.backToStatus\(\).*root\.closeRequested\(\)/m,
+    refute_match(/requiresInitialSetup.*popupOpen = true/m, widget)
+    refute_match(/requiresInitialSetup.*popupOpen = true/m, close_handler)
+    assert_match(/root\.viewMode === "setup" \|\| root\.viewMode === "settings".*root\.backToStatus\(\).*root\.closeRequested\(\)/m,
                  close_handler)
     assert_match(/allowBack: true/m, dashboard)
-    assert_match(/onBackRequested:.*root\.service\.requiresSetupConfirmation.*root\.closeRequested\(\).*root\.backToStatus\(\)/m,
+    assert_match(/onBackRequested:\s*\{\s*root\.backToStatus\(\)/m,
+                 dashboard)
+    assert_match(/BambuModelViewport\s*\{.*printerConfigured: root\.service\.hasConnectionTarget/m,
                  dashboard)
   end
 
@@ -314,7 +316,7 @@ class QmlSettingsContractTest < Minitest::Test
     refute_match(/function open\(\).*dashboard\.open\(\)/m, widget)
     assert_match(/function open\(\).*root\.viewMode !== "settings".*root\.viewMode = root\.nextIdleView\(\)/m,
                  dashboard)
-    assert_match(/function resetOperationalState\(\).*connectionVerified = false/m,
+    assert_match(/function resetOperationalState\(\).*printerStateKnown = false/m,
                  service)
     assert_match(/onBackendConfigurationFingerprintChanged:.*resetOperationalState\(\).*sendConfiguration\(\)/m,
                  service)
@@ -574,14 +576,14 @@ class QmlSettingsContractTest < Minitest::Test
                     handler.index('viewMode === "settings"')
   end
 
-  def test_new_plugin_install_forces_confirmation_before_connecting
+  def test_only_a_missing_printer_target_forces_initial_setup
     service = service_source
     dashboard = dashboard_source
 
-    assert_includes service, 'readonly property string storedInstallationId: String(setting("installationId", ""))'
-    assert_match(/readonly property bool requiresSetupConfirmation:.*installationIdentified.*storedInstallationId !== root\.installationId/m,
+    assert_match(/readonly property bool requiresInitialSetup: !root\.hasConnectionTarget/,
                  service)
-    assert_match(/function nextIdleView\(\).*service\.requiresSetupConfirmation.*return "setup"/m,
+    refute_includes service, "storedInstallationId"
+    assert_match(/function nextIdleView\(\).*service\.requiresInitialSetup.*return "setup"/m,
                  dashboard)
     hello = service[/if \(message\.event === "hello"\) \{.*?\n      return\n    \}/m]
     refute_nil hello
@@ -591,7 +593,7 @@ class QmlSettingsContractTest < Minitest::Test
     refute_match(/openSettings\(\)/, hello)
     assert_match(/function persistSettings\(draft\).*entry\.installationId = draft\.installationId === undefined.*root\.installationId/m,
                  service)
-    assert_match(/function onRequiresSetupConfirmationChanged\(\).*root\.surfaceActive.*root\.service\.requiresSetupConfirmation.*root\.viewMode = "setup".*settingsView\.load/m,
+    assert_match(/function onRequiresInitialSetupChanged\(\).*root\.surfaceActive.*root\.service\.requiresInitialSetup.*root\.viewMode = "setup".*settingsView\.load/m,
                  dashboard)
     assert_match(/function commitSettingsEntry\(entry\).*persistingSettings = true.*root\.settings = entry.*updateEntryInline.*persistingSettings = false/m,
                  service)
@@ -641,7 +643,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/function handleBackendStopped\(\).*resetOperationalState\(\).*recoverSecretWrite\(/m,
                  source)
-    assert_match(/message\.event === "error".*reportProcessError\(message\.message\).*recoverSecretWrite\(/m,
+    assert_match(/message\.event === "error".*reportProcessError\(message\.message,\s*message\.scope === "mqtt" && message\.code === "connection"\).*recoverSecretWrite\(/m,
                  source)
     assert_match(/message\.event === "secret_status".*pendingSecretWrite = false/m,
                  source)

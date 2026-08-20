@@ -25,9 +25,18 @@ class ViewportRouteContractTest < Minitest::Test
     assert_includes @source, '"COMPILING ROUTE RENDERER"'
     assert_includes @source, '"ROUTE RENDERER UNAVAILABLE"'
     assert_includes @source, "Install cmake and g++ · see Quickshell logs"
-    assert_match(/visible:.*rendererStatus === "compiling"/, @source)
+    assert_match(/id:\s*loadingIndicator.*visible: viewport\.printerConfigured.*rendererStatus === "compiling"/m,
+                 @source)
     assert_match(/interval:\s*16/, @source)
     assert_match(/rendererStatus === "ready"/, @source)
+  end
+
+  def test_unconfigured_printer_has_a_dismissible_dashboard_empty_state
+    assert_includes @source, "property bool printerConfigured: false"
+    assert_match(/function emptyModelTitle\(\).*!viewport\.printerConfigured.*NO PRINTER CONFIGURED/m,
+                 @source)
+    assert_match(/function emptyModelDetail\(\).*!viewport\.printerConfigured.*OPEN SETTINGS TO CONFIGURE A PRINTER/m,
+                 @source)
   end
 
   def test_route_geometry_is_assigned_once_not_on_every_camera_tick

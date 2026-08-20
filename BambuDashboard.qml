@@ -27,8 +27,8 @@ Item {
   signal openAppRequested()
 
   function nextIdleView() {
-    if (!root.service || root.service.requiresSetupConfirmation) return "setup"
-    if (root.service.connectionVerified) return "status"
+    if (!root.service || root.service.requiresInitialSetup) return "setup"
+    if (root.service.printerStateKnown) return "status"
     return "connecting"
   }
 
@@ -85,12 +85,7 @@ Item {
   }
 
   function backToStatus() {
-    if (root.service.requiresSetupConfirmation) {
-      root.viewMode = "setup"
-      root.focusPanelTop()
-      return
-    }
-    if (!root.service.connectionVerified) {
+    if (!root.service.requiresInitialSetup && !root.service.printerStateKnown) {
       root.enterConnecting()
       return
     }
@@ -139,8 +134,8 @@ Item {
       if (root.viewMode === "connecting") root.viewMode = "status"
     }
 
-    function onRequiresSetupConfirmationChanged() {
-      if (!root.surfaceActive || !root.service.requiresSetupConfirmation
+    function onRequiresInitialSetupChanged() {
+      if (!root.surfaceActive || !root.service.requiresInitialSetup
           || root.viewMode === "settings") return
       root.viewMode = "setup"
       settingsView.load(root.service.settingsDraft())
@@ -172,8 +167,7 @@ Item {
       if (root.service.securityModalMode !== "") {
         root.service.cancelSecurityModal()
         root.focusPanelTop()
-      } else if (root.viewMode === "settings" && root.service.hasConnectionTarget
-          && !root.service.requiresSetupConfirmation) {
+      } else if (root.viewMode === "setup" || root.viewMode === "settings") {
         root.backToStatus()
       } else {
         root.closeRequested()
@@ -277,6 +271,7 @@ Item {
             errorActive: root.service.errorActive || root.service.modelErrorActive
             fontFamily: root.fontFamily
             panelActive: root.surfaceActive && root.viewMode === "status"
+            printerConfigured: root.service.hasConnectionTarget
             daemonReady: root.service.daemonReady && root.service.backendRunning
             printing: root.service.connected && root.service.gcodeState === "RUNNING"
             previewAvailable: root.service.previewAvailable
@@ -349,8 +344,7 @@ Item {
           desktopEntryBusy: root.service.desktopEntryBusy
           desktopEntryError: root.service.desktopEntryError
           onBackRequested: {
-            if (root.service.requiresSetupConfirmation) root.closeRequested()
-            else root.backToStatus()
+            root.backToStatus()
           }
           onBarSummaryToggled: function(enabled) {
             if (!root.service.persistBarSummary(enabled)) {

@@ -17,7 +17,7 @@ BarWidget {
   readonly property color errorColor: "#ff5f56"
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property color printerIconColor: !root.service ? root.foreground
-    : (root.service.errorActive ? root.errorColor
+    : (root.service.barErrorActive ? root.errorColor
       : (root.service.barFinishActive ? root.successColor : root.foreground))
 
   function open() {
@@ -42,19 +42,13 @@ BarWidget {
   }
 
   function compactLabel() {
-    if (!root.service) return "WAIT"
-    return root.service.compactLabel()
+    if (!root.service) return "STARTING"
+    return root.service.statusSummary(" ")
   }
 
   function tooltipText() {
     if (!root.service) return "Bambu Companion · STARTING"
-    return root.service.displayName + " · "
-      + (!root.service.hasConnectionTarget ? "SETUP"
-        : (!root.service.connectionVerified ? "CONNECTING"
-          : ((root.service.connected ? root.service.displayGcodeState : "OFFLINE")
-            + " · " + root.service.percent + "% · "
-            + root.service.formatTemp(root.service.nozzleTemp) + "/"
-            + root.service.formatTemp(root.service.bedTemp))))
+    return root.service.displayName + " · " + root.service.statusSummary(" · ")
   }
 
   implicitWidth: button.implicitWidth

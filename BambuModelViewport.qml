@@ -13,6 +13,7 @@ Item {
   property bool errorActive: false
   property string fontFamily: Style.font.family
   property bool panelActive: false
+  property bool printerConfigured: false
   property bool daemonReady: false
   property bool printing: false
   property bool previewAvailable: false
@@ -57,6 +58,7 @@ Item {
   }
 
   function emptyModelTitle() {
+    if (!viewport.printerConfigured) return "NO PRINTER CONFIGURED"
     if (viewport.modelStatus === "loading") {
       if (viewport.modelLoadPhase === "downloading") return "DOWNLOADING PRINT FILE"
       if (viewport.modelLoadPhase === "processing") return "PROCESSING PRINT DATA"
@@ -73,6 +75,8 @@ Item {
   }
 
   function emptyModelDetail() {
+    if (!viewport.printerConfigured)
+      return "OPEN SETTINGS TO CONFIGURE A PRINTER"
     if (viewport.modelStatus === "loading"
         && viewport.modelLoadPhase === "downloading") {
       var loaded = formatBytes(viewport.modelLoadedBytes)
@@ -707,8 +711,10 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: loadingDots.width
           height: Style.space(12)
-          visible: viewport.rendererStatus === "compiling"
-            || (viewport.modelStatus === "loading" && !viewport.downloadProgressVisible)
+          visible: viewport.printerConfigured
+            && (viewport.rendererStatus === "compiling"
+              || (viewport.modelStatus === "loading"
+                && !viewport.downloadProgressVisible))
 
           Row {
             id: loadingDots

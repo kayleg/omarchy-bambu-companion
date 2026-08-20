@@ -16,7 +16,7 @@ Item {
   property alias daemonReady: backendSession.daemonReady
   readonly property bool backendRunning: backendSession.running
   property bool connected: false
-  property bool connectionVerified: false
+  property bool printerStateKnown: false
   property bool stale: true
   property bool secretRequired: false
   property bool secretStored: false
@@ -54,6 +54,7 @@ Item {
   property string zMode: "unknown"
   property string processError: ""
   property string processErrorReportUpdate: ""
+  property bool processErrorAffectsBar: false
   property bool pendingSecretWrite: false
   property bool persistingSettings: false
   property bool tlsProbePending: false
@@ -120,16 +121,12 @@ Item {
     String(setting("mqttTlsFingerprint", ""))
   readonly property string ftpsTlsFingerprint:
     String(setting("ftpsTlsFingerprint", ""))
-  readonly property string storedInstallationId: String(setting("installationId", ""))
   readonly property bool hasConnectionTarget: String(root.host).trim() !== ""
     && String(root.serial).trim() !== ""
   readonly property bool hasTrustedTlsPins:
     root.validTlsFingerprint(root.mqttTlsFingerprint)
       && root.validTlsFingerprint(root.ftpsTlsFingerprint)
-  readonly property bool requiresSetupConfirmation: !root.hasConnectionTarget
-    || !root.hasTrustedTlsPins || root.tlsRejected
-    || (root.installationIdentified
-        && root.storedInstallationId !== root.installationId)
+  readonly property bool requiresInitialSetup: !root.hasConnectionTarget
   readonly property string securityModalMode:
     (root.disconnectConfirmationOpen || root.disconnectPending) ? "disconnect"
       : ((root.tlsProbePending || root.tlsApprovalRequired) ? "certificate" : "")
@@ -164,6 +161,8 @@ Item {
   property bool nativeBuildStarted: false
   readonly property bool errorActive: root.printerHasError()
     || root.processError !== ""
+  readonly property bool barErrorActive: root.printerHasError()
+    || root.processErrorAffectsBar
   readonly property bool modelErrorActive: root.modelStatus === "error"
     && root.modelError !== ""
   readonly property bool barFinishActive: root.connected && !root.stale
@@ -303,7 +302,7 @@ Item {
       return { ok: false, error: "Settings could not be saved by Omarchy Shell" }
     }
     if (!backendChanged && !replacement) {
-      return { ok: true, mode: root.connectionVerified ? "status" : "connecting" }
+      return { ok: true, mode: root.printerStateKnown ? "status" : "connecting" }
     }
     if (backendChanged) sendConfiguration(draft)
     if (!replacement) return { ok: true, mode: "connecting" }
@@ -391,7 +390,7 @@ Item {
     }
     root.clearTlsProbeState()
     root.tlsRejected = false
-    root.processError = ""
+    root.reportProcessError("")
     if (backendChanged) sendConfiguration(trusted)
     if (!replacement) return { ok: true, mode: "connecting" }
     Qt.callLater(function() {
@@ -583,11 +582,12 @@ Item {
     return width.toFixed(1) + " × " + depth.toFixed(1) + " × " + height.toFixed(1) + " mm"
   }
 
-  function compactLabel() {
+  function statusSummary(separator) {
     if (!root.hasConnectionTarget) return "SETUP"
-    if (!root.connectionVerified) return "WAIT"
-    var state = root.connected ? root.displayGcodeState : "OFFLINE"
-    return state + " " + root.percent + "% "
+    if (!root.printerStateKnown) return "CONNECTING"
+    if (!root.connected) return "OFFLINE"
+    var gap = separator === undefined ? " " : String(separator)
+    return root.displayGcodeState + gap + root.percent + "%" + gap
       + root.formatTemp(root.nozzleTemp) + "/" + root.formatTemp(root.bedTemp)
   }
 
@@ -611,9 +611,10 @@ Item {
     }
   }
 
-  function reportProcessError(message) {
+  function reportProcessError(message, hideInBar) {
     processError = String(message || "")
     processErrorReportUpdate = processError === "" ? "" : lastUpdate
+    processErrorAffectsBar = processError !== "" && hideInBar !== true
   }
 
   function writeCommand(command) {
@@ -715,21 +716,19 @@ Item {
     message = objectOrEmpty(message)
     var printer = objectOrEmpty(message.printer)
     var model = objectOrEmpty(message.model)
+    var stateWasUnknown = !root.printerStateKnown
     var nextGeneration = isNonNegativeInteger(model.generation) ? model.generation : -1
     geometryAssembler.setGeneration(nextGeneration)
+    printerStateKnown = true
     connected = printer.connected === true
     stale = printer.stale !== false
     var reportUpdate = String(printer.lastUpdate || "")
     var hasFreshReport = connected && printer.stale === false
       && reportUpdate !== ""
     if (hasFreshReport) {
-      var wasVerified = root.connectionVerified
-      connectionVerified = true
       if (processError !== "" && reportUpdate !== processErrorReportUpdate) {
-        processError = ""
-        processErrorReportUpdate = ""
+        root.reportProcessError("")
       }
-      if (!wasVerified) root.statusAvailable()
     }
     gcodeState = String(printer.gcodeState || (connected ? "IDLE" : "OFFLINE"))
     subtaskName = String(printer.subtaskName || "")
@@ -763,13 +762,14 @@ Item {
     if (modelErrorCode === "certificate_changed") {
       handleTlsMismatch("FTPS certificate changed. Check and approve the printer again.")
     }
+    if (stateWasUnknown) root.statusAvailable()
   }
 
   function resetOperationalState() {
     finishReadyTimer.stop()
     finishGraceExpired = false
     connected = false
-    connectionVerified = false
+    printerStateKnown = false
     stale = true
     gcodeState = "OFFLINE"
     subtaskName = ""
@@ -796,8 +796,7 @@ Item {
     modelTotalBytes = 0
     zCurrent = NaN
     zMode = "unknown"
-    processError = ""
-    processErrorReportUpdate = ""
+    root.reportProcessError("")
     secretRequired = false
     secretStored = false
     secretStatusKnown = false
@@ -820,12 +819,11 @@ Item {
       geometryAssembler.clearPending()
       if (!daemonReady || !installationIdentified) {
         resetOperationalState()
-        processError = "Unsupported backend protocol"
+        root.reportProcessError("Unsupported backend protocol")
         return
       }
       backendSession.markReady()
-      processError = ""
-      processErrorReportUpdate = ""
+      root.reportProcessError("")
       sendConfiguration()
       return
     }
@@ -893,7 +891,8 @@ Item {
         root.errorReported("Unable to read the printer certificate")
         return
       }
-      reportProcessError(message.message)
+      reportProcessError(message.message,
+        message.scope === "mqtt" && message.code === "connection")
       if (message.scope === "tls" && message.code === "certificate_changed") {
         handleTlsMismatch("Printer certificate changed. Check it before reconnecting.")
       } else if (message.scope === "mqtt" && message.code === "authentication") {
