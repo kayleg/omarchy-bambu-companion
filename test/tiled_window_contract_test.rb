@@ -74,11 +74,13 @@ class TiledWindowContractTest < Minitest::Test
     assert_match(/SectionTitle \{ objectName: "APPLICATION" \}/, telemetry)
     assert_match(/text: "v" \+ pane\.appVersion/, telemetry)
     assert_match(/visible: pane\.updateAvailable.*text: "\\uf019"/m, telemetry)
-    assert_match(/id: versionIndicator.*anchors\.verticalCenter: parent\.verticalCenter/m,
+    assert_match(/height: Math\.max\(versionText\.implicitHeight,.*updateButton\.visible \? updateButton\.height : 0\).*id: versionIndicator/m,
                  telemetry)
-    assert_match(/id: versionText.*anchors\.verticalCenter: parent\.verticalCenter/m,
+    assert_match(/id: versionIndicator.*anchors\.verticalCenter: versionText\.verticalCenter/m,
                  telemetry)
-    assert_match(/id: updateButton.*anchors\.verticalCenter: parent\.verticalCenter/m,
+    assert_match(/id: versionText.*anchors\.top: parent\.top/m,
+                 telemetry)
+    assert_match(/id: updateButton.*anchors\.verticalCenter: versionText\.verticalCenter/m,
                  telemetry)
     assert_match(/onClicked: pane\.updateRequested\(\)/, telemetry)
     assert_match(/appVersion: root\.service\.currentVersion.*updateAvailable: root\.service\.pluginUpdateAvailable.*onUpdateRequested: root\.service\.installPluginUpdate\(\)/m,
