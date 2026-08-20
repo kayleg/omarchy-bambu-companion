@@ -368,11 +368,11 @@ class QmlContractTest < Minitest::Test
     assert_match(/property color errorColor:/, @telemetry_source)
     assert_includes @telemetry_source, "property bool errorActive: false"
     assert_includes @telemetry_source, "property bool modelErrorActive: false"
-    assert_match(/Column\s*{\s*id: telemetryContent.*Text\s*{.*text: \(pane\.online \? "● ONLINE" : "○ OFFLINE"\).*Row\s*{.*SidebarPrinterIcon\s*{.*anchors\.verticalCenter: parent\.verticalCenter.*Text\s*{\s*id: printerNameText.*verticalAlignment: Text\.AlignVCenter/m,
+    assert_match(/Column\s*{\s*id: telemetryContent.*Text\s*{.*pane\.demoActive \? "◆ DEMO".*pane\.online \? "● ONLINE" : "○ OFFLINE".*Row\s*{.*SidebarPrinterIcon\s*{.*anchors\.verticalCenter: parent\.verticalCenter.*Text\s*{\s*id: printerNameText.*verticalAlignment: Text\.AlignVCenter/m,
                  @telemetry_source)
-    assert_match(/text: \(pane\.online \? "● ONLINE" : "○ OFFLINE"\).*color: pane\.errorActive \? pane\.errorColor/m,
+    assert_match(/text: \(pane\.demoActive \? "◆ DEMO".*color: pane\.demoActive \? pane\.accent.*pane\.errorActive \? pane\.errorColor/m,
                  @telemetry_source)
-    assert_match(/text: \(pane\.online \? "● ONLINE" : "○ OFFLINE"\).*pane\.online \? pane\.successColor : pane\.dim/m,
+    assert_match(/text: \(pane\.demoActive \? "◆ DEMO".*pane\.online \? pane\.successColor : pane\.dim/m,
                  @telemetry_source)
     assert_match(/function printerHasError\(\).*state === "ERROR".*state === "FAILED"/m,
                  @source)
@@ -399,7 +399,7 @@ class QmlContractTest < Minitest::Test
                  @dashboard_source)
     assert_match(/BambuTelemetryPane\s*{.*successColor: root\.successColor/m,
                  @dashboard_source)
-    assert_match(/BambuModelViewport\s*{.*errorColor: root\.errorColor.*errorActive: root\.service\.errorActive \|\| root\.service\.modelErrorActive.*printing: root\.service\.connected && root\.service\.gcodeState === "RUNNING"/m,
+    assert_match(/BambuModelViewport\s*{.*errorColor: root\.errorColor.*errorActive: root\.service\.errorActive \|\| root\.service\.modelErrorActive.*printing: root\.service\.demoActive\s*\|\| \(root\.service\.connected && root\.service\.gcodeState === "RUNNING"\)/m,
                  @dashboard_source)
     assert_match(/BambuSettingsView\s*{.*errorColor: root\.errorColor/m,
                  @dashboard_source)

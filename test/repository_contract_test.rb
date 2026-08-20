@@ -41,7 +41,7 @@ class RepositoryContractTest < Minitest::Test
     defaults = manifest.fetch("barWidget").fetch("defaults")
 
     assert_equal "io.github.ypmrg.bambu-companion", manifest.fetch("id")
-    assert_equal "1.4.2", manifest.fetch("version")
+    assert_equal "1.5.0", manifest.fetch("version")
     assert_includes manifest.fetch("kinds"), "bar-widget"
     assert_includes manifest.fetch("kinds"), "service"
     assert_includes manifest.fetch("kinds"), "panel"
@@ -84,21 +84,6 @@ class RepositoryContractTest < Minitest::Test
     assert_match(/certificate changes.*block.*reconnect/im, readme)
     assert_match(/existing installations.*approve.*once/im, readme)
     refute_match(/certificate.*verification.*disabled/i, readme)
-  end
-
-  def test_offline_demo_feature_and_fixtures_are_absent
-    production_paths = %w[
-      manifest.json BambuWidget.qml BambuService.qml BambuDashboard.qml
-      BambuSettingsView.qml README.md
-    ]
-      .concat(Dir[File.join(ROOT, "lib/**/*.rb")])
-    production = production_paths.map do |path|
-      File.read(path.start_with?(ROOT) ? path : File.join(ROOT, path))
-    end.join("\n")
-
-    refute_match(/demoMode|Offline demo mode|start_demo|demo_thread/i, production)
-    refute File.exist?(File.join(ROOT, "fixtures/demo.gcode"))
-    refute File.exist?(File.join(ROOT, "fixtures/demo-report.json"))
   end
 
   def test_vm_instructions_do_not_claim_that_plugin_add_installs_a_local_checkout

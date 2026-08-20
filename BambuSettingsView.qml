@@ -17,6 +17,8 @@ Item {
   property bool allowBack: true
   property bool requireAccessCode: false
   property bool canDisconnect: false
+  property bool demoAvailable: false
+  property bool demoActive: false
   property bool secretRequired: false
   property bool secretStored: false
   property bool secretStatusKnown: false
@@ -34,6 +36,7 @@ Item {
   signal saveRequested(var draft, string accessCode)
   signal trustRequested(var draft, string accessCode)
   signal disconnectRequested()
+  signal demoRequested()
   signal forgetCodeRequested()
   signal barSummaryToggled(bool enabled)
   signal inputFocusReleased()
@@ -556,12 +559,18 @@ Item {
         width: Math.max(0, (parent.width - parent.spacing) / 2)
         height: parent.height
         clip: true
-        enabled: form.canDisconnect
-        text: "DISCONNECT PRINTER"
-        foreground: enabled ? form.errorColor : form.dim
-        accent: form.errorColor
+        enabled: form.canDisconnect || (form.demoAvailable && form.daemonReady)
+        text: form.demoAvailable
+          ? (form.demoActive ? "EXIT DEMO" : "TRY DEMO")
+          : "DISCONNECT PRINTER"
+        foreground: enabled
+          ? (form.demoAvailable ? form.accent : form.errorColor) : form.dim
+        accent: form.demoAvailable ? form.accent : form.errorColor
         bordered: true
-        onClicked: form.disconnectRequested()
+        onClicked: {
+          if (form.demoAvailable) form.demoRequested()
+          else form.disconnectRequested()
+        }
       }
 
       BambuButton {

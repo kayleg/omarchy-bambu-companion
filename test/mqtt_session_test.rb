@@ -101,7 +101,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_connect_subscribe_pushall_and_report_callback
-    config = test_printer_config
+    config = config_fixture
     client = FakeClient.new("print" => { "mc_percent" => 7 })
     reports = []
     session = BambuCompanion::MqttSession.new(
@@ -127,7 +127,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_invalid_json_reports_error_and_keeps_consuming_messages
-    config = test_printer_config
+    config = config_fixture
     client = PayloadClient.new("not json", JSON.generate("print" => { "mc_percent" => 8 }))
     reports = []
     errors = []
@@ -144,7 +144,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_oversized_report_is_not_parsed_and_later_reports_still_arrive
-    config = test_printer_config
+    config = config_fixture
     oversized = "x" * (BambuCompanion::MqttSession::MAX_REPORT_BYTES + 1)
     client = PayloadClient.new(oversized, JSON.generate("print" => { "mc_percent" => 9 }))
     reports = []
@@ -162,7 +162,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_run_reports_connection_failure_and_can_stop_during_backoff
-    config = test_printer_config
+    config = config_fixture
     failure = IOError.new("printer unavailable")
     connections = []
     errors = []
@@ -184,7 +184,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_run_catches_mqtt_protocol_authentication_rejection
-    config = test_printer_config
+    config = config_fixture
     failure = MQTT::ProtocolException.new("Connection refused: not authorised")
     connections = []
     errors = []
@@ -219,7 +219,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_backoff_resets_after_a_connection_succeeds
-    config = test_printer_config
+    config = config_fixture
     clients = [FailingClient.new(IOError.new("offline")), FakeClient.new("print" => {})]
     errors = []
     waits = []
@@ -241,7 +241,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_stop_wakes_a_run_waiting_to_reconnect
-    config = test_printer_config
+    config = config_fixture
     entered_backoff = Queue.new
     session = BambuCompanion::MqttSession.new(
       config: config, secret: "memory-secret", on_report: ->(*) {},
@@ -262,7 +262,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_stop_unblocks_a_connected_run_waiting_for_reports
-    config = test_printer_config
+    config = config_fixture
     client = BlockingClient.new
     session = BambuCompanion::MqttSession.new(
       config: config, secret: "memory-secret", on_report: ->(*) {},
@@ -282,7 +282,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_stop_during_client_factory_prevents_late_connection
-    config = test_printer_config
+    config = config_fixture
     client = ConnectTrackingClient.new
     entered_factory = Queue.new
     release_factory = Queue.new
@@ -313,7 +313,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_stop_does_not_wait_for_a_blocked_connect
-    config = test_printer_config
+    config = config_fixture
     client = BlockingConnectClient.new
     session = BambuCompanion::MqttSession.new(
       config: config, secret: "memory-secret", on_report: ->(*) {},
@@ -337,7 +337,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_report_callback_can_stop_its_own_session
-    config = test_printer_config
+    config = config_fixture
     client = BlockingClient.new
     session = nil
     session = BambuCompanion::MqttSession.new(
@@ -358,7 +358,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_disconnect_failure_does_not_mask_read_failure_and_cleanup_still_runs
-    config = test_printer_config
+    config = config_fixture
     client = DisconnectFailingClient.new("print" => {})
     session = BambuCompanion::MqttSession.new(
       config: config, secret: "memory-secret", on_report: ->(*) {},
@@ -408,7 +408,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_pin_mismatch_is_translated_before_mqtt_credentials_can_be_accepted
-    config = test_printer_config
+    config = config_fixture
     client = FailingClient.new(
       OpenSSL::SSL::SSLError.new("certificate verify failed untrusted-data")
     )
@@ -436,7 +436,7 @@ class MqttSessionTest < Minitest::Test
   end
 
   def test_certificate_change_stops_the_retry_loop
-    config = test_printer_config
+    config = config_fixture
     error = BambuCompanion::TlsCertificateError.new(
       "certificate_changed", "Printer TLS certificate changed"
     )

@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Effects
 import qs.Commons
-import qs.Ui
 
 Item {
   id: viewport
@@ -16,6 +15,7 @@ Item {
   property bool printerConfigured: false
   property bool daemonReady: false
   property bool printing: false
+  readonly property real nozzleSpeed: 50
   property bool previewAvailable: false
   property bool gcodeAvailable: false
   property bool autoRotateDefault: true
@@ -147,7 +147,7 @@ Item {
       nozzleMarker.sampleAvailable = false
       return
     }
-    var world = item.sampleNozzle(viewport.zCurrent, routeCamera.nozzlePhase)
+    var world = item.sampleNozzle(viewport.zCurrent, routeCamera.nozzleDistance)
     if (!world || world.length !== 3) {
       nozzleMarker.sampleAvailable = false
       return
@@ -244,7 +244,7 @@ Item {
       property real lastDragX: 0
       property real lastDragY: 0
       property double lastFrameTimestamp: 0
-      property real nozzlePhase: 0
+      property real nozzleDistance: 0
 
       Behavior on explosionProgress {
         NumberAnimation {
@@ -260,8 +260,8 @@ Item {
       }
 
       function clampPitch(value) {
-        var limit = Math.PI / 2 - 0.05
-        return Math.max(-limit, Math.min(limit, value))
+        var minimum = -Math.PI / 2 + 0.05
+        return Math.max(minimum, Math.min(-0.05, value))
       }
 
       function orientationAfterDrag(startYaw, startPitch, deltaX, deltaY,
@@ -328,7 +328,7 @@ Item {
           yaw = normalizeAngle(yaw + elapsed / 14000 * Math.PI * 2)
         }
         if (viewport.printing) {
-          nozzlePhase = (nozzlePhase + elapsed / 6000) % 1
+          nozzleDistance += elapsed / 1000 * viewport.nozzleSpeed
         }
       }
 
@@ -341,7 +341,7 @@ Item {
       onDraggingChanged: viewport.syncRouteItem()
       onWidthChanged: viewport.syncRouteItem()
       onHeightChanged: viewport.syncRouteItem()
-      onNozzlePhaseChanged: viewport.syncNozzleMarker()
+      onNozzleDistanceChanged: viewport.syncNozzleMarker()
     }
 
     Loader {

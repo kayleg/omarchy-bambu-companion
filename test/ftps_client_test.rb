@@ -72,7 +72,7 @@ class FtpsClientTest < Minitest::Test
   def client(files, max_bytes: 1024)
     ftp = FakeFtp.new(files)
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       max_bytes: max_bytes, ftp_factory: ->(*) { ftp }, sleeper: ->(_seconds) {}
     )
     [object, ftp]
@@ -128,7 +128,7 @@ class FtpsClientTest < Minitest::Test
   end
 
   def test_rejects_non_positive_download_bounds
-    config = test_printer_config
+    config = config_fixture
 
     assert_raises(ArgumentError) do
       BambuCompanion::FtpsClient.new(config: config, secret: "x", max_bytes: 0)
@@ -218,7 +218,7 @@ class FtpsClientTest < Minitest::Test
       FakeFtp.new("/same.gcode" => "root", "/cache/same.gcode" => "cache")
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ftp_factory
     )
 
@@ -313,7 +313,7 @@ class FtpsClientTest < Minitest::Test
   def test_cancellation_before_connecting_does_not_open_ftps
     connections = 0
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { connections += 1 }
     )
 
@@ -383,7 +383,7 @@ class FtpsClientTest < Minitest::Test
     attempts = 0
     secret = "secret-sentinel"
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: secret,
+      config: config_fixture, secret: secret,
       ftp_factory: lambda do |*_args|
         attempts += 1
         raise IOError, "authentication rejected #{secret}"
@@ -408,7 +408,7 @@ class FtpsClientTest < Minitest::Test
     end
     ftp = ftp_class.new("/part.gcode" => "ready")
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }
     )
 
@@ -428,7 +428,7 @@ class FtpsClientTest < Minitest::Test
       FakeFtp.new(attempts < 3 ? {} : { "/late.gcode" => "ready" })
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ftp_factory, sleeper: ->(_seconds) {}
     )
     Dir.mktmpdir do |dir|
@@ -444,7 +444,7 @@ class FtpsClientTest < Minitest::Test
   def test_retry_delays_are_bounded_and_linear
     delays = []
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { FakeFtp.new({}) }, sleeper: ->(seconds) { delays << seconds }
     )
 
@@ -460,7 +460,7 @@ class FtpsClientTest < Minitest::Test
     connections = 0
     cancelled = false
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: lambda do |*_args|
         connections += 1
         FakeFtp.new({})
@@ -481,7 +481,7 @@ class FtpsClientTest < Minitest::Test
 
   def test_factory_receives_config_and_same_in_memory_secret
     received = nil
-    config = test_printer_config
+    config = config_fixture
     secret = "session-secret"
     ftp = FakeFtp.new("/part.gcode" => "ready")
     object = BambuCompanion::FtpsClient.new(
@@ -503,7 +503,7 @@ class FtpsClientTest < Minitest::Test
   end
 
   def test_default_factory_uses_implicit_private_ftps_and_explicit_timeouts
-    config = test_printer_config
+    config = config_fixture
     secret = "session-secret"
     calls = []
     connection = Object.new
@@ -538,7 +538,7 @@ class FtpsClientTest < Minitest::Test
   end
 
   def test_default_ftp_context_requires_the_pinned_leaf_on_all_tls_sessions
-    config = test_printer_config
+    config = config_fixture
     object = BambuCompanion::FtpsClient.new(
       config: config, secret: "session-secret"
     )
@@ -553,7 +553,7 @@ class FtpsClientTest < Minitest::Test
   end
 
   def test_default_factory_closes_connection_when_protection_setup_fails
-    config = test_printer_config
+    config = config_fixture
     closed = false
     connection = Object.new
     connection.define_singleton_method(:connect) { |_host, _port| true }
@@ -575,7 +575,7 @@ class FtpsClientTest < Minitest::Test
   end
 
   def test_default_factory_closes_connection_when_login_fails
-    config = test_printer_config
+    config = config_fixture
     connection = Object.new
     closed = false
     connection.define_singleton_method(:connect) { |_host, _port| true }
@@ -596,7 +596,7 @@ class FtpsClientTest < Minitest::Test
   end
 
   def test_handshake_failure_closes_each_ftp_and_raw_socket_across_retries
-    config = test_printer_config
+    config = config_fixture
     secret = "handshake-secret"
     raw_sockets = []
     ftp_close_calls = []
@@ -644,7 +644,7 @@ class FtpsClientTest < Minitest::Test
     end
     ftp = ftp_class.new("/root.gcode" => "root", "/cache/archive.3mf" => "archive")
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }
     )
 
@@ -667,7 +667,7 @@ class FtpsClientTest < Minitest::Test
     end
     ftp = ftp_class.new("/model/A1 Mini Version.3mf" => "archive")
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }, sleeper: ->(_seconds) {}
     )
 
@@ -687,7 +687,7 @@ class FtpsClientTest < Minitest::Test
       "/model/current.3mf" => "built-in archive"
     )
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }, sleeper: ->(_seconds) {}
     )
 
@@ -716,7 +716,7 @@ class FtpsClientTest < Minitest::Test
       end
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: lambda do |*_args|
         attempts += 1
         ftp_class.new("/cache/part.gcode" => "wrong")
@@ -744,7 +744,7 @@ class FtpsClientTest < Minitest::Test
     end
     ftp = ftp_class.new("/part.gcode" => "ready")
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }
     )
 
@@ -767,7 +767,7 @@ class FtpsClientTest < Minitest::Test
       end
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: lambda do |*_args|
         attempts += 1
         ftp_class.new({})
@@ -791,7 +791,7 @@ class FtpsClientTest < Minitest::Test
     end
     ftp = ftp_class.new("/private.gcode" => "must-not-download")
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }, sleeper: ->(_seconds) {}
     )
 
@@ -816,7 +816,7 @@ class FtpsClientTest < Minitest::Test
       end
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       max_list_entries: 3, ftp_factory: ->(*) { ftp }
     )
 
@@ -845,7 +845,7 @@ class FtpsClientTest < Minitest::Test
       block.call("/second.gcode\n")
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }
     )
 
@@ -872,7 +872,7 @@ class FtpsClientTest < Minitest::Test
       block.call("x" * 17)
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       max_list_line_bytes: 16, ftp_factory: ->(*) { ftp }
     )
 
@@ -897,7 +897,7 @@ class FtpsClientTest < Minitest::Test
       block.call("efghi")
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       max_list_bytes: 8, max_list_line_bytes: 32, ftp_factory: ->(*) { ftp }
     )
 
@@ -926,7 +926,7 @@ class FtpsClientTest < Minitest::Test
       end
     end
     object = BambuCompanion::FtpsClient.new(
-      config: test_printer_config, secret: "session-secret",
+      config: config_fixture, secret: "session-secret",
       ftp_factory: ->(*) { ftp }
     )
 

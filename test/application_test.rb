@@ -189,6 +189,28 @@ class ApplicationTest < Minitest::Test
     end
   end
 
+  class Demo
+    attr_reader :arguments, :refreshes
+
+    def initialize(arguments)
+      @arguments = arguments
+      @refreshes = 0
+      @started = false
+      @stopped = false
+    end
+
+    def start = @started = true
+    def stop = @stopped = true
+
+    def refresh_preview
+      @refreshes += 1
+      true
+    end
+
+    def started? = @started
+    def stopped? = @stopped
+  end
+
   class ScriptedInput
     def initialize(objects, after: {})
       @objects = objects
@@ -386,6 +408,97 @@ class ApplicationTest < Minitest::Test
     assert sessions.first.stopped
     assert workers.first.stopped
     refute_includes output.string, SECRET
+  end
+
+  def test_demo_replaces_previous_runtime_without_touching_secret_storage
+    demos = []
+    factory = lambda do |**arguments|
+      demos << Demo.new(arguments)
+      demos.last
+    end
+    app, output, sessions, workers = build_app(
+      input: StringIO.new, secrets: ForbiddenSecrets.new,
+      demo_factory: factory, demo_path: "/bundled/omarchy.gcode"
+    )
+
+    app.handle(
+      "op" => "start_demo", "protocol" => 1,
+      "requestId" => 4
+    )
+    app.handle("op" => "refresh_model")
+    app.handle(
+      "op" => "start_demo", "protocol" => 1,
+      "requestId" => 5
+    )
+    app.handle("op" => "stop_demo", "protocol" => 1, "requestId" => 4)
+
+    assert demos.first.started?
+    assert demos.first.stopped?
+    assert_equal 1, demos.first.refreshes
+    assert demos.last.started?
+    refute demos.last.stopped?
+    assert_equal "/bundled/omarchy.gcode", demos.last.arguments.fetch(:path)
+    refute_includes demos.last.arguments, :max_segments
+    assert_empty sessions
+    assert_empty workers
+
+    app.handle("op" => "stop_demo", "protocol" => 1, "requestId" => 5)
+    assert demos.last.stopped?
+    app.send(:shutdown)
+    assert_empty parsed_events(output)
+  end
+
+  def test_printer_configuration_stops_an_active_demo
+    demos = []
+    app, _output, sessions, workers = build_app(
+      input: StringIO.new,
+      secrets: Secrets.new({ "0309C123456789" => SECRET }),
+      demo_factory: lambda { |**arguments| demos << Demo.new(arguments); demos.last }
+    )
+
+    app.handle(
+      "op" => "start_demo", "protocol" => 1,
+      "requestId" => 8
+    )
+    app.handle("op" => "configure", "protocol" => 1, "config" => printer_config)
+
+    assert demos.first.stopped?
+    assert_equal 1, sessions.length
+    assert_equal 1, workers.length
+    app.send(:shutdown)
+  end
+
+  def test_demo_command_bounds_request_id
+    app, output, = build_app(input: StringIO.new, secrets: ForbiddenSecrets.new)
+
+    app.handle(
+      "op" => "start_demo", "protocol" => 1,
+      "requestId" => -1
+    )
+    app.send(:shutdown)
+
+    errors = parsed_events(output).select { |event| event["event"] == "error" }
+    assert_equal ["invalid_config"], errors.map { |event| event["code"] }
+    assert_equal ["requestId is invalid"], errors.map { |event| event["message"] }
+  end
+
+  def test_demo_start_failure_is_scoped_and_does_not_escape_the_command_loop
+    app, output, = build_app(
+      input: StringIO.new, secrets: ForbiddenSecrets.new,
+      demo_factory: ->(**) { raise "private runtime detail" }
+    )
+
+    app.handle(
+      "op" => "start_demo", "protocol" => 1,
+      "requestId" => 9
+    )
+    app.send(:shutdown)
+
+    error = parsed_events(output).find { |event| event["scope"] == "demo" }
+    assert_equal "start_failed", error.fetch("code")
+    assert_equal "Demo could not be started", error.fetch("message")
+    assert_equal 9, error.fetch("demoSession")
+    refute_includes output.string, "private runtime detail"
   end
 
   def test_unpinned_legacy_configuration_never_starts_authenticated_transports
@@ -828,7 +941,7 @@ class ApplicationTest < Minitest::Test
       session_factory: lambda { |**arguments| sessions << Session.new(arguments); sessions.last }
     )
     app.handle("op" => "configure", "protocol" => 1, "config" => printer_config)
-    connection = app.instance_variable_get(:@connection)
+    connection = app.instance_variable_get(:@runtime)
     state_mutex = BlockingFirstMutex.new
     connection.instance_variable_set(:@state_mutex, state_mutex)
     stale_report = Thread.new do
@@ -919,7 +1032,7 @@ class ApplicationTest < Minitest::Test
     replacement_done = Queue.new
     block_mutex = Mutex.new
     blocked = false
-    connection = app.instance_variable_get(:@connection)
+    connection = app.instance_variable_get(:@runtime)
     original_active = connection.method(:active?)
     connection.define_singleton_method(:active?) do
       result = original_active.call
@@ -981,7 +1094,7 @@ class ApplicationTest < Minitest::Test
     release_first = Queue.new
     calls_mutex = Mutex.new
     calls = 0
-    connection = app.instance_variable_get(:@connection)
+    connection = app.instance_variable_get(:@runtime)
     original_emit_state = connection.method(:emit_state)
     connection.define_singleton_method(:emit_state) do |worker|
       first = calls_mutex.synchronize do
@@ -1687,7 +1800,7 @@ class ApplicationTest < Minitest::Test
 
   def test_default_worker_uses_gcode_parser_and_bounded_3mf_preview
     app, = build_app(input: StringIO.new)
-    config = test_printer_config("maxSegments" => 12_345)
+    config = config_fixture("maxSegments" => 12_345)
 
     worker = BambuCompanion::ModelWorker.for_printer(
       config: config,

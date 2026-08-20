@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Effects
 import qs.Commons
-import qs.Ui
 
 Item {
   id: pane
@@ -13,6 +12,7 @@ Item {
   property color errorColor: Color.accent
   property bool errorActive: false
   property bool modelErrorActive: false
+  property bool demoActive: false
   property string fontFamily: Style.font.family
   property url printerIconSource
 
@@ -159,10 +159,12 @@ Item {
 
       Text {
         width: parent.width
-        text: (pane.online ? "● ONLINE" : "○ OFFLINE")
+        text: (pane.demoActive ? "◆ DEMO"
+          : (pane.online ? "● ONLINE" : "○ OFFLINE"))
           + "  ·  " + pane.printerState
-        color: pane.errorActive ? pane.errorColor
-          : (pane.online ? pane.successColor : pane.dim)
+        color: pane.demoActive ? pane.accent
+          : (pane.errorActive ? pane.errorColor
+            : (pane.online ? pane.successColor : pane.dim))
         elide: Text.ElideRight
         font.family: pane.fontFamily
         font.pixelSize: Style.font.caption

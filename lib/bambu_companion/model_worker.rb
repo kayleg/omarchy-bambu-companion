@@ -84,12 +84,35 @@ module BambuCompanion
     STOP = Object.new.freeze
     STOP_JOIN_SECONDS = 0.25
 
+    def self.ipc_payload(snapshot)
+      {
+        status: snapshot[:status], generation: snapshot[:generation],
+        segmentCount: snapshot[:segment_count], zCurrent: snapshot[:z_current],
+        zMode: snapshot[:z_mode], error: snapshot[:error],
+        loadPhase: snapshot[:load_phase], loadProgress: snapshot[:load_progress],
+        loadedBytes: snapshot[:loaded_bytes], totalBytes: snapshot[:total_bytes]
+      }
+    end
+
     def self.for_printer(config:, secret:, emitter:, on_status:)
       new(
         ftps_client: secret && FtpsClient.new(config: config, secret: secret),
         loader: PrintPreviewLoader.new(
           source: GcodeSource.new,
           gcode_parser: GcodeParser.new(max_segments: config.max_segments),
+          preview_source: ThreeMfPreview.new
+        ),
+        emitter: emitter,
+        on_status: on_status
+      )
+    end
+
+    def self.for_local(max_segments:, emitter:, on_status:)
+      new(
+        ftps_client: nil,
+        loader: PrintPreviewLoader.new(
+          source: GcodeSource.new,
+          gcode_parser: GcodeParser.new(max_segments: max_segments),
           preview_source: ThreeMfPreview.new
         ),
         emitter: emitter,

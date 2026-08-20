@@ -47,6 +47,16 @@ plugin reloads and when other plugins are added. A connection loader remains
 until the first fresh status report is received; only then does the live
 dashboard appear.
 
+Before configuring anything, select **Try demo** in the initial Settings view
+to explore the dashboard and 3D route renderer with the bundled OMARCHY logo.
+The demo uses the production G-code parser and renderer against a local asset;
+it does not read the keyring, open MQTT or FTPS connections, or contact a
+printer.
+Its telemetry is an explicit static `DEMO` snapshot at 52%, layer 17 of 33, so
+the viewport shows both printed and remaining layers around the model's
+midpoint. Open Settings and select **Exit demo** to return to configuration.
+The bar continues to show `SETUP` throughout the demo.
+
 1. Enable local network access on the printer and obtain its serial number and
    LAN access code from the printer's network settings. On firmware that offers
    **Developer Mode**, enable it so third-party clients can use the local MQTT
@@ -130,6 +140,7 @@ git checkouts continue to show their current version without an update action.
 
 - Compact bar icon with optional status, progress and temperature summary.
 - Full dashboard in a normal, resizable tiled window opened from the widget.
+- First-run local demo using a bundled OpenSCAD OMARCHY logo model.
 - Live connection, print state, progress and remaining-time reporting.
 - Current and target nozzle/bed temperatures.
 - Current layer, total layers and exact or estimated Z progress.
@@ -144,8 +155,9 @@ git checkouts continue to show their current version without an update action.
 
 An unavailable configured printer is shown as `OFFLINE` with the normal theme
 color; the dashboard remains accessible while reconnection continues. With no
-printer configured, the initial Settings view can be closed to inspect the
-dashboard, whose preview area points back to Settings for configuration.
+printer configured, the initial Settings view offers the local demo and can
+still be closed to inspect the empty dashboard, whose preview area points back
+to Settings for configuration.
 
 After a completed print, `FINISH` remains visible for 60 seconds and then
 settles to `READY`. Starting another job cancels that delay immediately.
@@ -188,7 +200,7 @@ Preview controls:
 | Input | Action |
 | --- | --- |
 | Drag horizontally | Rotate around the model |
-| Drag vertically | Inspect from above or below |
+| Drag vertically | Tilt the model without crossing the build plane |
 | Hold the pointer | Pause automatic rotation |
 | Mouse wheel | Zoom from `0.50×` to `4.00×` |
 | Route / Image icons | Select an available preview source |
@@ -196,12 +208,12 @@ Preview controls:
 | Explode | Animate additional vertical spacing between G-code layers |
 
 Printed paths use the configured accent color; remaining paths stay subdued.
-While printing, a small animated point loops over the outer-wall segments of
-the nearest current layer. It gives the route visual motion; it is not the
-printer's real-time nozzle position. The route is drawn on the GPU, so
-auto-rotate and drag show every stored segment. If the renderer is compiling
-or cannot be built, the route view stays empty (`COMPILING ROUTE RENDERER`)
-and the 2D preview remains available.
+While printing, a small animated point follows the outer-wall segments of the
+nearest current layer at a fixed illustrative speed. It gives the route visual
+motion; it is not the printer's real-time nozzle position. The route is drawn
+on the GPU, so auto-rotate and drag show every stored segment. If the renderer
+is compiling or cannot be built, the route view stays empty
+(`COMPILING ROUTE RENDERER`) and the 2D preview remains available.
 
 ### Supported print files
 

@@ -6,7 +6,7 @@ require "bambu_companion/config"
 
 class ConfigTest < Minitest::Test
   def test_known_defaults_exclude_printer_identity
-    config = test_printer_config
+    config = config_fixture
 
     assert_equal "192.168.1.50", config.host
     assert_equal 8883, config.mqtt_port
@@ -50,12 +50,12 @@ class ConfigTest < Minitest::Test
 
   def test_accepts_free_form_network_addresses
     ["printer.local", "fe80::54%enp1s0", "[fd00::54]"].each do |host|
-      assert_equal host, test_printer_config("host" => host).host
+      assert_equal host, config_fixture("host" => host).host
     end
   end
 
   def test_normalizes_optional_tls_fingerprints
-    config = test_printer_config(
+    config = config_fixture(
       "mqttTlsFingerprint" => Array.new(32, "ab").join(":"),
       "ftpsTlsFingerprint" => "cd" * 32
     )
@@ -73,10 +73,10 @@ class ConfigTest < Minitest::Test
   def test_rejects_malformed_tls_fingerprints
     %w[AA invalid].each do |fingerprint|
       assert_raises(BambuCompanion::ConfigError) do
-        test_printer_config("mqttTlsFingerprint" => fingerprint)
+        config_fixture("mqttTlsFingerprint" => fingerprint)
       end
       assert_raises(BambuCompanion::ConfigError) do
-        test_printer_config("ftpsTlsFingerprint" => fingerprint)
+        config_fixture("ftpsTlsFingerprint" => fingerprint)
       end
     end
   end
@@ -84,7 +84,7 @@ class ConfigTest < Minitest::Test
   def test_bounds_and_sanitizes_network_address
     ["", "bad\0host", "a" * 256].each do |host|
       assert_raises(BambuCompanion::ConfigError) do
-        test_printer_config("host" => host)
+        config_fixture("host" => host)
       end
     end
   end
@@ -92,17 +92,17 @@ class ConfigTest < Minitest::Test
   def test_bounds_printer_identity_tokens
     %w[serial username].each do |key|
       assert_raises(BambuCompanion::ConfigError) do
-        test_printer_config(key => "a" * 129)
+        config_fixture(key => "a" * 129)
       end
     end
   end
 
   def test_rejects_invalid_values_without_partial_config
     assert_raises(BambuCompanion::ConfigError) do
-      test_printer_config("mqttPort" => 0)
+      config_fixture("mqttPort" => 0)
     end
     assert_raises(BambuCompanion::ConfigError) do
-      test_printer_config("serial" => "bad serial\n")
+      config_fixture("serial" => "bad serial\n")
     end
   end
 

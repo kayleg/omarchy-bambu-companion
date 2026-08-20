@@ -67,6 +67,8 @@ Item {
   property var pendingTlsDraft: ({})
   property var mqttTlsIdentity: ({})
   property var ftpsTlsIdentity: ({})
+  property bool demoActive: false
+  property int demoSessionId: 0
 
   readonly property string currentVersion: root.manifest && root.manifest.version
     ? String(root.manifest.version) : "unknown"
@@ -337,6 +339,7 @@ Item {
     if (!root.daemonReady || !backendSession.running) {
       return { ok: false, error: "Backend is not ready to check the certificate" }
     }
+    root.stopDemo()
     root.tlsProbeRequestId = (root.tlsProbeRequestId + 1) % 2147483647
     root.clearTlsProbeState()
     root.pendingTlsDraft = JSON.parse(JSON.stringify(draft))
@@ -584,6 +587,7 @@ Item {
 
   function sendConfiguration(draft) {
     if (!daemonReady || !root.hasConnectionTarget) return
+    if (root.demoActive) root.stopDemo()
     var config = draft && typeof draft === "object"
       ? configurationForDraft(draft) : configuration()
     writeCommand({ "op": "configure", "protocol": 1, "config": config })
@@ -660,8 +664,39 @@ Item {
     writeCommand({ "op": "refresh_model" })
   }
 
+  function startDemo() {
+    if (!root.requiresInitialSetup || !root.daemonReady || !backendSession.running)
+      return false
+    var nextId = root.demoSessionId % 2147483646 + 1
+    root.resetOperationalState()
+    root.demoSessionId = nextId
+    root.demoActive = true
+    if (root.writeCommand({
+      "op": "start_demo", "protocol": 1,
+      "requestId": nextId
+    })) return true
+    root.resetDemoState()
+    return false
+  }
+
+  function stopDemo() {
+    if (!root.demoActive) return true
+    var requestId = root.demoSessionId
+    var written = !root.daemonReady || !backendSession.running
+      || root.writeCommand({
+        "op": "stop_demo", "protocol": 1, "requestId": requestId
+      })
+    root.resetDemoState()
+    return written
+  }
+
+  function resetDemoState() {
+    root.demoActive = false
+    root.resetOperationalState()
+  }
+
   function handleBackendStopped() {
-    resetOperationalState()
+    resetDemoState()
     if (root.disconnectPending) {
       root.failDisconnect("Backend stopped before disconnecting the printer")
     }
@@ -726,6 +761,11 @@ Item {
     if (stateWasUnknown) root.statusAvailable()
   }
 
+  function handleDemoState(message) {
+    if (!root.demoActive || message.demoSession !== root.demoSessionId) return
+    root.handleState(message)
+  }
+
   function resetOperationalState() {
     finishReadyTimer.stop()
     finishGraceExpired = false
@@ -784,6 +824,7 @@ Item {
         return
       }
       backendSession.markReady()
+      root.resetDemoState()
       root.reportProcessError("")
       sendConfiguration()
       return
@@ -831,10 +872,25 @@ Item {
       root.ftpsTlsIdentity = ftpsIdentity
       root.errorReported("")
     } else if (message.event === "state") {
-      handleState(message)
+      if (!root.demoActive) handleState(message)
+    } else if (message.event === "demo_state") {
+      handleDemoState(message)
     } else if (String(message.event || "").indexOf("geometry_") === 0) {
-      geometryAssembler.handleGeometry(message)
+      var demoGeometry = message.demoSession !== undefined
+      if ((demoGeometry && root.demoActive
+           && message.demoSession === root.demoSessionId)
+          || (!demoGeometry && !root.demoActive))
+        geometryAssembler.handleGeometry(message)
     } else if (message.event === "error") {
+      if (message.scope === "demo") {
+        if (root.demoActive && message.demoSession === root.demoSessionId) {
+          root.modelStatus = "error"
+          root.modelErrorCode = String(message.code || "start_failed")
+          root.modelError = String(message.message || "Demo could not be started")
+          geometryAssembler.setGeneration(-1)
+        }
+        return
+      }
       if (root.disconnectPending
           && message.requestId === root.disconnectRequestId
           && message.scope === "secret") {
@@ -875,7 +931,8 @@ Item {
   }
   onBackendConfigurationFingerprintChanged: {
     if (!componentReady || persistingSettings) return
-    resetOperationalState()
+    if (root.demoActive) root.stopDemo()
+    else resetOperationalState()
     sendConfiguration()
   }
   onShellChanged: root.initialize()
@@ -914,7 +971,7 @@ Item {
       splitMarker: ""
       onRead: function(chunk) { console.warn(String(chunk).trim()) }
     }
-    onStarted: nativeBuildStarted = true
+    onStarted: root.nativeBuildStarted = true
     onExited: function(exitCode) {
       if (exitCode === 0)
         root.markRendererReady()

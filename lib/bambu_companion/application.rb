@@ -2,6 +2,7 @@
 
 require "digest"
 require_relative "config"
+require_relative "demo_session"
 require_relative "ipc"
 require_relative "printer_connection"
 require_relative "secret_store"
@@ -12,7 +13,9 @@ module BambuCompanion
     PROTOCOL = 1
     MAX_IPC_LINE_BYTES = IpcLineFramer::DEFAULT_MAX_LINE_BYTES
     MAX_ACCESS_CODE_BYTES = SecretStore::MAX_SECRET_BYTES
+    MAX_REQUEST_ID = 2_147_483_647
     THREAD_JOIN_SECONDS = 0.5
+    DEMO_GCODE_PATH = File.expand_path("../../demo/omarchy-logo.gcode", __dir__)
 
     def self.installation_id(root = File.expand_path("../..", __dir__))
       candidates = [root, File.join(root, ".git"), File.join(root, ".git", "config")]
@@ -27,6 +30,7 @@ module BambuCompanion
 
     def initialize(input: $stdin, output: $stdout, secret_store: SecretStore.new,
                    mqtt_factory: nil, worker_factory: nil,
+                   demo_factory: nil, demo_path: DEMO_GCODE_PATH,
                    outbound_capacity: AsyncIpcEmitter::DEFAULT_CAPACITY,
                    writer_join_seconds: AsyncIpcEmitter::DEFAULT_JOIN_SECONDS,
                    monotonic_clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
@@ -36,6 +40,8 @@ module BambuCompanion
       @secret_store = secret_store
       @mqtt_factory = mqtt_factory
       @worker_factory = worker_factory
+      @demo_factory = demo_factory || ->(**arguments) { DemoSession.new(**arguments) }
+      @demo_path = File.expand_path(demo_path)
       @installation_id = String(installation_id)
       @monotonic_clock = monotonic_clock
       @tls_probe = tls_probe
@@ -47,7 +53,8 @@ module BambuCompanion
       @run_thread = nil
       @config = nil
       @secret = nil
-      @connection = nil
+      @runtime = nil
+      @demo_session_id = nil
       @tls_probe_generation = 0
       @tls_probe_thread = nil
       @emitter = AsyncIpcEmitter.new(
@@ -91,6 +98,8 @@ module BambuCompanion
       when "configure" then configure(command)
       when "set_secret" then set_secret(command)
       when "clear_secret" then clear_secret(command)
+      when "start_demo" then start_demo(command)
+      when "stop_demo" then stop_demo(command)
       when "refresh_model" then refresh_model
       when "probe_tls" then probe_tls(command)
       when "shutdown" then request_shutdown
@@ -180,11 +189,7 @@ module BambuCompanion
     def probe_tls(command)
       return unless supported_protocol?(command)
 
-      request_id = command["requestId"]
-      unless request_id.is_a?(Integer) && request_id.between?(0, 2_147_483_647)
-        raise ConfigError, "requestId is invalid"
-      end
-
+      request_id = request_id(command)
       config = Config.from_h(command["config"] || {})
       start_tls_probe(config, request_id)
     end
@@ -222,10 +227,7 @@ module BambuCompanion
     end
 
     def clear_secret(command)
-      request_id = command["requestId"]
-      valid_request_id = request_id.nil? || (request_id.is_a?(Integer) &&
-        request_id.between?(0, 2_147_483_647))
-      raise ConfigError, "requestId is invalid" unless valid_request_id
+      request_id = request_id(command, optional: true)
 
       configuration_id, config = current_configuration
       unless config
@@ -262,42 +264,116 @@ module BambuCompanion
     end
 
     def refresh_model
-      connection = @control_mutex.synchronize { @connection unless @shutdown }
-      connection&.refresh_preview
+      runtime = @control_mutex.synchronize { @runtime unless @shutdown }
+      runtime&.refresh_preview
+    end
+
+    def start_demo(command)
+      return unless supported_protocol?(command)
+
+      request_id = request_id(command)
+      cancel_tls_probe
+      candidate = @demo_factory.call(
+        path: @demo_path,
+        session_id: request_id,
+        emitter: @emitter
+      )
+      previous = nil
+      attached = @publication_mutex.synchronize do
+        accepted = @control_mutex.synchronize do
+          next false if @shutdown
+
+          @configuration_id += 1
+          previous = @runtime
+          @runtime = candidate
+          @demo_session_id = request_id
+          @config = nil
+          @secret = nil
+          true
+        end
+        previous&.stop if accepted
+        accepted
+      end
+      return candidate.stop unless attached
+
+      candidate.start
+    rescue ConfigError
+      raise
+    rescue StandardError
+      detach_demo(candidate)
+      @emitter.emit(
+        "error", scope: "demo", code: "start_failed",
+        message: "Demo could not be started", retryable: true,
+        demoSession: request_id
+      )
+    end
+
+    def stop_demo(command)
+      return unless supported_protocol?(command)
+
+      request_id = request_id(command)
+
+      session = nil
+      @publication_mutex.synchronize do
+        @control_mutex.synchronize do
+          if @demo_session_id == request_id
+            session = @runtime
+            @runtime = nil
+            @demo_session_id = nil
+          end
+        end
+        session&.stop
+      end
+    end
+
+    def detach_demo(candidate)
+      return unless candidate
+
+      @publication_mutex.synchronize do
+        @control_mutex.synchronize do
+          if @runtime.equal?(candidate)
+            @runtime = nil
+            @demo_session_id = nil
+          end
+        end
+        candidate.stop
+      end
     end
 
     def replace_configuration(config)
-      connection = nil
+      runtime = nil
       configuration_id = @publication_mutex.synchronize do
         values = @control_mutex.synchronize do
           next if @shutdown
 
           @configuration_id += 1
-          connection = @connection
-          @connection = nil
+          runtime = @runtime
+          @runtime = nil
+          @demo_session_id = nil
           @config = config
           @secret = nil
           @configuration_id
         end
-        connection&.stop
+        runtime&.stop
         values
       end
       configuration_id
     end
 
     def restart_connection(expected_id)
-      connection = nil
+      runtime = nil
       replacement = @publication_mutex.synchronize do
         values = @control_mutex.synchronize do
           next unless !@shutdown && @configuration_id == expected_id && @config
 
           @configuration_id += 1
-          connection = @connection
-          @connection = nil
+          runtime = @runtime
+          @runtime = nil
+          @demo_session_id = nil
           @secret = nil
           [@configuration_id, @config]
         end
-        connection&.stop if values
+        runtime&.stop if values
         values
       end
       replacement
@@ -327,9 +403,10 @@ module BambuCompanion
       attached = @publication_mutex.synchronize do
         @control_mutex.synchronize do
           next false unless current_configuration_unlocked?(configuration_id)
-          next false unless @config.equal?(config) && @secret.equal?(secret) && !@connection
+          next false unless @config.equal?(config) && @secret.equal?(secret) && !@runtime
 
-          @connection = connection
+          @runtime = connection
+          @demo_session_id = nil
           true
         end
       end
@@ -366,6 +443,14 @@ module BambuCompanion
 
     def current_configuration_unlocked?(configuration_id)
       !@shutdown && @configuration_id == configuration_id
+    end
+
+    def request_id(command, optional: false)
+      value = command["requestId"]
+      return if optional && value.nil?
+      return value if value.is_a?(Integer) && value.between?(0, MAX_REQUEST_ID)
+
+      raise ConfigError, "requestId is invalid"
     end
 
     def start_tls_probe(config, request_id)
@@ -524,17 +609,18 @@ module BambuCompanion
     end
 
     def request_shutdown
-      connection = nil
+      runtime = nil
       @publication_mutex.synchronize do
         @control_mutex.synchronize do
           unless @shutdown
             @shutdown = true
             @configuration_id += 1
-            connection = @connection
-            @connection = nil
+            runtime = @runtime
+            @runtime = nil
+            @demo_session_id = nil
           end
         end
-        connection&.stop
+        runtime&.stop
       end
     end
 

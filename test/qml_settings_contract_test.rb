@@ -260,7 +260,7 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/id: preferencesGrid.*text: "BAR SUMMARY"/m,
                  source)
-    assert_match(/id: settingsFooter.*Row\s*\{.*BambuButton\s*\{.*text: "DISCONNECT PRINTER".*BambuButton\s*\{.*text: "SAVE & CONNECT"/m,
+    assert_match(/id: settingsFooter.*Row\s*\{.*BambuButton\s*\{.*form\.demoActive \? "EXIT DEMO" : "TRY DEMO".*"DISCONNECT PRINTER".*BambuButton\s*\{.*text: "SAVE & CONNECT"/m,
                  source)
     refute_match(/id: settingsFooter.*ToggleSwitch/m, source)
     refute_match(/parent\.width - \(form\.allowBack \? parent\.spacing \+ Style\.space\(70\) : 0\)/m, source)
@@ -281,7 +281,7 @@ class QmlSettingsContractTest < Minitest::Test
                  dashboard)
     assert_match(/function onStatusAvailable\(\).*viewMode === "connecting".*viewMode = "status"/m,
                  dashboard)
-    assert_match(/function backToStatus\(\).*!root\.service\.requiresInitialSetup && !root\.service\.printerStateKnown.*enterConnecting\(\).*return.*viewMode = "status"/m,
+    assert_match(/function backToStatus\(\).*!root\.service\.demoActive && !root\.service\.requiresInitialSetup.*!root\.service\.printerStateKnown.*enterConnecting\(\).*return.*viewMode = "status"/m,
                  dashboard)
   end
 
@@ -302,8 +302,37 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/allowBack: true/m, dashboard)
     assert_match(/onBackRequested:\s*\{\s*root\.backToStatus\(\)/m,
                  dashboard)
-    assert_match(/BambuModelViewport\s*\{.*printerConfigured: root\.service\.hasConnectionTarget/m,
+    assert_match(/BambuModelViewport\s*\{.*printerConfigured: root\.service\.hasConnectionTarget\s*\|\| root\.service\.demoActive/m,
                  dashboard)
+  end
+
+  def test_first_run_demo_is_explicit_local_and_does_not_replace_bar_state
+    service = service_source
+    dashboard = dashboard_source
+    settings = settings_source
+
+    assert_match(/function startDemo\(\).*root\.requiresInitialSetup.*"op": "start_demo".*"requestId": nextId/m,
+                 service)
+    assert_match(/function stopDemo\(\).*"op": "stop_demo".*resetDemoState\(\)/m,
+                 service)
+    assert_match(/function sendConfiguration\(draft\).*root\.demoActive.*root\.stopDemo\(\).*"op": "configure"/m,
+                 service)
+    assert_match(/function statusSummary\(separator\).*if \(!root\.hasConnectionTarget\) return "SETUP"/m,
+                 service)
+    assert_match(/function nextIdleView\(\).*service\.demoActive.*return "status".*requiresInitialSetup.*return "setup"/m,
+                 dashboard)
+    assert_includes settings, 'property bool demoAvailable: false'
+    assert_includes settings, 'form.demoActive ? "EXIT DEMO" : "TRY DEMO"'
+    assert_match(/onDemoRequested:.*service\.demoActive.*service\.stopDemo\(\).*service\.startDemo\(\).*viewMode = "status"/m,
+                 dashboard)
+    assert_match(/visible: !root\.service\.demoActive && root\.service\.secretRequired.*root\.viewMode === "status"/m,
+                 dashboard)
+    assert_match(/message\.event === "state".*!root\.demoActive.*handleState\(message\).*message\.event === "demo_state".*handleDemoState\(message\).*geometry_.*demoGeometry.*message\.demoSession === root\.demoSessionId/m,
+                 service)
+    assert_match(/function resetDemoState\(\).*root\.demoActive = false.*root\.resetOperationalState\(\)/m,
+                 service)
+    assert_match(/message\.scope === "demo".*message\.demoSession === root\.demoSessionId.*root\.modelStatus = "error".*return/m,
+                 service)
   end
 
   def test_late_quattro_settings_injection_and_runtime_resets_cannot_show_stale_status
@@ -505,7 +534,7 @@ class QmlSettingsContractTest < Minitest::Test
 
     assert_match(/id: actionRow.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,
                  telemetry)
-    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*Row\s*\{.*anchors\.fill: parent.*anchors\.margins: Style\.space\(12\).*text: "DISCONNECT PRINTER".*height: parent\.height.*text: "SAVE & CONNECT"/m,
+    assert_match(/id: settingsFooter.*height: Style\.space\(60\).*Row\s*\{.*anchors\.fill: parent.*anchors\.margins: Style\.space\(12\).*"DISCONNECT PRINTER".*height: parent\.height.*text: "SAVE & CONNECT"/m,
                  settings)
   end
 

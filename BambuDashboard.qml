@@ -27,6 +27,7 @@ Item {
   signal openAppRequested()
 
   function nextIdleView() {
+    if (root.service && root.service.demoActive) return "status"
     if (!root.service || root.service.requiresInitialSetup) return "setup"
     if (root.service.printerStateKnown) return "status"
     return "connecting"
@@ -84,7 +85,8 @@ Item {
   }
 
   function backToStatus() {
-    if (!root.service.requiresInitialSetup && !root.service.printerStateKnown) {
+    if (!root.service.demoActive && !root.service.requiresInitialSetup
+        && !root.service.printerStateKnown) {
       root.enterConnecting()
       return
     }
@@ -217,7 +219,9 @@ Item {
             modelErrorActive: root.service.modelErrorActive
             fontFamily: root.fontFamily
             printerIconSource: root.service.printerIconSource
-            printerName: root.service.displayName
+            demoActive: root.service.demoActive
+            printerName: root.service.demoActive
+              ? "OMARCHY DEMO" : root.service.displayName
             online: root.service.connected && !root.service.stale
             printerState: root.service.displayGcodeState
             jobName: root.service.subtaskName || "NO ACTIVE PRINT"
@@ -235,9 +239,9 @@ Item {
             speedValue: root.service.speedLabel()
             fanValue: "PART " + root.service.formatFan(root.service.coolingFanSpeed)
               + " · HOTEND " + root.service.formatFan(root.service.heatbreakFanSpeed)
-            hostValue: root.service.host || "--"
-            portsValue: "MQTT " + root.service.mqttPort
-              + " · FTPS " + root.service.ftpsPort
+            hostValue: root.service.demoActive ? "LOCAL ASSET" : root.service.host || "--"
+            portsValue: root.service.demoActive ? "NO NETWORK"
+              : "MQTT " + root.service.mqttPort + " · FTPS " + root.service.ftpsPort
             wifiValue: root.service.wifiSignal || "--"
             reportValue: root.service.formatLastUpdate()
             segmentValue: root.service.activeSegmentCount.toLocaleString(
@@ -271,8 +275,10 @@ Item {
             fontFamily: root.fontFamily
             panelActive: root.surfaceActive && root.viewMode === "status"
             printerConfigured: root.service.hasConnectionTarget
+              || root.service.demoActive
             daemonReady: root.service.daemonReady && root.service.backendRunning
-            printing: root.service.connected && root.service.gcodeState === "RUNNING"
+            printing: root.service.demoActive
+              || (root.service.connected && root.service.gcodeState === "RUNNING")
             previewAvailable: root.service.previewAvailable
             gcodeAvailable: root.service.gcodeGeometryAvailable
             selectedSource: root.service.selectedGeometrySource
@@ -335,6 +341,8 @@ Item {
           daemonReady: root.service.daemonReady && root.service.backendRunning
           allowBack: true
           canDisconnect: root.service.hasConnectionTarget || root.service.hasUsableSecret
+          demoAvailable: root.service.requiresInitialSetup
+          demoActive: root.service.demoActive
           requireAccessCode: !root.service.hasUsableSecret
           secretRequired: root.service.secretRequired
           secretStored: root.service.secretStored
@@ -353,6 +361,16 @@ Item {
             else settingsView.reportError("LAN code could not be removed")
           }
           onDisconnectRequested: root.service.requestDisconnect()
+          onDemoRequested: {
+            if (root.service.demoActive) {
+              root.service.stopDemo()
+            } else if (root.service.startDemo()) {
+              root.viewMode = "status"
+              root.focusPanelTop()
+            } else {
+              settingsView.reportError("Demo could not be started")
+            }
+          }
           onInputFocusReleased: keyCatcher.forceActiveFocus()
           onSaveRequested: function(draft, accessCode) {
             var result = root.service.saveSettings(draft, accessCode)
@@ -437,7 +455,8 @@ Item {
         }
 
         BambuButton {
-          visible: root.service.secretRequired && root.viewMode === "status"
+          visible: !root.service.demoActive && root.service.secretRequired
+                   && root.viewMode === "status"
           anchors.horizontalCenter: parent.horizontalCenter
           anchors.bottom: parent.bottom
           anchors.bottomMargin: Style.space(54)

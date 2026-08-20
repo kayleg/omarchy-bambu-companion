@@ -117,7 +117,7 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
   end
 
-  def test_two_axis_drag_covers_full_yaw_and_bounded_pitch_while_hold_pauses
+  def test_two_axis_drag_covers_full_yaw_without_crossing_the_build_plane
     normalize = extract_function("normalizeAngle")
     clamp = extract_function("clampPitch")
     drag = extract_function("orientationAfterDrag")
@@ -126,17 +126,17 @@ class ViewportRouteContractTest < Minitest::Test
       #{clamp}
       #{drag}
       console.log(JSON.stringify([
-        orientationAfterDrag(0, 0, 300, 0, 600, 360),
-        orientationAfterDrag(0, 0, -150, 180, 600, 360),
-        orientationAfterDrag(1, 0, 600, -1000, 600, 360)
+        orientationAfterDrag(0, -0.28, 300, 0, 600, 360),
+        orientationAfterDrag(0, -0.28, -150, 180, 600, 360),
+        orientationAfterDrag(1, -0.28, 600, -1000, 600, 360)
       ]))
     JAVASCRIPT
     values = run_javascript(script)
 
     assert_in_delta Math::PI, values[0].fetch("yaw"), 1e-9
-    assert_in_delta 0, values[0].fetch("pitch"), 1e-9
+    assert_in_delta(-0.28, values[0].fetch("pitch"), 1e-9)
     assert_in_delta Math::PI * 1.5, values[1].fetch("yaw"), 1e-9
-    assert_operator values[1].fetch("pitch"), :>, 1.4
+    assert_in_delta(-0.05, values[1].fetch("pitch"), 1e-9)
     assert_in_delta 1.0, values[2].fetch("yaw"), 1e-9
     assert_operator values[2].fetch("pitch"), :<, -1.4
     assert_match(/MouseArea\s*\{.*anchors\.fill: parent.*onPressed: function\(mouse\).*dragging = true.*onPositionChanged: function\(mouse\).*orientationAfterDrag.*onReleased:.*dragging = false/m,
@@ -187,9 +187,10 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
     assert_match(/function syncNozzleMarker\(\).*!viewport\.printing.*viewport\.selectedSource !== "gcode".*routeCamera\.dragging.*sampleAvailable = false/m,
                  @source)
-    assert_match(/if \(viewport\.printing\).*nozzlePhase = \(nozzlePhase \+ elapsed \/ 6000\) % 1/m,
+    assert_includes @source, "readonly property real nozzleSpeed: 50"
+    assert_match(/if \(viewport\.printing\).*nozzleDistance \+= elapsed \/ 1000 \* viewport\.nozzleSpeed/m,
                  @source)
-    assert_includes @source, "item.sampleNozzle(viewport.zCurrent, routeCamera.nozzlePhase)"
+    assert_includes @source, "item.sampleNozzle(viewport.zCurrent, routeCamera.nozzleDistance)"
     assert_includes @source, "property bool sampleAvailable: false"
   end
 

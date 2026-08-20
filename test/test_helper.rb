@@ -20,7 +20,7 @@ class Minitest::Test
     BambuCompanion::TestFixtures::PRINTER_CONFIG.merge(overrides.transform_keys(&:to_s))
   end
 
-  def test_printer_config(overrides = {})
+  def config_fixture(overrides = {})
     BambuCompanion::Config.from_h(printer_config(overrides))
   end
 end

@@ -67,7 +67,7 @@ public:
   void setPlateColor(const QColor &color);
 
   Q_INVOKABLE QPointF mapToView(qreal x, qreal y, qreal z) const;
-  Q_INVOKABLE QVariantList sampleNozzle(qreal z, qreal phase) const;
+  Q_INVOKABLE QVariantList sampleNozzle(qreal z, qreal distance) const;
 
 signals:
   void yawChanged();

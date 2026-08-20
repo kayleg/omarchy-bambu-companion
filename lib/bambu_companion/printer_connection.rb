@@ -203,7 +203,7 @@ module BambuCompanion
           "state",
           sequence: @next_sequence.call,
           printer: printer_payload(printer),
-          model: model_payload(model)
+          model: ModelWorker.ipc_payload(model)
         )
         true
       end
@@ -241,16 +241,6 @@ module BambuCompanion
         speedMagnitude: state[:speed_magnitude], wifiSignal: state[:wifi_signal],
         coolingFanSpeed: state[:cooling_fan_speed],
         heatbreakFanSpeed: state[:heatbreak_fan_speed]
-      }
-    end
-
-    def model_payload(model)
-      {
-        status: model[:status], generation: model[:generation],
-        segmentCount: model[:segment_count], zCurrent: model[:z_current],
-        zMode: model[:z_mode], error: model[:error],
-        loadPhase: model[:load_phase], loadProgress: model[:load_progress],
-        loadedBytes: model[:loaded_bytes], totalBytes: model[:total_bytes]
       }
     end
 

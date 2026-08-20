@@ -131,6 +131,15 @@ class NativeBuildTest < Minitest::Test
     refute_includes source, "kExplodedBaseZoom"
   end
 
+  def test_nozzle_sampling_uses_physical_distance_along_the_layer
+    source = File.read(File.join(ROOT, "native/gcode_route.cpp"))
+    header = File.read(File.join(ROOT, "native/gcode_route.hpp"))
+
+    assert_includes header, "sampleNozzle(qreal z, qreal distance)"
+    assert_includes source, "std::fmod(distance, qreal(pathLength))"
+    refute_match(/sampleNozzle\(qreal z, qreal phase\)/, source)
+  end
+
   private
 
   def default_env(data)

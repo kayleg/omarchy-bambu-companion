@@ -497,7 +497,7 @@ void GcodeRoute::rebuildNozzlePath(qreal z) const {
   }
 }
 
-QVariantList GcodeRoute::sampleNozzle(qreal z, qreal phase) const {
+QVariantList GcodeRoute::sampleNozzle(qreal z, qreal distance) const {
   if (m_nozzlePathDirty || !std::isfinite(m_nozzleTargetZ) ||
       !qFuzzyCompare(m_nozzleTargetZ, z)) {
     rebuildNozzlePath(z);
@@ -505,10 +505,12 @@ QVariantList GcodeRoute::sampleNozzle(qreal z, qreal phase) const {
   if (m_nozzleSegmentOffsets.empty() || m_nozzleCumulativeLengths.empty())
     return {};
 
-  qreal normalized = std::isfinite(phase) ? std::fmod(phase, 1.0) : 0.0;
-  if (normalized < 0.0)
-    normalized += 1.0;
-  const float target = float(normalized) * m_nozzleCumulativeLengths.back();
+  const float pathLength = m_nozzleCumulativeLengths.back();
+  float target = std::isfinite(distance)
+                     ? float(std::fmod(distance, qreal(pathLength)))
+                     : 0.0f;
+  if (target < 0.0f)
+    target += pathLength;
   const auto begin = m_nozzleCumulativeLengths.cbegin();
   const auto end = m_nozzleCumulativeLengths.cend();
   const auto found = std::lower_bound(begin, end, target);
@@ -517,8 +519,9 @@ QVariantList GcodeRoute::sampleNozzle(qreal z, qreal phase) const {
   const size_t offset = m_nozzleSegmentOffsets[index];
   const float start = index == 0 ? 0.0f : m_nozzleCumulativeLengths[index - 1];
   const float length = m_nozzleCumulativeLengths[index] - start;
-  const float ratio =
-      length > 0.0f ? std::clamp((target - start) / length, 0.0f, 1.0f) : 0.0f;
+  const float ratio = length > 0.0f
+                          ? std::clamp((target - start) / length, 0.0f, 1.0f)
+                          : 0.0f;
   return {
       m_segments[offset] +
           (m_segments[offset + 3] - m_segments[offset]) * ratio,
