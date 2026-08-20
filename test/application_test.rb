@@ -478,8 +478,8 @@ class ApplicationTest < Minitest::Test
     app.send(:shutdown)
 
     errors = parsed_events(output).select { |event| event["event"] == "error" }
-    assert_equal ["invalid_config"], errors.map { |event| event["code"] }
-    assert_equal ["requestId is invalid"], errors.map { |event| event["message"] }
+    assert_equal ["invalid_config"], (errors.map { |event| event["code"] })
+    assert_equal ["requestId is invalid"], (errors.map { |event| event["message"] })
   end
 
   def test_demo_start_failure_is_scoped_and_does_not_escape_the_command_loop
