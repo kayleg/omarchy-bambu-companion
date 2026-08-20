@@ -232,15 +232,18 @@ module BambuCompanion
     end
 
     def write_loop
-      loop do
-        line = @queue.pop
-        break if line.nil? || line.equal?(STOP)
+      notify = begin
+        loop do
+          line = @queue.pop
+          break if line.nil? || line.equal?(STOP)
 
-        @io.write(line)
-        @io.flush
+          @io.write(line)
+          @io.flush
+        end
+        false
+      rescue StandardError
+        @state_mutex.synchronize { transition_failed_unlocked }
       end
-    rescue StandardError
-      notify = @state_mutex.synchronize { transition_failed_unlocked }
       notify_failure if notify
     end
 

@@ -340,8 +340,11 @@ This verifies the production bundle, Ruby and shell syntax, high-signal
 RuboCop and ShellCheck rules, JSON/QML contracts, runtime isolation, parser
 behavior and GPU projection math. `minitest`, `rubocop`, `shellcheck`,
 `qmllint` and Node.js are development only; none is a runtime dependency of
-the installed plugin. Node.js is required for extracted QML JavaScript tests
-and `g++` is required for projection tests.
+the installed plugin. QML linting resolves Omarchy's `qs.*` modules from
+`$OMARCHY_PATH/shell` (or `/usr/share/omarchy/shell` by default). Node.js is
+required for extracted QML JavaScript tests and `g++` is required for
+projection tests. GitHub Actions runs the same command in an Arch Linux
+container against the current Omarchy shell.
 
 Validate a checkout inside Omarchy Quattro with:
 

@@ -6,7 +6,8 @@ require "json"
 class RepositoryContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   REQUIRED = %w[
-    .gitignore manifest.json BambuWidget.qml BambuService.qml BambuDashboard.qml
+    .gitignore .github/workflows/ci.yml manifest.json
+    BambuWidget.qml BambuService.qml BambuDashboard.qml
     BambuPrinterIcon.qml BambuApp.qml bambu-companion
     bambu-companion-update-check daemon.rb Gemfile Gemfile.lock
     README.md LICENSE bin/test native/build
@@ -152,6 +153,17 @@ class RepositoryContractTest < Minitest::Test
     assert_includes test_all, "rubocop --cache false"
     assert_includes test_all, "shellcheck"
     assert_match(/qmllint.*\*\.qml/, test_all)
+    assert_includes test_all, 'qml_import_root="$(mktemp -d)"'
+    assert_includes test_all, '"$qmllint_command" -I "$qml_import_root"'
+
+    workflow = File.read(File.join(ROOT, ".github/workflows/ci.yml"))
+    assert_includes workflow, "archlinux:base"
+    assert_includes workflow, "pkgconf"
+    assert_includes workflow, "ruby-erb"
+    assert_includes workflow, "--bindir /usr/local/bin"
+    assert_equal 2, workflow.scan("actions/checkout@v7").length
+    assert_includes workflow, "OMARCHY_PATH:"
+    assert_includes workflow, "bin/test"
   end
 
   def test_user_configuration_changes_require_an_explicit_widget_action

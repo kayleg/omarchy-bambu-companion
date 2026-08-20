@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: archlinux:base
+
+    steps:
+      - name: Install development tools
+        run: >-
+          pacman -Syu --noconfirm --needed
+          gcc git make nodejs pkgconf quickshell qt6-declarative ruby ruby-erb shellcheck
+
+      - name: Check out plugin
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install locked Ruby dependencies
+        run: |
+          bundler_version="$(ruby -e 'puts File.read("Gemfile.lock")[/^BUNDLED WITH\n\s+(\S+)/, 1]')"
+          gem install bundler --version "$bundler_version" --no-document \
+            --bindir /usr/local/bin
+          bundle config set path .bundle/gems
+          bundle install --jobs 4 --retry 3
+
+      - name: Check out Omarchy shell
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: basecamp/omarchy
+          path: .ci/omarchy
+
+      - name: Run checks
+        env:
+          OMARCHY_PATH: ${{ github.workspace }}/.ci/omarchy
+        run: bin/test

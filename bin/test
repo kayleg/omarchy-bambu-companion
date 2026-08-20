@@ -34,6 +34,17 @@ if [[ -z "$qmllint_command" ]]; then
   exit 127
 fi
 
+omarchy_root="${OMARCHY_PATH:-/usr/share/omarchy}"
+omarchy_shell="$omarchy_root/shell"
+if [[ ! -d "$omarchy_shell/Commons" || ! -d "$omarchy_shell/Ui" ]]; then
+  echo "Bambu Companion checks require an Omarchy shell at: $omarchy_shell" >&2
+  exit 127
+fi
+
+qml_import_root="$(mktemp -d)"
+trap 'rm -r -- "$qml_import_root"' EXIT
+ln -s -- "$omarchy_shell" "$qml_import_root/qs"
+
 bundle check
 bundle exec ruby -Itest \
   -e 'Dir["test/**/*_test.rb"].sort.each { |file| require_relative file }'
@@ -52,6 +63,6 @@ bundle exec rubocop --cache false daemon.rb lib test
 shellcheck bambu-companion bambu-companion-update-check native/build \
   test/system/launcher_test.sh test/system/update_check_test.sh \
   test/support/fake-bundle test/support/fake-gem bin/test
-"$qmllint_command" ./*.qml
+"$qmllint_command" -I "$qml_import_root" ./*.qml
 
 echo "All local Bambu Companion checks passed."

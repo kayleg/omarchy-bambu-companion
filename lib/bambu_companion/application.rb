@@ -542,12 +542,12 @@ module BambuCompanion
       @control_mutex.synchronize { @shutdown }
     end
 
-    def handle_output_failure(_error)
+    def handle_output_failure(error)
       @control_mutex.synchronize do
         target = @run_thread
         return if @shutdown || !target || target.equal?(Thread.current) || !target.alive?
 
-        target.raise(IpcOutputError, "IPC output unavailable", cause: nil)
+        target.raise(error)
       end
     rescue ThreadError
       nil
