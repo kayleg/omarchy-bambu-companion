@@ -37,8 +37,9 @@ BarWidget {
 
   function openApp() {
     if (!root.bar || !root.bar.shell) return false
+    if (!root.bar.shell.summon(root.moduleName, "{}")) return false
     root.close()
-    return root.bar.shell.summon(root.moduleName, "{}")
+    return true
   }
 
   function compactLabel() {

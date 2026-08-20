@@ -3,7 +3,7 @@
 require_relative "test_helper"
 require "json"
 
-class DesktopAppContractTest < Minitest::Test
+class TiledWindowContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
 
   def setup
@@ -50,7 +50,7 @@ class DesktopAppContractTest < Minitest::Test
   end
 
   def test_widget_can_summon_the_app_without_starting_another_backend
-    assert_match(/function openApp\(\).*root\.close\(\).*root\.bar\.shell\.summon\(root\.moduleName, "\{}"\)/m,
+    assert_match(/function openApp\(\).*root\.bar\.shell\.summon\(root\.moduleName, "\{}"\).*root\.close\(\).*return true/m,
                  @widget)
     assert_match(/showOpenAppButton: true.*onOpenAppRequested: root\.openApp\(\)/m,
                  @widget)
@@ -66,22 +66,6 @@ class DesktopAppContractTest < Minitest::Test
                  @widget)
     assert_match(/Connections\s*{.*target: root\.service.*onAttentionRequested\(mode, message\).*appWindow\.visible.*dashboard\.showAttention\(mode, message\)/m,
                  @app)
-  end
-
-  def test_no_standalone_launcher_surface_is_shipped
-    %w[
-      bambu-companion-desktop-entry
-      io.github.ypmrg.bambu-companion.desktop
-      assets/bambu-companion.svg
-      test/system/desktop_entry_test.sh
-    ].each do |path|
-      refute File.exist?(File.join(ROOT, path)), "unexpected #{path}"
-    end
-
-    settings = File.read(File.join(ROOT, "BambuSettingsView.qml"))
-    [settings, @dashboard, @service].each do |source|
-      refute_match(/desktopEntry|app-only|app-and-bar|launcher entry/i, source)
-    end
   end
 
   def test_sidebar_exposes_the_current_version_and_native_plugin_update

@@ -195,14 +195,6 @@ Item {
           return JSON.parse(JSON.stringify(entry))
       }
     }
-    var plugins = config ? config.plugins : null
-    if (Array.isArray(plugins)) {
-      for (var pluginIndex = 0; pluginIndex < plugins.length; pluginIndex++) {
-        var pluginEntry = plugins[pluginIndex]
-        if (pluginEntry && String(pluginEntry.id || "") === root.moduleName)
-          return JSON.parse(JSON.stringify(pluginEntry))
-      }
-    }
     return { id: root.moduleName }
   }
 
