@@ -8,15 +8,16 @@ class RepositoryContractTest < Minitest::Test
   REQUIRED = %w[
     .gitignore manifest.json BambuWidget.qml BambuService.qml BambuDashboard.qml
     BambuPrinterIcon.qml BambuApp.qml assets/bambu-companion.svg
-    bambu-companion bambu-companion-desktop-entry
+    bambu-companion bambu-companion-desktop-entry bambu-companion-update-check
     io.github.ypmrg.bambu-companion.desktop daemon.rb Gemfile Gemfile.lock
     README.md LICENSE bin/test native/build
   ].freeze
 
   def test_required_installable_files_exist
     REQUIRED.each { |path| assert File.file?(File.join(ROOT, path)), "missing #{path}" }
-    %w[bambu-companion bambu-companion-desktop-entry bin/test
-       test/system/launcher_test.sh test/system/desktop_entry_test.sh
+    %w[bambu-companion bambu-companion-desktop-entry bambu-companion-update-check
+       bin/test test/system/launcher_test.sh test/system/desktop_entry_test.sh
+       test/system/update_check_test.sh
        test/support/fake-bundle test/support/fake-gem native/build].each do |path|
       assert File.executable?(File.join(ROOT, path)), "#{path} must be executable"
     end
@@ -40,7 +41,7 @@ class RepositoryContractTest < Minitest::Test
     defaults = manifest.fetch("barWidget").fetch("defaults")
 
     assert_equal "io.github.ypmrg.bambu-companion", manifest.fetch("id")
-    assert_equal "1.2.5", manifest.fetch("version")
+    assert_equal "1.3.2", manifest.fetch("version")
     assert_includes manifest.fetch("kinds"), "bar-widget"
     assert_includes manifest.fetch("kinds"), "service"
     assert_includes manifest.fetch("kinds"), "panel"

@@ -182,7 +182,13 @@ class QmlContractTest < Minitest::Test
                  @backend_source)
     assert_match(/discarding = false.*offset = newlineIndex \+ 1/m,
                  @backend_source)
-    assert_equal 6, (@source + @backend_source).scan('splitMarker: ""').length
+    desktop_process = @service_source[/Process \{\s*id: desktopEntryProcess.*?\n  \}/m]
+    plugin_update_process = @service_source[/Process \{\s*id: pluginUpdateProcess.*?\n  \}/m]
+    refute_nil desktop_process
+    refute_nil plugin_update_process
+    assert_match(/stderr: SplitParser/, desktop_process)
+    refute_match(/stdout: SplitParser/, desktop_process)
+    assert_match(/stdout: SplitParser.*stderr: SplitParser/m, plugin_update_process)
   end
 
   def test_secret_and_geometry_safety_contract
@@ -423,8 +429,12 @@ class QmlContractTest < Minitest::Test
   def test_panel_views_stay_inside_horizontal_margins
     assert_match(/contentWidth:\s*(?:panel\.)?fittedContentWidth\(Style\.space\(860\)\)/m,
                  @source)
-    assert_match(/contentHeight:\s*(?:panel\.)?fittedContentHeight\(Style\.space\(520\), Style\.space\(620\)\)/m,
+    assert_match(/contentHeight:\s*(?:panel\.)?fittedContentHeight\(dashboard\.preferredViewportHeight\)/m,
                  @source)
+    assert_match(/preferredViewportHeight:\s*Math\.max\(Style\.space\(520\), telemetryPane\.implicitHeight\)/m,
+                 @dashboard_source)
+    assert_match(/implicitHeight: telemetryContent\.implicitHeight \+ pane\.inset \* 2\s*\+ Style\.space\(8\) \+ actionRow\.height/m,
+                 @telemetry_source)
     assert_match(/Flickable\s*{.*id: panelScroll.*flickableDirection: Flickable\.VerticalFlick.*clip: true/m,
                  @source)
     assert_match(/BambuTelemetryPane\s*{.*id: telemetryPane.*onSettingsRequested: root\.toggleSettings\(\)/m,

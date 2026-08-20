@@ -129,13 +129,14 @@ BarWidget {
     focusTarget: dashboard.focusTarget
     padding: 0
     contentWidth: fittedContentWidth(Style.space(860))
-    contentHeight: fittedContentHeight(Style.space(520), Style.space(620))
+    contentHeight: fittedContentHeight(dashboard.preferredViewportHeight)
 
     BambuDashboard {
       id: dashboard
       anchors.fill: parent
       service: root.service
-      viewportHeight: popupPanel.contentHeight
+      viewportHeight: Math.max(0, popupPanel.contentHeight
+                               - popupPanel.verticalContentInset)
       surfaceActive: root.popupOpen
       showOpenAppButton: true
       onCloseRequested: root.close()

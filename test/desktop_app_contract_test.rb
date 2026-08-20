@@ -42,7 +42,7 @@ class DesktopAppContractTest < Minitest::Test
     refute_match(/height: wideLayout \? panelScroll\.height/, @dashboard)
     refute_match(/height: dashboard\.wideLayout \? dashboard\.height/, @dashboard)
     assert_match(/BambuDashboard\s*\{.*viewportHeight: appWindow\.height/m, @app)
-    assert_match(/BambuDashboard\s*\{.*viewportHeight: popupPanel\.contentHeight/m,
+    assert_match(/BambuDashboard\s*\{.*viewportHeight: Math\.max\(0, popupPanel\.contentHeight\s*- popupPanel\.verticalContentInset\)/m,
                  @widget)
     assert_match(/function open\(_\).*appWindow\.visible = true.*appWindow\.minimized = false/m,
                  @app)
@@ -89,5 +89,20 @@ class DesktopAppContractTest < Minitest::Test
     assert_includes @desktop_entry, "Terminal=false"
     assert_includes @desktop_entry, "Icon=io.github.ypmrg.bambu-companion"
     assert_includes @desktop_entry, "X-Bambu-Companion-Managed=true"
+  end
+
+  def test_sidebar_exposes_the_current_version_and_native_plugin_update
+    telemetry = File.read(File.join(ROOT, "BambuTelemetryPane.qml"))
+
+    assert_match(/SectionTitle \{ objectName: "APPLICATION" \}/, telemetry)
+    assert_match(/text: "v" \+ pane\.appVersion/, telemetry)
+    assert_match(/visible: pane\.updateAvailable.*text: "\\uf019"/m, telemetry)
+    assert_match(/onClicked: pane\.updateRequested\(\)/, telemetry)
+    assert_match(/appVersion: root\.service\.currentVersion.*updateAvailable: root\.service\.pluginUpdateAvailable.*onUpdateRequested: root\.service\.installPluginUpdate\(\)/m,
+                 @dashboard)
+    assert_match(/readonly property string currentVersion: root\.manifest.*root\.manifest\.version/m,
+                 @service)
+    assert_match(/\["omarchy", "plugin", "update", root\.moduleName, "--yes"\]/,
+                 @service)
   end
 end

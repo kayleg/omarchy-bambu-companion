@@ -20,6 +20,8 @@ Item {
   readonly property color dim: Qt.rgba(foreground.r, foreground.g,
                                        foreground.b, 0.55)
   readonly property string fontFamily: Style.font.family
+  readonly property real preferredViewportHeight:
+    Math.max(Style.space(520), telemetryPane.implicitHeight)
 
   signal closeRequested()
   signal openAppRequested()
@@ -249,9 +251,17 @@ Item {
               Qt.locale(), "f", 0) + " SEGMENTS"
             modelState: root.service.modelStatus.toUpperCase()
             dimensionsValue: root.service.formatDimensions()
+            appVersion: root.service.currentVersion
+            updateAvailable: root.service.pluginUpdateAvailable
+            updateStatusKnown: root.service.pluginUpdateStatusKnown
+            updateBusy: root.service.pluginUpdateBusy
+            updateInstalling: root.service.pluginUpdateInstalling
+            updateVersion: root.service.pluginUpdateVersion
+            updateError: root.service.pluginUpdateError
             appButtonVisible: root.showOpenAppButton
             onSettingsRequested: root.toggleSettings()
             onAppRequested: root.openAppRequested()
+            onUpdateRequested: root.service.installPluginUpdate()
           }
 
           BambuModelViewport {

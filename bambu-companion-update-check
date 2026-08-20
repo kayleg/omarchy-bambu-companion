@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
+
+plugin_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+version_from_manifest() {
+  sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p'
+}
+
+git -C "$plugin_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 1
+
+current_version="$(version_from_manifest <"$plugin_root/manifest.json")"
+if ! timeout 20s git -C "$plugin_root" fetch --quiet origin HEAD; then
+  echo "Bambu Companion update check could not reach the remote repository" >&2
+  exit 2
+fi
+
+remote_version="$(git -C "$plugin_root" show FETCH_HEAD:manifest.json \
+  | version_from_manifest)"
+if [[ -z $current_version || -z $remote_version ]]; then
+  echo "Bambu Companion update check found an invalid version" >&2
+  exit 2
+fi
+
+newest_version="$(printf '%s\n%s\n' "$current_version" "$remote_version" \
+  | LC_ALL=C sort -V | tail -n 1)"
+if [[ $remote_version != "$current_version" && $newest_version == "$remote_version" ]]; then
+  printf '%s\n' "$remote_version"
+  exit 0
+fi
+
+exit 1

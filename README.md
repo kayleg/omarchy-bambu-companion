@@ -124,6 +124,13 @@ Companion will then appear in the Omarchy launcher as an application. Use
 the entry. Neither installing nor updating the plugin changes the app launcher
 without this explicit action.
 
+The **Application** section at the bottom of the information sidebar shows the
+running plugin version. It checks the git-managed installation for a newer
+manifest version at startup and every six hours. When an update is available,
+select the download icon to run Omarchy's native non-interactive plugin update;
+the shell then reloads the validated plugin. Manual installations that are not
+git checkouts continue to show their current version without an update action.
+
 ## Features
 
 - Compact bar icon with optional status, progress and temperature summary.

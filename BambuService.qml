@@ -68,10 +68,18 @@ Item {
   property var ftpsTlsIdentity: ({})
 
   property bool desktopEntryInstalled: false
-  property bool desktopEntryBusy: false
+  readonly property bool desktopEntryBusy: desktopEntryProcess.running
   property string desktopEntryError: ""
-  property string desktopEntryAction: ""
-  property string desktopEntryStderr: ""
+
+  readonly property string currentVersion: root.manifest && root.manifest.version
+    ? String(root.manifest.version) : "unknown"
+  property bool pluginUpdateAvailable: false
+  property bool pluginUpdateStatusKnown: false
+  readonly property bool pluginUpdateBusy: pluginUpdateProcess.running
+  readonly property bool pluginUpdateInstalling: root.pluginUpdateBusy
+    && pluginUpdateProcess.action === "update"
+  property string pluginUpdateVersion: ""
+  property string pluginUpdateError: ""
 
   signal attentionRequested(string mode, string message)
   signal errorReported(string message)
@@ -139,6 +147,9 @@ Item {
   )
   readonly property string desktopEntryManagerPath: decodeURIComponent(
     String(Qt.resolvedUrl("bambu-companion-desktop-entry")).replace(/^file:\/\//, "")
+  )
+  readonly property string pluginUpdateCheckPath: decodeURIComponent(
+    String(Qt.resolvedUrl("bambu-companion-update-check")).replace(/^file:\/\//, "")
   )
   readonly property string nativeDataRoot: {
     var home = Quickshell.env("XDG_DATA_HOME")
@@ -215,6 +226,7 @@ Item {
     backendSession.start()
     nativeBuild.running = true
     root.refreshDesktopEntry()
+    root.refreshPluginUpdate()
     if (!nativeBuild.running && !root.nativeBuildStarted)
       root.markRendererUnavailable()
   }
@@ -422,15 +434,13 @@ Item {
 
   function runDesktopEntryAction(action) {
     if (root.desktopEntryBusy) return false
-    root.desktopEntryAction = action
+    desktopEntryProcess.action = action
     root.desktopEntryError = ""
-    root.desktopEntryStderr = ""
-    root.desktopEntryBusy = true
+    desktopEntryProcess.errorOutput = ""
     desktopEntryProcess.command = [root.desktopEntryManagerPath, action]
     desktopEntryProcess.running = true
     if (!desktopEntryProcess.running) {
-      root.desktopEntryBusy = false
-      root.desktopEntryAction = ""
+      desktopEntryProcess.action = ""
       root.desktopEntryError = "Desktop entry helper could not be started"
       return false
     }
@@ -443,6 +453,33 @@ Item {
 
   function setDesktopEntryEnabled(enabled) {
     return root.runDesktopEntryAction(enabled === true ? "install" : "uninstall")
+  }
+
+  function runPluginUpdateAction(action) {
+    if (root.pluginUpdateBusy) return false
+    pluginUpdateProcess.action = action
+    root.pluginUpdateError = ""
+    pluginUpdateProcess.output = ""
+    pluginUpdateProcess.errorOutput = ""
+    pluginUpdateProcess.command = action === "check"
+      ? [root.pluginUpdateCheckPath]
+      : ["omarchy", "plugin", "update", root.moduleName, "--yes"]
+    pluginUpdateProcess.running = true
+    if (!pluginUpdateProcess.running) {
+      pluginUpdateProcess.action = ""
+      if (action === "update")
+        root.pluginUpdateError = "Plugin update could not be started"
+      return false
+    }
+    return true
+  }
+
+  function refreshPluginUpdate() {
+    return root.runPluginUpdateAction("check")
+  }
+
+  function installPluginUpdate() {
+    return root.runPluginUpdateAction("update")
   }
 
   function objectOrEmpty(value) {
@@ -929,39 +966,75 @@ Item {
 
   Process {
     id: desktopEntryProcess
+    property string action: ""
+    property string errorOutput: ""
     command: [root.desktopEntryManagerPath, "status"]
     running: false
-    stdout: SplitParser {
-      splitMarker: ""
-      onRead: function(_) {}
-    }
     stderr: SplitParser {
       splitMarker: ""
       onRead: function(chunk) {
         var line = String(chunk || "").trim()
-        if (line) root.desktopEntryStderr += line + "\n"
+        if (line) desktopEntryProcess.errorOutput += line + "\n"
       }
     }
     onExited: function(exitCode) {
-      var action = root.desktopEntryAction
-      root.desktopEntryBusy = false
+      var action = desktopEntryProcess.action
       if (action === "status") {
         if (exitCode === 0) {
           root.desktopEntryInstalled = true
         } else if (exitCode === 1) {
           root.desktopEntryInstalled = false
         } else {
-          root.desktopEntryError = root.desktopEntryStderr.trim()
+          root.desktopEntryError = desktopEntryProcess.errorOutput.trim()
             || "Desktop entry status could not be read"
         }
       } else if (exitCode === 0) {
         root.desktopEntryInstalled = action === "install"
       } else {
-        root.desktopEntryError = root.desktopEntryStderr.trim()
+        root.desktopEntryError = desktopEntryProcess.errorOutput.trim()
           || "Desktop entry could not be "
             + (action === "install" ? "installed" : "removed")
       }
-      root.desktopEntryAction = ""
+      desktopEntryProcess.action = ""
+      desktopEntryProcess.errorOutput = ""
+    }
+  }
+
+  Process {
+    id: pluginUpdateProcess
+    property string action: ""
+    property string output: ""
+    property string errorOutput: ""
+    command: [root.pluginUpdateCheckPath]
+    running: false
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { pluginUpdateProcess.output += String(chunk || "") }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        pluginUpdateProcess.errorOutput += String(chunk || "")
+      }
+    }
+    onExited: function(exitCode) {
+      var action = pluginUpdateProcess.action
+      if (action === "check") {
+        root.pluginUpdateStatusKnown = exitCode === 0 || exitCode === 1
+        root.pluginUpdateAvailable = exitCode === 0
+        root.pluginUpdateVersion = exitCode === 0
+          ? pluginUpdateProcess.output.trim() : ""
+      } else if (exitCode === 0) {
+        root.pluginUpdateAvailable = false
+        root.pluginUpdateStatusKnown = true
+        root.pluginUpdateVersion = ""
+      } else {
+        root.pluginUpdateError = pluginUpdateProcess.errorOutput.trim()
+          || "Bambu Companion could not be updated"
+      }
+      pluginUpdateProcess.action = ""
+      pluginUpdateProcess.output = ""
+      pluginUpdateProcess.errorOutput = ""
     }
   }
 
@@ -973,6 +1046,13 @@ Item {
       if (root.isFinishedState(root.gcodeState))
         root.finishGraceExpired = true
     }
+  }
+
+  Timer {
+    interval: 21600000
+    running: root.componentReady
+    repeat: true
+    onTriggered: root.refreshPluginUpdate()
   }
 
 }

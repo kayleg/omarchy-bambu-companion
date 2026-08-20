@@ -23,7 +23,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
 
   def test_dashboard_matches_the_reference_landscape_structure
     assert_match(/contentWidth:\s*fittedContentWidth\(Style\.space\(860\)\)/, @widget)
-    assert_match(/contentHeight:\s*fittedContentHeight\(Style\.space\(520\), Style\.space\(620\)\)/,
+    assert_match(/contentHeight:\s*fittedContentHeight\(dashboard\.preferredViewportHeight\)/,
                  @widget)
     assert_match(/id:\s*dashboardLayout.*columns:\s*dashboard\.wideLayout \? 2 : 1/m,
                  @widget)

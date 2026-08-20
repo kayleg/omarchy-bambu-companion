@@ -39,18 +39,21 @@ bundle exec ruby -Itest \
   -e 'Dir["test/**/*_test.rb"].sort.each { |file| require_relative file }'
 test/system/launcher_test.sh
 test/system/desktop_entry_test.sh
+test/system/update_check_test.sh
 ruby -rjson -e 'JSON.parse(File.read("manifest.json"))'
 
 while IFS= read -r -d '' ruby_file; do
   ruby -c "$ruby_file"
 done < <(find lib test -name '*.rb' -print0)
 ruby -c daemon.rb
-bash -n bambu-companion bambu-companion-desktop-entry native/build \
-  test/system/launcher_test.sh test/system/desktop_entry_test.sh \
+bash -n bambu-companion bambu-companion-desktop-entry \
+  bambu-companion-update-check native/build test/system/launcher_test.sh \
+  test/system/desktop_entry_test.sh test/system/update_check_test.sh \
   test/support/fake-bundle bin/test
 bundle exec rubocop --cache false daemon.rb lib test
-shellcheck bambu-companion bambu-companion-desktop-entry native/build \
-  test/system/launcher_test.sh test/system/desktop_entry_test.sh \
+shellcheck bambu-companion bambu-companion-desktop-entry \
+  bambu-companion-update-check native/build test/system/launcher_test.sh \
+  test/system/desktop_entry_test.sh test/system/update_check_test.sh \
   test/support/fake-bundle test/support/fake-gem bin/test
 "$qmllint_command" ./*.qml
 

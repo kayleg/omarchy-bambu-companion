@@ -35,14 +35,24 @@ Item {
   property string segmentValue: "0 SEGMENTS"
   property string modelState: "IDLE"
   property string dimensionsValue: "--"
+  property string appVersion: "unknown"
+  property bool updateAvailable: false
+  property bool updateStatusKnown: false
+  property bool updateBusy: false
+  property bool updateInstalling: false
+  property string updateVersion: ""
+  property string updateError: ""
   property bool appButtonVisible: false
 
   signal settingsRequested()
   signal appRequested()
+  signal updateRequested()
 
   readonly property color surface: Qt.rgba(
     foreground.r, foreground.g, foreground.b, 0.035)
   readonly property int inset: Style.space(12)
+  implicitHeight: telemetryContent.implicitHeight + pane.inset * 2
+    + Style.space(8) + actionRow.height
 
   component SectionTitle: Item {
     width: parent ? parent.width : implicitWidth
@@ -254,6 +264,75 @@ Item {
       MetricRow { label: "GEOMETRY"; value: pane.segmentValue }
       MetricRow { label: "STATUS"; value: pane.modelState; valueColor: (pane.errorActive || pane.modelErrorActive) ? pane.errorColor : (pane.modelState === "READY" ? pane.successColor : pane.foreground) }
       MetricRow { label: "SIZE"; value: pane.dimensionsValue }
+
+      SectionTitle { objectName: "APPLICATION" }
+
+      Item {
+        width: parent.width
+        height: Math.max(versionText.implicitHeight,
+                         updateButton.visible ? updateButton.height : 0)
+
+        Rectangle {
+          id: versionIndicator
+          anchors.left: parent.left
+          anchors.verticalCenter: versionText.verticalCenter
+          width: Style.space(6)
+          height: width
+          radius: width / 2
+          color: pane.updateError !== "" ? pane.errorColor
+            : (pane.updateBusy || pane.updateAvailable ? pane.accent
+              : (pane.updateStatusKnown ? pane.successColor : pane.dim))
+        }
+
+        Text {
+          id: versionText
+          anchors.left: versionIndicator.right
+          anchors.leftMargin: Style.space(6)
+          anchors.top: parent.top
+          text: "v" + pane.appVersion
+          color: pane.foreground
+          font.family: pane.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        BambuButton {
+          id: updateButton
+          visible: pane.updateAvailable
+          enabled: !pane.updateBusy
+          anchors.right: parent.right
+          anchors.top: parent.top
+          width: Style.space(30)
+          height: Style.space(28)
+          text: "\uf019"
+          tooltipText: pane.updateError !== "" ? pane.updateError
+            : "UPDATE TO v" + pane.updateVersion
+          foreground: enabled ? pane.accent : pane.dim
+          accent: pane.accent
+          bordered: true
+          horizontalPadding: 0
+          onClicked: pane.updateRequested()
+        }
+
+        Text {
+          anchors.left: versionText.right
+          anchors.leftMargin: Style.space(8)
+          anchors.right: updateButton.visible ? updateButton.left : parent.right
+          anchors.rightMargin: updateButton.visible ? Style.space(6) : 0
+          anchors.verticalCenter: versionText.verticalCenter
+          text: pane.updateInstalling ? "UPDATING"
+            : (pane.updateBusy ? "CHECKING"
+              : (pane.updateError !== "" ? "UPDATE FAILED"
+                : (pane.updateAvailable ? "v" + pane.updateVersion + " AVAILABLE"
+                  : (pane.updateStatusKnown ? "CURRENT" : ""))))
+          color: pane.updateError !== "" ? pane.errorColor
+            : (pane.updateAvailable ? pane.accent : pane.dim)
+          horizontalAlignment: Text.AlignRight
+          elide: Text.ElideRight
+          font.family: pane.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: pane.updateAvailable
+        }
+      }
     }
   }
 
