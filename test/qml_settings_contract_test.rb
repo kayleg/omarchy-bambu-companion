@@ -9,6 +9,24 @@ class QmlSettingsContractTest < Minitest::Test
     @path = File.join(@root, "BambuSettingsView.qml")
   end
 
+  def application_source
+    %w[BambuService.qml BambuDashboard.qml BambuWidget.qml].map do |name|
+      File.read(File.join(@root, name))
+    end.join("\n")
+  end
+
+  def service_source
+    File.read(File.join(@root, "BambuService.qml"))
+  end
+
+  def dashboard_source
+    File.read(File.join(@root, "BambuDashboard.qml"))
+  end
+
+  def widget_source
+    File.read(File.join(@root, "BambuWidget.qml"))
+  end
+
   def test_dedicated_component_exposes_a_small_parent_interface
     source = settings_source
 
@@ -63,7 +81,7 @@ class QmlSettingsContractTest < Minitest::Test
 
   def test_tls_identity_requires_an_explicit_trust_action
     settings = settings_source
-    widget = File.read(File.join(@root, "BambuWidget.qml"))
+    widget = application_source
 
     refute_includes settings, "tlsIdentityPanel"
     refute_includes settings, 'text: "PRINTER CERTIFICATE"'
@@ -81,7 +99,7 @@ class QmlSettingsContractTest < Minitest::Test
                  widget)
     assert_match(/function trustAndConnect\(draft, accessCode\).*mqttTlsFingerprint.*ftpsTlsFingerprint.*persistSettings/m,
                  widget)
-    assert_match(/BambuSecurityDialog\s*\{.*mode: root\.securityModalMode.*onTrustRequested: settingsView\.submit\(true\)/m,
+    assert_match(/BambuSecurityDialog\s*\{.*mode: root\.service\.securityModalMode.*onTrustRequested: settingsView\.submit\(true\)/m,
                  widget)
   end
 
@@ -107,7 +125,7 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_unpinned_or_rejected_certificate_forces_setup_without_overwriting_pins
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
     assert_includes source, "readonly property bool hasTrustedTlsPins:"
     assert_match(/readonly property bool requiresSetupConfirmation:.*!root\.hasTrustedTlsPins/m,
@@ -120,7 +138,7 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_repeated_ftps_mismatch_does_not_reload_the_form_while_user_reapproves
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
     body = source[/function handleTlsMismatch\(message\) \{.*?\n  \}/m]
 
     refute_nil body
@@ -128,7 +146,7 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_editing_the_target_after_a_probe_discards_the_stale_approval
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
     body = source[/function trustAndConnect\(draft, accessCode\) \{.*?\n  \}/m]
 
     refute_nil body
@@ -139,7 +157,7 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_runtime_reset_cancels_transient_certificate_probe_state
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
     helper = source[/function clearTlsProbeState\(\) \{.*?\n  \}/m]
     reset = source[/function resetOperationalState\(\) \{.*?\n  \}/m]
 
@@ -249,60 +267,63 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_widget_forces_first_run_setup_and_waits_for_a_confirmed_connection
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    service = service_source
+    dashboard = dashboard_source
 
-    assert_includes source, "property bool connectionVerified: false"
-    assert_match(/function nextIdleView\(\).*if \(root\.requiresSetupConfirmation\) return "setup".*if \(root\.connectionVerified\) return "status".*return "connecting"/m,
-                 source)
-    assert_match(/function handleState\(message\).*connected = printer\.connected === true.*var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*var hasFreshReport = connected && printer\.stale === false\s*&& reportUpdate !== "".*if \(hasFreshReport\).*connectionVerified = true.*root\.viewMode === "connecting".*viewMode = "status"/m,
-                 source)
-    assert_match(/function resetOperationalState\(\).*connectionVerified = false/m, source)
-    assert_includes source, "property bool initialViewResolved: false"
-    resolve_initial = source[/function resolveInitialView\(\) \{.*?\n  \}/m]
-    refute_nil resolve_initial
-    assert_match(/if \(root\.initialViewResolved\) return.*initialViewResolved = true.*viewMode = nextIdleView\(\).*if \(viewMode === "setup"\).*settingsView\.load\(settingsDraft\(\)\)/m,
-                 resolve_initial)
-    refute_match(/popupOpen\s*=\s*true/, resolve_initial)
-    assert_match(/Component\.onCompleted:.*componentReady = true.*Qt\.callLater\(root\.resolveInitialView\)/m,
-                 source)
-    refute_match(/Component\.onCompleted:.*viewMode = nextIdleView\(\)/m, source)
-    assert_match(/function backToStatus\(\).*if \(!root\.connectionVerified\).*enterConnecting\(\).*return.*viewMode = "status"/m,
-                 source)
+    assert_includes service, "property bool connectionVerified: false"
+    assert_match(/function nextIdleView\(\).*root\.service\.requiresSetupConfirmation.*return "setup".*root\.service\.connectionVerified.*return "status".*return "connecting"/m,
+                 dashboard)
+    assert_match(/function handleState\(message\).*connected = printer\.connected === true.*var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*var hasFreshReport = connected && printer\.stale === false\s*&& reportUpdate !== "".*if \(hasFreshReport\).*connectionVerified = true.*statusAvailable\(\)/m,
+                 service)
+    assert_match(/function resetOperationalState\(\).*connectionVerified = false/m,
+                 service)
+    assert_match(/Component\.onCompleted:.*componentReady = true.*viewMode = root\.nextIdleView\(\)/m,
+                 dashboard)
+    assert_match(/function onStatusAvailable\(\).*viewMode === "connecting".*viewMode = "status"/m,
+                 dashboard)
+    assert_match(/function backToStatus\(\).*root\.service\.connectionVerified.*enterConnecting\(\).*return.*viewMode = "status"/m,
+                 dashboard)
   end
 
   def test_forced_first_run_setup_remains_dismissible
-    source = File.read(File.join(@root, "BambuWidget.qml"))
-    close_function = source[/function close\(\).*?function nextIdleView\(\)/m]
-    popup_handler = source[/onPopupOpenChanged:.*?onGcodeStateChanged:/m]
-    close_handler = source[/onCloseRequested:.*?Flickable \{/m]
+    widget = widget_source
+    dashboard = dashboard_source
+    close_function = widget[/function close\(\).*?\n  \}/m]
+    close_handler = dashboard[/onCloseRequested: \{.*?\n    \}/m]
 
-    assert_match(/function close\(\)\s*\{\s*if \(root\.disconnectPending\) return\s*root\.cancelSecurityModal\(\)\s*popupOpen = false/m,
+    assert_match(/root\.service\.disconnectPending.*root\.popupOpen = false/m,
                  close_function)
-    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, close_function)
-    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, popup_handler)
+    assert_match(/onSurfaceActiveChanged:.*!root\.componentReady.*root\.surfaceActive.*root\.open\(\).*root\.close\(\)/m,
+                 dashboard)
+    refute_match(/requiresSetupConfirmation.*popupOpen = true/m, widget)
     refute_match(/requiresSetupConfirmation.*popupOpen = true/m, close_handler)
-    assert_match(/if \(root\.viewMode === "settings" && root\.hasConnectionTarget\s*&& !root\.requiresSetupConfirmation\).*root\.backToStatus\(\).*else root\.close\(\)/m,
+    assert_match(/root\.viewMode === "settings" && root\.service\.hasConnectionTarget\s*&& !root\.service\.requiresSetupConfirmation.*root\.backToStatus\(\).*root\.closeRequested\(\)/m,
                  close_handler)
-    assert_match(/allowBack: true/m, source)
-    assert_match(/onBackRequested:.*requiresSetupConfirmation.*root\.close\(\).*root\.backToStatus\(\)/m,
-                 source)
+    assert_match(/allowBack: true/m, dashboard)
+    assert_match(/onBackRequested:.*root\.service\.requiresSetupConfirmation.*root\.closeRequested\(\).*root\.backToStatus\(\)/m,
+                 dashboard)
   end
 
   def test_late_quattro_settings_injection_and_runtime_resets_cannot_show_stale_status
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    service = service_source
+    dashboard = dashboard_source
+    widget = widget_source
 
-    assert_match(/function open\(\).*popupOpen = true.*if \(root\.viewMode !== "settings"\) viewMode = nextIdleView\(\)/m,
-                 source)
-    assert_match(/function resetOperationalState\(\).*connectionVerified = false.*if \(root\.viewMode !== "settings".*viewMode = nextIdleView\(\)/m,
-                 source)
+    assert_match(/function open\(\).*popupOpen = true/m,
+                 widget)
+    refute_match(/function open\(\).*dashboard\.open\(\)/m, widget)
+    assert_match(/function open\(\).*root\.viewMode !== "settings".*root\.viewMode = root\.nextIdleView\(\)/m,
+                 dashboard)
+    assert_match(/function resetOperationalState\(\).*connectionVerified = false/m,
+                 service)
     assert_match(/onBackendConfigurationFingerprintChanged:.*resetOperationalState\(\).*sendConfiguration\(\)/m,
-                 source)
+                 service)
   end
 
   def test_connecting_view_has_a_real_loader_and_every_panel_view_is_bounded
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
-    assert_match(/Item\s*{\s*width: Style\.space\(48\).*RotationAnimator on rotation.*loops: Animation\.Infinite.*running: root\.popupOpen && root\.viewMode === "connecting"/m,
+    assert_match(/Item\s*{\s*width: Style\.space\(48\).*RotationAnimator on rotation.*loops: Animation\.Infinite.*running: root\.surfaceActive && root\.viewMode === "connecting"/m,
                  source)
     assert_match(/contentWidth: fittedContentWidth\(Style\.space\(860\)\)/m,
                  source)
@@ -337,41 +358,43 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_widget_integrates_navigation_and_atomic_quattro_persistence
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    service = service_source
+    dashboard = dashboard_source
 
-    assert_includes source, 'property string viewMode: "setup"'
-    assert_includes source, "readonly property bool hasConnectionTarget:"
-    assert_includes source, 'visible: root.viewMode === "connecting"'
-    assert_includes source, 'visible: root.viewMode === "setup" || root.viewMode === "settings"'
-    assert_match(/function openSettings\(\).*settingsView\.load\(settingsDraft\(\)\).*viewMode = "settings"/m,
-                 source)
-    focus_helper = source[/function focusPanelTop\(\) \{.*?\n  \}/m]
+    assert_includes dashboard, 'property string viewMode: "setup"'
+    assert_includes service, "readonly property bool hasConnectionTarget:"
+    assert_includes dashboard, 'visible: root.viewMode === "connecting"'
+    assert_includes dashboard, 'visible: root.viewMode === "setup" || root.viewMode === "settings"'
+    assert_match(/function openSettings\(message\).*settingsView\.load\(root\.service\.settingsDraft\(\)\).*root\.viewMode = "settings"/m,
+                 dashboard)
+    focus_helper = dashboard[/function focusPanelTop\(\) \{.*?\n  \}/m]
     refute_nil focus_helper
     assert_includes focus_helper, "Qt.callLater"
     assert_includes focus_helper, "panelScroll.contentY = 0"
     assert_includes focus_helper, "keyCatcher.forceActiveFocus()"
-    assert_match(/function openSettings\(\).*root\.focusPanelTop\(\)/m, source)
-    assert_match(/function close\(\).*settingsView\.clearAccessCode\(\).*viewMode = nextIdleView\(\)/m,
-                 source)
-    writer = source[/function commitSettingsEntry\(entry\) \{.*?\n  \}/m]
+    assert_match(/function openSettings\(message\).*root\.focusPanelTop\(\)/m,
+                 dashboard)
+    assert_match(/function close\(\).*settingsView\.clearAccessCode\(\).*root\.viewMode = root\.nextIdleView\(\)/m,
+                 dashboard)
+    writer = service[/function commitSettingsEntry\(entry\) \{.*?\n  \}/m]
     refute_nil writer
-    assert_match(/persistingSettings = true.*root\.settings = entry.*updateEntryInline\(root\.moduleName, entry\).*persistingSettings = false/m,
+    assert_match(/persistingSettings = true.*root\.settings = entry.*root\.shell\.updateEntryInline\(root\.moduleName, entry\).*persistingSettings = false/m,
                  writer)
     assert_match(/function persistSettings\(draft\).*var entry = \{ id: root\.moduleName \}.*return root\.commitSettingsEntry\(entry\)/m,
-                 source)
-    assert_match(/function saveSettings\(draft, accessCode\).*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*enterConnecting\(\)/m,
-                 source)
-    assert_match(/BambuSettingsView\s*\{.*id: settingsView.*onSaveRequested: function\(draft, accessCode\)/m,
-                 source)
-    assert_match(/blocked: settingsView\.inputActive/, source)
-    assert_match(/onInputFocusReleased: keyCatcher\.forceActiveFocus\(\)/, source)
-    refute_match(/entry\[[^\]]*(?:secret|accessCode|password)/i, source)
+                 service)
+    assert_match(/function saveSettings\(draft, accessCode\).*backendSettingsChanged\(draft\).*persistSettings\(draft\).*return \{ ok: true, mode:/m,
+                 service)
+    assert_match(/BambuSettingsView\s*\{.*id: settingsView.*onSaveRequested: function\(draft, accessCode\).*root\.service\.saveSettings/m,
+                 dashboard)
+    assert_match(/blocked: settingsView\.inputActive/, dashboard)
+    assert_match(/onInputFocusReleased: keyCatcher\.forceActiveFocus\(\)/, dashboard)
+    refute_match(/entry\[[^\]]*(?:secret|accessCode|password)/i, service)
   end
 
   def test_telemetry_settings_button_toggles_the_settings_panel
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
-    assert_match(/function toggleSettings\(\).*if \(root\.viewMode === "settings"\).*root\.backToStatus\(\).*return.*root\.openSettings\(\)/m,
+    assert_match(/function toggleSettings\(\).*if \(root\.viewMode === "settings"\).*root\.backToStatus\(\).*root\.openSettings\(""\)/m,
                  source)
     assert_match(/BambuTelemetryPane\s*\{.*onSettingsRequested: root\.toggleSettings\(\)/m,
                  source)
@@ -405,10 +428,10 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/id: settingsContent.*id: preferencesGrid.*text: "BAR SUMMARY".*ToggleSwitch\s*\{.*checked: form\.showBarSummary.*onToggled:.*form\.showBarSummary = !form\.showBarSummary.*form\.barSummaryToggled\(form\.showBarSummary\).*id: settingsFooter.*"SAVE & CONNECT"/m,
                  source)
 
-    widget = File.read(File.join(@root, "BambuWidget.qml"))
+    widget = application_source
     assert_match(/function persistBarSummary\(enabled\).*var current = root\.settings.*entry\["showBarSummary"\] = enabled === true.*commitSettingsEntry\(entry\)/m,
                  widget)
-    assert_match(/BambuSettingsView\s*\{.*onBarSummaryToggled: function\(enabled\).*root\.persistBarSummary\(enabled\)/m,
+    assert_match(/BambuSettingsView\s*\{.*onBarSummaryToggled: function\(enabled\).*root\.service\.persistBarSummary\(enabled\)/m,
                  widget)
   end
 
@@ -460,52 +483,51 @@ class QmlSettingsContractTest < Minitest::Test
     assert_match(/id: settingsContent.*spacing: Style\.space\(8\).*SectionLabel \{ text: "PRINTER" \}.*id: printerNameInput.*id: identityGrid.*id: hostInput.*id: serialInput.*SectionLabel \{ text: "NETWORK" \}.*id: networkGrid.*id: mqttPortInput.*id: ftpsPortInput.*id: usernameInput.*text: form\.requireAccessCode.*id: accessCodeInput.*SectionLabel \{ text: "DISPLAY" \}.*id: preferencesGrid.*id: explosionFactorInput.*text: "AUTO-ROTATE BY DEFAULT"/m,
                  source)
 
-    widget = File.read(File.join(@root, "BambuWidget.qml"))
+    widget = application_source
     assert_match(/BambuSettingsView\s*\{.*accent: root\.accent/m,
                  widget)
   end
 
   def test_settings_chrome_matches_the_dashboard_proportions
     settings = settings_source
-    widget = File.read(File.join(@root, "BambuWidget.qml"))
+    widget = application_source
     viewport = File.read(File.join(@root, "BambuModelViewport.qml"))
     telemetry = File.read(File.join(@root, "BambuTelemetryPane.qml"))
 
-    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? panelScroll\.height/m,
+    assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? root\.viewportHeight/m,
                  widget)
     assert_match(/id: viewportHeader.*height: Style\.space\(36\).*id: viewportTitle.*font\.pixelSize: Style\.font\.caption/m,
                  viewport)
     assert_match(/id: settingsHeader.*height: Style\.space\(36\).*text: "SETTINGS".*font\.pixelSize: Style\.font\.caption/m,
                  settings)
 
-    assert_match(/id: settingsButton.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,
+    assert_match(/id: actionRow.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,
                  telemetry)
     assert_match(/id: settingsFooter.*height: Style\.space\(60\).*Row\s*\{.*anchors\.fill: parent.*anchors\.margins: Style\.space\(12\).*text: "DISCONNECT PRINTER".*height: parent\.height.*text: "SAVE & CONNECT"/m,
                  settings)
   end
 
   def test_security_modal_cancellation_invalidates_late_tls_probe_results
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    service = service_source
+    dashboard = dashboard_source
 
-    assert_includes source, 'readonly property string securityModalMode:'
+    assert_includes service, 'readonly property string securityModalMode:'
     assert_match(/securityModalMode:.*disconnectConfirmationOpen \|\| root\.disconnectPending/m,
-                 source)
+                 service)
     assert_match(/function cancelTlsApproval\(\).*tlsProbeRequestId = \(root\.tlsProbeRequestId \+ 1\).*clearTlsProbeState\(\)/m,
-                 source)
+                 service)
     assert_match(/function cancelSecurityModal\(\).*disconnectConfirmationOpen.*cancelTlsApproval\(\)/m,
-                 source)
-    assert_match(/function close\(\).*cancelSecurityModal\(\).*popupOpen = false/m,
-                 source)
-    assert_match(/function close\(\).*if \(root\.disconnectPending\) return.*cancelSecurityModal\(\)/m,
-                 source)
-    assert_match(/BambuSecurityDialog\s*\{.*anchors\.fill: parent.*z: 40.*onCancelRequested: root\.cancelSecurityModal\(\)/m,
-                 source)
-    assert_match(/BambuSecurityDialog\s*\{.*processing: root\.disconnectPending/m,
-                 source)
+                 service)
+    assert_match(/function close\(\).*root\.service\.disconnectPending.*root\.service\.cancelSecurityModal\(\)/m,
+                 dashboard)
+    assert_match(/BambuSecurityDialog\s*\{.*anchors\.fill: parent.*z: 40.*onCancelRequested:.*root\.service\.cancelSecurityModal\(\)/m,
+                 dashboard)
+    assert_match(/BambuSecurityDialog\s*\{.*processing: root\.service\.disconnectPending/m,
+                 dashboard)
   end
 
   def test_disconnect_confirmation_clears_connection_identity_but_preserves_preferences
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = service_source
 
     assert_includes source, "property int disconnectRequestId: 0"
     assert_match(/function confirmDisconnect\(\).*disconnectRequestId = \(root\.disconnectRequestId \+ 1\).*disconnectPending = true.*"op": "clear_secret".*"requestId": root\.disconnectRequestId/m,
@@ -525,7 +547,7 @@ class QmlSettingsContractTest < Minitest::Test
     assert_includes body, 'ftpsTlsFingerprint: ""'
     assert_includes body, 'installationId: ""'
     assert_operator body.index("persistSettings(reset)"), :<,
-                    body.index('viewMode = "setup"')
+                    body.index('attentionRequested("setup", "")')
     assert_match(/message\.event === "secret_status".*disconnectPending.*message\.requestId === root\.disconnectRequestId.*message\.stored === false.*completeDisconnect\(\)/m,
                  source)
     assert_match(/message\.event === "secret_required".*disconnectPending.*message\.requestId === root\.disconnectRequestId.*completeDisconnect\(\)/m,
@@ -538,52 +560,52 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     failure = source[/function failDisconnect\(message\) \{.*?\n  \}/m]
     refute_nil failure
-    refute_includes failure, "openSettings()"
-    assert_includes failure, 'viewMode = "settings"'
+    assert_includes failure, 'attentionRequested("settings", message)'
   end
 
   def test_panel_close_request_cancels_the_active_security_modal_first
-    source = File.read(File.join(@root, "BambuWidget.qml"))
-    handler = source[/onCloseRequested: \{.*?\n      \}/m]
+    source = dashboard_source
+    handler = source[/onCloseRequested: \{.*?\n    \}\n\n    Flickable/m]
 
     refute_nil handler
-    assert_match(/if \(root\.securityModalMode !== ""\).*root\.cancelSecurityModal\(\)/m,
+    assert_match(/if \(root\.service\.securityModalMode !== ""\).*root\.service\.cancelSecurityModal\(\)/m,
                  handler)
-    assert_operator handler.index("securityModalMode"), :<,
+    assert_operator handler.index("service.securityModalMode"), :<,
                     handler.index('viewMode === "settings"')
   end
 
   def test_new_plugin_install_forces_confirmation_before_connecting
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    service = service_source
+    dashboard = dashboard_source
 
-    assert_includes source, 'readonly property string storedInstallationId: String(setting("installationId", ""))'
+    assert_includes service, 'readonly property string storedInstallationId: String(setting("installationId", ""))'
     assert_match(/readonly property bool requiresSetupConfirmation:.*installationIdentified.*storedInstallationId !== root\.installationId/m,
-                 source)
-    assert_match(/function nextIdleView\(\).*requiresSetupConfirmation.*return "setup"/m,
-                 source)
-    hello = source[/if \(message\.event === "hello"\) \{.*?\n      return\n    \}/m]
+                 service)
+    assert_match(/function nextIdleView\(\).*service\.requiresSetupConfirmation.*return "setup"/m,
+                 dashboard)
+    hello = service[/if \(message\.event === "hello"\) \{.*?\n      return\n    \}/m]
     refute_nil hello
-    assert_match(/installationId = String\(message\.installationId \|\| ""\).*installationIdentified = installationId !== "".*if \(root\.requiresSetupConfirmation\).*viewMode = "setup".*settingsView\.load\(settingsDraft\(\)\).*sendConfiguration\(\).*return/m,
+    assert_match(/installationId = String\(message\.installationId \|\| ""\).*installationIdentified = installationId !== "".*sendConfiguration\(\).*return/m,
                  hello)
     refute_match(/popupOpen\s*=\s*true/, hello)
     refute_match(/openSettings\(\)/, hello)
     assert_match(/function persistSettings\(draft\).*entry\.installationId = draft\.installationId === undefined.*root\.installationId/m,
-                 source)
-    assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*beginTlsProbe\(draft\).*return.*backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*if \(backendChanged\) sendConfiguration\(draft\)/m,
-                 source)
+                 service)
+    assert_match(/function onRequiresSetupConfirmationChanged\(\).*root\.surfaceActive.*root\.service\.requiresSetupConfirmation.*root\.viewMode = "setup".*settingsView\.load/m,
+                 dashboard)
     assert_match(/function commitSettingsEntry\(entry\).*persistingSettings = true.*root\.settings = entry.*updateEntryInline.*persistingSettings = false/m,
-                 source)
+                 service)
     assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return/m,
-                 source)
+                 service)
   end
 
   def test_empty_code_preserves_secret_and_non_empty_code_is_sent_after_config
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
     assert_match(/function setSecret\(value\).*String\(value \|\| ""\).*"op": "set_secret"/m,
                  source)
     assert_includes source, "readonly property bool hasUsableSecret:"
-    assert_match(/function saveSettings\(draft, accessCode\).*var replacement = String\(accessCode \|\| ""\).*if \(!replacement && !root\.hasUsableSecret\).*Enter the LAN access code.*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return.*enterConnecting\(\).*Qt\.callLater.*setSecret\(replacement\)/m,
+    assert_match(/function saveSettings\(draft, accessCode\).*var replacement = String\(accessCode \|\| ""\).*if \(!replacement && !root\.hasUsableSecret\).*Enter the LAN access code.*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return \{ ok: true, mode:.*Qt\.callLater.*setSecret\(replacement\)/m,
                  source)
     body = source[/function saveSettings\(draft, accessCode\) \{.*?\n  \}/m]
     refute_nil body
@@ -594,11 +616,11 @@ class QmlSettingsContractTest < Minitest::Test
                     body.index("persistSettings(draft)")
     assert_match(/if \(!persistSettings\(draft\)\).*pendingSecretWrite = false.*Settings could not be saved/m,
                  body)
-    assert_match(/requireAccessCode: !root\.hasUsableSecret/, source)
+    assert_match(/requireAccessCode: !root\.service\.hasUsableSecret/, source)
   end
 
   def test_display_only_save_does_not_restart_the_backend_runtime
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
     backend_change = source[/function backendSettingsChanged\(draft\) \{.*?\n  \}/m]
     refute_nil backend_change
@@ -606,14 +628,14 @@ class QmlSettingsContractTest < Minitest::Test
                  backend_change)
     refute_match(/explosionFactor/, backend_change)
     refute_match(/autoRotate/, backend_change)
-    assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*mqttTlsFingerprint = root\.mqttTlsFingerprint.*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*viewMode = nextIdleView\(\).*return.*if \(backendChanged\) sendConfiguration\(draft\)/m,
+    assert_match(/function saveSettings\(draft, accessCode\).*requiresTlsProbe\(draft\).*mqttTlsFingerprint = root\.mqttTlsFingerprint.*var backendChanged = backendSettingsChanged\(draft\).*persistSettings\(draft\).*if \(!backendChanged && !replacement\).*return \{ ok: true, mode:.*if \(backendChanged\) sendConfiguration\(draft\)/m,
                  source)
   end
 
   def test_failed_lan_code_write_forces_the_settings_form_back_open
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
-    assert_match(/function recoverSecretWrite\(message\).*if \(!root\.pendingSecretWrite\) return false.*pendingSecretWrite = false.*openSettings\(\).*settingsView\.reportError\(message\).*popupOpen = true.*return true/m,
+    assert_match(/function recoverSecretWrite\(message\).*if \(!root\.pendingSecretWrite\) return false.*pendingSecretWrite = false.*attentionRequested\("settings", message\).*return true/m,
                  source)
     assert_match(/function saveSettings\(draft, accessCode\).*if \(!setSecret\(replacement\)\).*recoverSecretWrite\(/m,
                  source)
@@ -626,9 +648,9 @@ class QmlSettingsContractTest < Minitest::Test
   end
 
   def test_mqtt_authentication_rejection_always_forces_the_settings_form_open
-    source = File.read(File.join(@root, "BambuWidget.qml"))
+    source = application_source
 
-    assert_match(/function handleAuthenticationFailure\(message\).*if \(root\.pendingSecretWrite\) return false.*pendingSecretWrite = false.*secretRequired = true.*secretStored = false.*secretStatusKnown = true.*openSettings\(\).*reportError\(message\).*popupOpen = true.*return true/m,
+    assert_match(/function handleAuthenticationFailure\(message\).*if \(root\.pendingSecretWrite\) return false.*pendingSecretWrite = false.*secretRequired = true.*secretStored = false.*secretStatusKnown = true.*attentionRequested\("settings", message\).*return true/m,
                  source)
     assert_match(/message\.event === "error".*message\.scope === "mqtt".*message\.code === "authentication".*handleAuthenticationFailure/m,
                  source)

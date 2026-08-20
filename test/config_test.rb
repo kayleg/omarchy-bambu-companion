@@ -113,8 +113,10 @@ class ConfigTest < Minitest::Test
 
     assert_equal 1, manifest.fetch("schemaVersion")
     assert_equal "io.github.ypmrg.bambu-companion", manifest.fetch("id")
-    assert_equal ["bar-widget"], manifest.fetch("kinds")
+    assert_equal ["service", "bar-widget", "panel"], manifest.fetch("kinds")
+    assert_equal "BambuService.qml", manifest.dig("entryPoints", "service")
     assert_equal "BambuWidget.qml", manifest.dig("entryPoints", "barWidget")
+    assert_equal "BambuApp.qml", manifest.dig("entryPoints", "panel")
     refute_includes keys, "accessCode"
     refute_includes secret_values(manifest), "12345678"
   end

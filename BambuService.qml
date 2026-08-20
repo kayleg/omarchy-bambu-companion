@@ -1,0 +1,978 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+
+Item {
+  id: root
+  visible: false
+
+  readonly property string moduleName: "io.github.ypmrg.bambu-companion"
+  property var shell: null
+  property var manifest: null
+  property var settings: ({})
+  property bool componentReady: false
+  property bool installationIdentified: false
+  property string installationId: ""
+  property alias daemonReady: backendSession.daemonReady
+  readonly property bool backendRunning: backendSession.running
+  property bool connected: false
+  property bool connectionVerified: false
+  property bool stale: true
+  property bool secretRequired: false
+  property bool secretStored: false
+  property bool secretStatusKnown: false
+  readonly property bool hasUsableSecret: root.secretStored
+    || (root.secretStatusKnown && !root.secretRequired)
+  property string gcodeState: "OFFLINE"
+  property bool finishGraceExpired: false
+  readonly property string displayGcodeState:
+    root.finishGraceExpired && root.isFinishedState(root.gcodeState)
+      ? "READY" : root.gcodeState
+  property string subtaskName: ""
+  property int percent: 0
+  property real nozzleTemp: NaN
+  property real nozzleTargetTemp: NaN
+  property real bedTemp: NaN
+  property real bedTargetTemp: NaN
+  property int currentLayer: 0
+  property int totalLayers: 0
+  property int remainingMinutes: -1
+  property int speedLevel: 0
+  property int speedMagnitude: 0
+  property string wifiSignal: ""
+  property real coolingFanSpeed: NaN
+  property real heatbreakFanSpeed: NaN
+  property string lastUpdate: ""
+  property string modelStatus: "idle"
+  property string modelErrorCode: ""
+  property string modelError: ""
+  property string modelLoadPhase: ""
+  property int modelLoadProgress: -1
+  property real modelLoadedBytes: 0
+  property real modelTotalBytes: 0
+  property real zCurrent: NaN
+  property string zMode: "unknown"
+  property string processError: ""
+  property string processErrorReportUpdate: ""
+  property bool pendingSecretWrite: false
+  property bool persistingSettings: false
+  property bool tlsProbePending: false
+  property bool tlsApprovalRequired: false
+  property bool tlsRejected: false
+  property bool disconnectConfirmationOpen: false
+  property bool disconnectPending: false
+  property int disconnectRequestId: 0
+  property int tlsProbeRequestId: 0
+  property var pendingTlsDraft: ({})
+  property var mqttTlsIdentity: ({})
+  property var ftpsTlsIdentity: ({})
+
+  property bool desktopEntryInstalled: false
+  property bool desktopEntryBusy: false
+  property string desktopEntryError: ""
+  property string desktopEntryAction: ""
+  property string desktopEntryStderr: ""
+
+  signal attentionRequested(string mode, string message)
+  signal errorReported(string message)
+  signal statusAvailable()
+
+  property alias geometryBundle: geometryAssembler.geometryBundle
+  property alias selectedGeometrySource: geometryAssembler.selectedGeometrySource
+  readonly property bool previewAvailable: geometryAssembler.previewAvailable
+  readonly property bool gcodeGeometryAvailable: geometryAssembler.gcodeAvailable
+  readonly property int activeSegmentCount: {
+    var geometry = root.geometryBundle.gcode
+    if (!geometry) return 0
+    var count = Number(geometry.segmentCount)
+    return isNonNegativeInteger(count) ? count : 0
+  }
+  readonly property string activeSegmentPath: {
+    var geometry = root.geometryBundle.gcode
+    return geometry ? String(geometry.path || "") : ""
+  }
+  readonly property var activeBounds: {
+    var geometry = root.geometryBundle.gcode
+    return geometry && geometry.bounds ? geometry.bounds : ({})
+  }
+  property alias modelGeneration: geometryAssembler.modelGeneration
+
+  readonly property string printerName: String(setting("printerName", "3D Printer"))
+  readonly property string host: String(setting("host", ""))
+  readonly property int mqttPort: Number(setting("mqttPort", 8883))
+  readonly property int ftpsPort: Number(setting("ftpsPort", 990))
+  readonly property string serial: String(setting("serial", ""))
+  readonly property string username: String(setting("username", "bblp"))
+  readonly property int maxSegments: Number(setting("maxSegments", 500000))
+  readonly property int explosionFactor: Math.max(0, Math.min(500,
+    Math.round(finiteNumber(Number(setting("explosionFactor", 100)), 100))))
+  readonly property bool autoRotate: setting("autoRotate", true) !== false
+  readonly property bool showBarSummary: setting("showBarSummary", true) !== false
+  readonly property string mqttTlsFingerprint:
+    String(setting("mqttTlsFingerprint", ""))
+  readonly property string ftpsTlsFingerprint:
+    String(setting("ftpsTlsFingerprint", ""))
+  readonly property string storedInstallationId: String(setting("installationId", ""))
+  readonly property bool hasConnectionTarget: String(root.host).trim() !== ""
+    && String(root.serial).trim() !== ""
+  readonly property bool hasTrustedTlsPins:
+    root.validTlsFingerprint(root.mqttTlsFingerprint)
+      && root.validTlsFingerprint(root.ftpsTlsFingerprint)
+  readonly property bool requiresSetupConfirmation: !root.hasConnectionTarget
+    || !root.hasTrustedTlsPins || root.tlsRejected
+    || (root.installationIdentified
+        && root.storedInstallationId !== root.installationId)
+  readonly property string securityModalMode:
+    (root.disconnectConfirmationOpen || root.disconnectPending) ? "disconnect"
+      : ((root.tlsProbePending || root.tlsApprovalRequired) ? "certificate" : "")
+  readonly property string displayName: {
+    var name = String(root.printerName || "").trim()
+    return name || "3D Printer"
+  }
+  readonly property string backendConfigurationFingerprint: JSON.stringify(root.configuration())
+  readonly property url printerIconSource: Qt.resolvedUrl("assets/printer-open-frame.svg")
+  readonly property string backendPath: decodeURIComponent(
+    String(Qt.resolvedUrl("bambu-companion")).replace(/^file:\/\//, "")
+  )
+  readonly property string nativeBuildPath: decodeURIComponent(
+    String(Qt.resolvedUrl("native/build")).replace(/^file:\/\//, "")
+  )
+  readonly property string desktopEntryManagerPath: decodeURIComponent(
+    String(Qt.resolvedUrl("bambu-companion-desktop-entry")).replace(/^file:\/\//, "")
+  )
+  readonly property string nativeDataRoot: {
+    var home = Quickshell.env("XDG_DATA_HOME")
+    if (!home || home === "") home = Quickshell.env("HOME") + "/.local/share"
+    return home + "/io.github.ypmrg.bambu-companion"
+  }
+  readonly property string nativeRoutePath:
+    nativeDataRoot + "/qml/native/RouteHost.qml"
+  readonly property string geometryDirectory: nativeDataRoot + "/geometry"
+  property string rendererStatus: "compiling"
+  readonly property url nativeRouteUrl: Qt.resolvedUrl("file://" + nativeRoutePath)
+  property bool nativeBuildStarted: false
+  readonly property bool errorActive: root.printerHasError()
+    || root.processError !== ""
+  readonly property bool modelErrorActive: root.modelStatus === "error"
+    && root.modelError !== ""
+  readonly property bool barFinishActive: root.connected && !root.stale
+    && root.isFinishedState(root.displayGcodeState)
+  function settingsDraft() {
+    return {
+      printerName: root.printerName,
+      host: root.host,
+      mqttPort: root.mqttPort,
+      ftpsPort: root.ftpsPort,
+      serial: root.serial,
+      username: root.username,
+      maxSegments: root.maxSegments,
+      explosionFactor: root.explosionFactor,
+      autoRotate: root.autoRotate,
+      showBarSummary: root.showBarSummary,
+      mqttTlsFingerprint: root.mqttTlsFingerprint,
+      ftpsTlsFingerprint: root.ftpsTlsFingerprint
+    }
+  }
+
+  function setting(name, fallback) {
+    var value = root.settings ? root.settings[name] : undefined
+    return value === undefined || value === null ? fallback : value
+  }
+
+  function settingsFromShell() {
+    var config = root.shell ? root.shell.shellConfig : null
+    var layout = config && config.bar ? config.bar.layout : null
+    var sections = ["left", "center", "right"]
+    for (var sectionIndex = 0; layout && sectionIndex < sections.length; sectionIndex++) {
+      var entries = layout[sections[sectionIndex]]
+      if (!Array.isArray(entries)) continue
+      for (var entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+        var entry = entries[entryIndex]
+        if (entry && String(entry.id || "") === root.moduleName)
+          return JSON.parse(JSON.stringify(entry))
+      }
+    }
+    var plugins = config ? config.plugins : null
+    if (Array.isArray(plugins)) {
+      for (var pluginIndex = 0; pluginIndex < plugins.length; pluginIndex++) {
+        var pluginEntry = plugins[pluginIndex]
+        if (pluginEntry && String(pluginEntry.id || "") === root.moduleName)
+          return JSON.parse(JSON.stringify(pluginEntry))
+      }
+    }
+    return { id: root.moduleName }
+  }
+
+  function refreshSettings() {
+    var next = root.settingsFromShell()
+    if (JSON.stringify(next) !== JSON.stringify(root.settings)) root.settings = next
+  }
+
+  function initialize() {
+    if (root.componentReady || !root.shell) return
+    root.componentReady = true
+    root.refreshSettings()
+    backendSession.start()
+    nativeBuild.running = true
+    root.refreshDesktopEntry()
+    if (!nativeBuild.running && !root.nativeBuildStarted)
+      root.markRendererUnavailable()
+  }
+
+  function commitSettingsEntry(entry) {
+    if (!root.shell || typeof root.shell.updateEntryInline !== "function") return false
+    persistingSettings = true
+    root.settings = entry
+    root.shell.updateEntryInline(root.moduleName, entry)
+    persistingSettings = false
+    return true
+  }
+
+  function persistSettings(draft) {
+    var entry = { id: root.moduleName }
+    entry.printerName = draft.printerName
+    entry.host = draft.host
+    entry.mqttPort = draft.mqttPort
+    entry.ftpsPort = draft.ftpsPort
+    entry.serial = draft.serial
+    entry.username = draft.username
+    entry.maxSegments = draft.maxSegments
+    entry.explosionFactor = draft.explosionFactor
+    entry.autoRotate = draft.autoRotate
+    entry.showBarSummary = draft.showBarSummary
+    entry.mqttTlsFingerprint = String(draft.mqttTlsFingerprint || "")
+    entry.ftpsTlsFingerprint = String(draft.ftpsTlsFingerprint || "")
+    entry.installationId = draft.installationId === undefined
+      ? root.installationId : String(draft.installationId || "")
+    return root.commitSettingsEntry(entry)
+  }
+
+  // The immediate toggle must not save partially edited printer credentials
+  // or restart the printer session.
+  function persistBarSummary(enabled) {
+    var current = root.settings && typeof root.settings === "object"
+      ? root.settings : ({})
+    var entry = { id: root.moduleName }
+    for (var key in current) {
+      if (key !== "id") entry[key] = current[key]
+    }
+    entry["showBarSummary"] = enabled === true
+    return root.commitSettingsEntry(entry)
+  }
+
+  function backendSettingsChanged(draft) {
+    return String(draft.host) !== root.host
+      || Number(draft.mqttPort) !== root.mqttPort
+      || Number(draft.ftpsPort) !== root.ftpsPort
+      || String(draft.serial) !== root.serial
+      || String(draft.username) !== root.username
+      || Number(draft.maxSegments) !== root.segmentLimit()
+      || String(draft.mqttTlsFingerprint || "") !== root.mqttTlsFingerprint
+      || String(draft.ftpsTlsFingerprint || "") !== root.ftpsTlsFingerprint
+  }
+
+  function saveSettings(draft, accessCode) {
+    var replacement = String(accessCode || "")
+    if (!replacement && !root.hasUsableSecret) {
+      return { ok: false, error: "Enter the LAN access code to connect" }
+    }
+    if (replacement && (!root.daemonReady || !backendSession.running)) {
+      return { ok: false, error: "Backend is not ready for the LAN code" }
+    }
+    if (root.requiresTlsProbe(draft)) {
+      return root.beginTlsProbe(draft)
+    }
+    draft.mqttTlsFingerprint = root.mqttTlsFingerprint
+    draft.ftpsTlsFingerprint = root.ftpsTlsFingerprint
+    var backendChanged = backendSettingsChanged(draft)
+    pendingSecretWrite = !!replacement
+    if (!persistSettings(draft)) {
+      pendingSecretWrite = false
+      return { ok: false, error: "Settings could not be saved by Omarchy Shell" }
+    }
+    if (!backendChanged && !replacement) {
+      return { ok: true, mode: root.connectionVerified ? "status" : "connecting" }
+    }
+    if (backendChanged) sendConfiguration(draft)
+    if (!replacement) return { ok: true, mode: "connecting" }
+    Qt.callLater(function() {
+      if (!setSecret(replacement)) {
+        recoverSecretWrite("LAN code could not be sent. Enter it again")
+      }
+    })
+    return { ok: true, mode: "connecting" }
+  }
+
+  function tlsTarget(draft) {
+    return JSON.stringify({
+      host: String(draft.host || "").trim(),
+      mqttPort: Number(draft.mqttPort),
+      ftpsPort: Number(draft.ftpsPort),
+      serial: String(draft.serial || "").trim()
+    })
+  }
+
+  function requiresTlsProbe(draft) {
+    if (root.tlsRejected || !root.hasTrustedTlsPins) return true
+    return root.tlsTarget(draft) !== root.tlsTarget(root.settingsDraft())
+  }
+
+  function clearTlsProbeState() {
+    root.tlsProbePending = false
+    root.tlsApprovalRequired = false
+    root.pendingTlsDraft = ({})
+    root.mqttTlsIdentity = ({})
+    root.ftpsTlsIdentity = ({})
+  }
+
+  function cancelTlsApproval() {
+    root.tlsProbeRequestId = (root.tlsProbeRequestId + 1) % 2147483647
+    root.clearTlsProbeState()
+  }
+
+  function cancelSecurityModal() {
+    if (root.disconnectConfirmationOpen) {
+      root.disconnectConfirmationOpen = false
+    } else if (root.tlsProbePending || root.tlsApprovalRequired) {
+      root.cancelTlsApproval()
+    }
+  }
+
+  function beginTlsProbe(draft) {
+    if (!root.daemonReady || !backendSession.running) {
+      return { ok: false, error: "Backend is not ready to check the certificate" }
+    }
+    root.tlsProbeRequestId = (root.tlsProbeRequestId + 1) % 2147483647
+    root.clearTlsProbeState()
+    root.pendingTlsDraft = JSON.parse(JSON.stringify(draft))
+    root.tlsProbePending = true
+    var probeConfig = root.configurationForDraft(draft)
+    probeConfig.mqttTlsFingerprint = ""
+    probeConfig.ftpsTlsFingerprint = ""
+    var written = root.writeCommand({
+      "op": "probe_tls", "protocol": 1,
+      "requestId": root.tlsProbeRequestId, "config": probeConfig
+    })
+    if (!written) {
+      root.tlsProbePending = false
+      return { ok: false, error: "Certificate check could not be started" }
+    }
+    return { ok: true, mode: "settings" }
+  }
+
+  function trustAndConnect(draft, accessCode) {
+    if (!root.tlsApprovalRequired)
+      return { ok: false, error: "Certificate approval is no longer active" }
+    if (root.tlsTarget(draft) !== root.tlsTarget(root.pendingTlsDraft)) {
+      root.clearTlsProbeState()
+      return root.saveSettings(draft, accessCode)
+    }
+    var trusted = JSON.parse(JSON.stringify(draft))
+    trusted.mqttTlsFingerprint = String(root.mqttTlsIdentity.fingerprint || "")
+    trusted.ftpsTlsFingerprint = String(root.ftpsTlsIdentity.fingerprint || "")
+    var replacement = String(accessCode || "")
+    var backendChanged = backendSettingsChanged(trusted)
+    pendingSecretWrite = !!replacement
+    if (!persistSettings(trusted)) {
+      pendingSecretWrite = false
+      return { ok: false, error: "Settings could not be saved by Omarchy Shell" }
+    }
+    root.clearTlsProbeState()
+    root.tlsRejected = false
+    root.processError = ""
+    if (backendChanged) sendConfiguration(trusted)
+    if (!replacement) return { ok: true, mode: "connecting" }
+    Qt.callLater(function() {
+      if (!setSecret(replacement)) {
+        recoverSecretWrite("LAN code could not be sent. Enter it again")
+      }
+    })
+    return { ok: true, mode: "connecting" }
+  }
+
+  function handleTlsMismatch(message) {
+    if (root.tlsRejected) return
+    root.tlsRejected = true
+    root.clearTlsProbeState()
+    root.attentionRequested("settings", message)
+  }
+
+  // The non-secret address/identity settings remain useful when a printer is
+  // temporarily offline. If the secret handoff itself fails, return to those
+  // saved values and require the user to enter the code again.
+  function recoverSecretWrite(message) {
+    if (!root.pendingSecretWrite) return false
+    pendingSecretWrite = false
+    root.attentionRequested("settings", message)
+    return true
+  }
+
+  function handleAuthenticationFailure(message) {
+    // A rejection from the previous session may arrive while a replacement is
+    // already queued. Let that write complete; a rejection from the restarted
+    // session will arrive after secret_status and reopen the form if necessary.
+    if (root.pendingSecretWrite) return false
+    pendingSecretWrite = false
+    secretRequired = true
+    secretStored = false
+    secretStatusKnown = true
+    root.attentionRequested("settings", message)
+    return true
+  }
+
+  function runDesktopEntryAction(action) {
+    if (root.desktopEntryBusy) return false
+    root.desktopEntryAction = action
+    root.desktopEntryError = ""
+    root.desktopEntryStderr = ""
+    root.desktopEntryBusy = true
+    desktopEntryProcess.command = [root.desktopEntryManagerPath, action]
+    desktopEntryProcess.running = true
+    if (!desktopEntryProcess.running) {
+      root.desktopEntryBusy = false
+      root.desktopEntryAction = ""
+      root.desktopEntryError = "Desktop entry helper could not be started"
+      return false
+    }
+    return true
+  }
+
+  function refreshDesktopEntry() {
+    return root.runDesktopEntryAction("status")
+  }
+
+  function setDesktopEntryEnabled(enabled) {
+    return root.runDesktopEntryAction(enabled === true ? "install" : "uninstall")
+  }
+
+  function objectOrEmpty(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : ({})
+  }
+
+  function finiteNumber(value, fallback) {
+    if (value === null || value === undefined || value === "") return fallback
+    var number = Number(value)
+    return isFinite(number) ? number : fallback
+  }
+
+  function isNonNegativeInteger(value) {
+    return typeof value === "number" && isFinite(value)
+      && value >= 0 && Math.floor(value) === value
+  }
+
+  function selectGeometrySource(source) {
+    return geometryAssembler.selectSource(source)
+  }
+
+  function validTlsFingerprint(value) {
+    return /^[0-9A-Fa-f]{64}$/.test(String(value || ""))
+  }
+
+  function isFinishedState(state) {
+    var value = String(state || "").toUpperCase()
+    return value === "FINISH" || value === "FINISHED"
+      || value === "COMPLETE" || value === "COMPLETED"
+  }
+
+  function printerHasError() {
+    var state = String(root.gcodeState || "").toUpperCase()
+    return state === "ERROR" || state === "FAILED" || state.indexOf("ERROR") >= 0
+  }
+
+  function segmentLimit() {
+    var configured = finiteNumber(root.maxSegments, 500000)
+    return Math.max(0, Math.min(1000000, Math.floor(configured)))
+  }
+
+  function markRendererReady() {
+    rendererStatus = "ready"
+  }
+  function markRendererUnavailable() {
+    rendererStatus = "unavailable"
+  }
+
+  function handleNativeBuildRunningChanged() {
+    if (nativeBuild.running) return
+    if (componentReady && !nativeBuildStarted)
+      root.markRendererUnavailable()
+  }
+
+  function formatTemp(value) {
+    return isFinite(Number(value)) ? Math.round(Number(value)) + "°" : "--°"
+  }
+
+  function formatTempPair(current, target) {
+    var currentText = root.formatTemp(current)
+    if (!isFinite(Number(target))) return currentText
+    return currentText + " / " + root.formatTemp(target)
+  }
+
+  function formatDuration(minutes) {
+    var value = Math.floor(root.finiteNumber(minutes, -1))
+    if (value < 0) return "--"
+    var hours = Math.floor(value / 60)
+    var rest = value % 60
+    if (hours <= 0) return rest + " min"
+    return hours + " h " + (rest < 10 ? "0" : "") + rest + " min"
+  }
+
+  function speedLabel() {
+    var labels = ["UNKNOWN", "SILENT", "STANDARD", "SPORT", "LUDICROUS"]
+    var level = Math.floor(root.finiteNumber(root.speedLevel, 0))
+    var label = level >= 1 && level <= 4 ? labels[level] : "CUSTOM"
+    return label + (root.speedMagnitude > 0 ? " · " + root.speedMagnitude + "%" : "")
+  }
+
+  function formatFan(value) {
+    var level = root.finiteNumber(value, NaN)
+    if (!isFinite(level)) return "--"
+    return Math.round(Math.max(0, Math.min(15, level)) / 15 * 100) + "%"
+  }
+
+  function formatLastUpdate() {
+    if (!root.lastUpdate) return "--"
+    var timestamp = new Date(root.lastUpdate)
+    return isNaN(timestamp.getTime()) ? root.lastUpdate
+      : Qt.formatDateTime(timestamp, "HH:mm:ss")
+  }
+
+  function formatDimensions() {
+    var bounds = root.activeBounds || ({})
+    var width = root.finiteNumber(bounds.maxX, NaN) - root.finiteNumber(bounds.minX, NaN)
+    var depth = root.finiteNumber(bounds.maxY, NaN) - root.finiteNumber(bounds.minY, NaN)
+    var height = root.finiteNumber(bounds.maxZ, NaN) - root.finiteNumber(bounds.minZ, NaN)
+    if (![width, depth, height].every(function(value) { return isFinite(value) && value >= 0 }))
+      return "--"
+    return width.toFixed(1) + " × " + depth.toFixed(1) + " × " + height.toFixed(1) + " mm"
+  }
+
+  function compactLabel() {
+    if (!root.hasConnectionTarget) return "SETUP"
+    if (!root.connectionVerified) return "WAIT"
+    var state = root.connected ? root.displayGcodeState : "OFFLINE"
+    return state + " " + root.percent + "% "
+      + root.formatTemp(root.nozzleTemp) + "/" + root.formatTemp(root.bedTemp)
+  }
+
+  function configuration() {
+    return {
+      "host": root.host, "mqttPort": root.mqttPort,
+      "ftpsPort": root.ftpsPort, "serial": root.serial,
+      "username": root.username, "maxSegments": root.segmentLimit(),
+      "mqttTlsFingerprint": root.mqttTlsFingerprint,
+      "ftpsTlsFingerprint": root.ftpsTlsFingerprint
+    }
+  }
+
+  function configurationForDraft(draft) {
+    return {
+      "host": String(draft.host || ""), "mqttPort": Number(draft.mqttPort),
+      "ftpsPort": Number(draft.ftpsPort), "serial": String(draft.serial || ""),
+      "username": String(draft.username || ""), "maxSegments": Number(draft.maxSegments),
+      "mqttTlsFingerprint": String(draft.mqttTlsFingerprint || ""),
+      "ftpsTlsFingerprint": String(draft.ftpsTlsFingerprint || "")
+    }
+  }
+
+  function reportProcessError(message) {
+    processError = String(message || "")
+    processErrorReportUpdate = processError === "" ? "" : lastUpdate
+  }
+
+  function writeCommand(command) {
+    return backendSession.writeCommand(command)
+  }
+
+  function sendConfiguration(draft) {
+    if (!daemonReady || !root.hasConnectionTarget) return
+    var config = draft && typeof draft === "object"
+      ? configurationForDraft(draft) : configuration()
+    writeCommand({ "op": "configure", "protocol": 1, "config": config })
+  }
+
+  function setSecret(value) {
+    var replacement = String(value || "")
+    if (!replacement) return false
+    return writeCommand({
+      "op": "set_secret", "accessCode": replacement, "persist": true
+    })
+  }
+
+  function clearSecret() {
+    return writeCommand({ "op": "clear_secret" })
+  }
+
+  function requestDisconnect() {
+    if (!root.hasConnectionTarget && !root.hasUsableSecret) return
+    root.disconnectConfirmationOpen = true
+  }
+
+  function failDisconnect(message) {
+    root.disconnectPending = false
+    root.attentionRequested("settings", message)
+  }
+
+  function confirmDisconnect() {
+    root.disconnectConfirmationOpen = false
+    if (!root.daemonReady || !backendSession.running) {
+      root.errorReported("Backend is not ready to disconnect the printer")
+      return false
+    }
+    root.disconnectRequestId = (root.disconnectRequestId + 1) % 2147483647
+    root.disconnectPending = true
+    if (!root.writeCommand({
+      "op": "clear_secret", "requestId": root.disconnectRequestId
+    })) {
+      root.failDisconnect("Printer could not be disconnected")
+      return false
+    }
+    return true
+  }
+
+  function completeDisconnect() {
+    if (!root.disconnectPending) return
+    var reset = {
+      printerName: root.printerName,
+      host: "",
+      mqttPort: 8883,
+      ftpsPort: 990,
+      serial: "",
+      username: "bblp",
+      maxSegments: root.segmentLimit(),
+      explosionFactor: root.explosionFactor,
+      autoRotate: root.autoRotate,
+      showBarSummary: root.showBarSummary,
+      mqttTlsFingerprint: "",
+      ftpsTlsFingerprint: "",
+      installationId: ""
+    }
+    if (!root.persistSettings(reset)) {
+      root.failDisconnect("Disconnected, but Omarchy Shell could not reset the settings")
+      return
+    }
+    root.disconnectPending = false
+    root.pendingSecretWrite = false
+    root.tlsRejected = false
+    root.resetOperationalState()
+    root.attentionRequested("setup", "")
+  }
+
+  function refreshModel() {
+    writeCommand({ "op": "refresh_model" })
+  }
+
+  function handleBackendStopped() {
+    resetOperationalState()
+    if (root.disconnectPending) {
+      root.failDisconnect("Backend stopped before disconnecting the printer")
+    }
+    recoverSecretWrite("Backend stopped before accepting the LAN code. Enter it again")
+  }
+
+  function handleErrorLine(line) {
+    var message = String(line || "").trim()
+    if (message) reportProcessError(message)
+  }
+
+  function handleState(message) {
+    message = objectOrEmpty(message)
+    var printer = objectOrEmpty(message.printer)
+    var model = objectOrEmpty(message.model)
+    var nextGeneration = isNonNegativeInteger(model.generation) ? model.generation : -1
+    geometryAssembler.setGeneration(nextGeneration)
+    connected = printer.connected === true
+    stale = printer.stale !== false
+    var reportUpdate = String(printer.lastUpdate || "")
+    var hasFreshReport = connected && printer.stale === false
+      && reportUpdate !== ""
+    if (hasFreshReport) {
+      var wasVerified = root.connectionVerified
+      connectionVerified = true
+      if (processError !== "" && reportUpdate !== processErrorReportUpdate) {
+        processError = ""
+        processErrorReportUpdate = ""
+      }
+      if (!wasVerified) root.statusAvailable()
+    }
+    gcodeState = String(printer.gcodeState || (connected ? "IDLE" : "OFFLINE"))
+    subtaskName = String(printer.subtaskName || "")
+    percent = Math.max(0, Math.min(100, Math.floor(finiteNumber(printer.percent, 0))))
+    nozzleTemp = finiteNumber(printer.nozzleTemp, NaN)
+    nozzleTargetTemp = finiteNumber(printer.nozzleTargetTemp, NaN)
+    bedTemp = finiteNumber(printer.bedTemp, NaN)
+    bedTargetTemp = finiteNumber(printer.bedTargetTemp, NaN)
+    currentLayer = Math.max(0, Math.floor(finiteNumber(printer.layer, 0)))
+    totalLayers = Math.max(0, Math.floor(finiteNumber(printer.totalLayers, 0)))
+    remainingMinutes = Math.floor(finiteNumber(printer.remainingMinutes, -1))
+    speedLevel = Math.max(0, Math.floor(finiteNumber(printer.speedLevel, 0)))
+    speedMagnitude = Math.max(0, Math.floor(finiteNumber(printer.speedMagnitude, 0)))
+    wifiSignal = String(printer.wifiSignal || "")
+    coolingFanSpeed = finiteNumber(printer.coolingFanSpeed, NaN)
+    heatbreakFanSpeed = finiteNumber(printer.heatbreakFanSpeed, NaN)
+    lastUpdate = reportUpdate
+    modelStatus = String(model.status || "idle")
+    modelLoadPhase = String(model.loadPhase || "")
+    modelLoadProgress = Math.max(-1, Math.min(100,
+      Math.floor(finiteNumber(model.loadProgress, -1))))
+    modelLoadedBytes = Math.max(0, finiteNumber(model.loadedBytes, 0))
+    modelTotalBytes = Math.max(0, finiteNumber(model.totalBytes, 0))
+    zCurrent = finiteNumber(model.zCurrent, NaN)
+    zMode = String(model.zMode || "unknown")
+    var error = objectOrEmpty(model.error)
+    modelErrorCode = error.code === null || error.code === undefined
+      ? "" : String(error.code)
+    modelError = error.message === null || error.message === undefined
+      ? "" : String(error.message)
+    if (modelErrorCode === "certificate_changed") {
+      handleTlsMismatch("FTPS certificate changed. Check and approve the printer again.")
+    }
+  }
+
+  function resetOperationalState() {
+    finishReadyTimer.stop()
+    finishGraceExpired = false
+    connected = false
+    connectionVerified = false
+    stale = true
+    gcodeState = "OFFLINE"
+    subtaskName = ""
+    percent = 0
+    nozzleTemp = NaN
+    nozzleTargetTemp = NaN
+    bedTemp = NaN
+    bedTargetTemp = NaN
+    currentLayer = 0
+    totalLayers = 0
+    remainingMinutes = -1
+    speedLevel = 0
+    speedMagnitude = 0
+    wifiSignal = ""
+    coolingFanSpeed = NaN
+    heatbreakFanSpeed = NaN
+    lastUpdate = ""
+    modelStatus = "idle"
+    modelErrorCode = ""
+    modelError = ""
+    modelLoadPhase = ""
+    modelLoadProgress = -1
+    modelLoadedBytes = 0
+    modelTotalBytes = 0
+    zCurrent = NaN
+    zMode = "unknown"
+    processError = ""
+    processErrorReportUpdate = ""
+    secretRequired = false
+    secretStored = false
+    secretStatusKnown = false
+    clearTlsProbeState()
+    geometryAssembler.reset(-1)
+  }
+
+  function handleLine(line) {
+    var message
+    try {
+      message = JSON.parse(String(line || ""))
+    } catch (error) {
+      return
+    }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return
+    if (message.event === "hello") {
+      daemonReady = Number(message.protocol) === 1
+      installationId = String(message.installationId || "")
+      installationIdentified = installationId !== ""
+      geometryAssembler.clearPending()
+      if (!daemonReady || !installationIdentified) {
+        resetOperationalState()
+        processError = "Unsupported backend protocol"
+        return
+      }
+      backendSession.markReady()
+      processError = ""
+      processErrorReportUpdate = ""
+      sendConfiguration()
+      return
+    }
+    if (!daemonReady) return
+    if (message.event === "secret_required") {
+      if (root.disconnectPending
+          && message.requestId === root.disconnectRequestId) {
+        root.completeDisconnect()
+        return
+      }
+      secretRequired = true
+      secretStored = false
+      secretStatusKnown = false
+      if (!root.pendingSecretWrite)
+        root.attentionRequested("settings", "Enter the LAN access code to connect")
+    } else if (message.event === "secret_status") {
+      pendingSecretWrite = false
+      if (root.disconnectPending
+          && message.requestId === root.disconnectRequestId
+          && message.stored === false) {
+        root.completeDisconnect()
+        return
+      }
+      secretRequired = false
+      secretStored = message.stored === true
+      secretStatusKnown = true
+    } else if (message.event === "tls_required") {
+      tlsRejected = !root.hasTrustedTlsPins
+      root.attentionRequested("settings",
+        "Approve the printer certificate before connecting")
+    } else if (message.event === "tls_identity") {
+      if (message.requestId !== root.tlsProbeRequestId) return
+      var mqttIdentity = objectOrEmpty(message.mqtt)
+      var ftpsIdentity = objectOrEmpty(message.ftps)
+      if (!root.validTlsFingerprint(mqttIdentity.fingerprint)
+          || !root.validTlsFingerprint(ftpsIdentity.fingerprint)) {
+        root.clearTlsProbeState()
+        root.errorReported("Printer returned an invalid certificate identity")
+        return
+      }
+      root.tlsProbePending = false
+      root.tlsApprovalRequired = true
+      root.mqttTlsIdentity = mqttIdentity
+      root.ftpsTlsIdentity = ftpsIdentity
+      root.errorReported("")
+    } else if (message.event === "state") {
+      handleState(message)
+    } else if (String(message.event || "").indexOf("geometry_") === 0) {
+      geometryAssembler.handleGeometry(message)
+    } else if (message.event === "error") {
+      if (root.disconnectPending
+          && message.requestId === root.disconnectRequestId
+          && message.scope === "secret") {
+        if (message.code === "clear_failed") {
+          root.failDisconnect("LAN access code could not be removed")
+        } else {
+          root.failDisconnect("Printer could not be disconnected")
+        }
+        Qt.callLater(root.sendConfiguration)
+        return
+      }
+      if (message.scope === "tls" && message.code === "probe_failed") {
+        if (message.requestId !== root.tlsProbeRequestId) return
+        root.clearTlsProbeState()
+        root.errorReported("Unable to read the printer certificate")
+        return
+      }
+      reportProcessError(message.message)
+      if (message.scope === "tls" && message.code === "certificate_changed") {
+        handleTlsMismatch("Printer certificate changed. Check it before reconnecting.")
+      } else if (message.scope === "mqtt" && message.code === "authentication") {
+        handleAuthenticationFailure("LAN access code was rejected. Enter it again")
+      } else {
+        recoverSecretWrite("LAN code was rejected. Enter it again")
+      }
+    }
+  }
+
+  onGcodeStateChanged: {
+    if (root.isFinishedState(root.gcodeState)) {
+      if (!finishReadyTimer.running && !root.finishGraceExpired)
+        finishReadyTimer.start()
+      return
+    }
+    finishReadyTimer.stop()
+    finishGraceExpired = false
+  }
+  onBackendConfigurationFingerprintChanged: {
+    if (!componentReady || persistingSettings) return
+    resetOperationalState()
+    sendConfiguration()
+  }
+  onShellChanged: root.initialize()
+
+  Connections {
+    target: root.shell
+    function onShellConfigChanged() { root.refreshSettings() }
+  }
+
+  Component.onCompleted: root.initialize()
+
+  BambuGeometryAssembler {
+    id: geometryAssembler
+    maxSegments: root.segmentLimit()
+    segmentDirectory: root.geometryDirectory
+  }
+
+  BambuBackendSession {
+    id: backendSession
+    executable: root.backendPath
+    onLineReceived: function(line) { root.handleLine(line) }
+    onErrorLineReceived: function(line) { root.handleErrorLine(line) }
+    onStopped: root.handleBackendStopped()
+    onWriteFailed: root.reportProcessError("Backend command failed")
+  }
+
+  Process {
+    id: nativeBuild
+    command: [root.nativeBuildPath]
+    running: false
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(_) {}
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { console.warn(String(chunk).trim()) }
+    }
+    onStarted: nativeBuildStarted = true
+    onExited: function(exitCode) {
+      if (exitCode === 0)
+        root.markRendererReady()
+      else
+        root.markRendererUnavailable()
+    }
+    onRunningChanged: root.handleNativeBuildRunningChanged()
+  }
+
+  Process {
+    id: desktopEntryProcess
+    command: [root.desktopEntryManagerPath, "status"]
+    running: false
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(_) {}
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        var line = String(chunk || "").trim()
+        if (line) root.desktopEntryStderr += line + "\n"
+      }
+    }
+    onExited: function(exitCode) {
+      var action = root.desktopEntryAction
+      root.desktopEntryBusy = false
+      if (action === "status") {
+        if (exitCode === 0) {
+          root.desktopEntryInstalled = true
+        } else if (exitCode === 1) {
+          root.desktopEntryInstalled = false
+        } else {
+          root.desktopEntryError = root.desktopEntryStderr.trim()
+            || "Desktop entry status could not be read"
+        }
+      } else if (exitCode === 0) {
+        root.desktopEntryInstalled = action === "install"
+      } else {
+        root.desktopEntryError = root.desktopEntryStderr.trim()
+          || "Desktop entry could not be "
+            + (action === "install" ? "installed" : "removed")
+      }
+      root.desktopEntryAction = ""
+    }
+  }
+
+  Timer {
+    id: finishReadyTimer
+    interval: 60000
+    repeat: false
+    onTriggered: {
+      if (root.isFinishedState(root.gcodeState))
+        root.finishGraceExpired = true
+    }
+  }
+
+}

@@ -6,11 +6,15 @@ require "json"
 class QmlContractTest < Minitest::Test
   def setup
     @root = File.expand_path("..", __dir__)
-    @source = File.read(File.join(@root, "BambuWidget.qml"))
+    @widget_source = File.read(File.join(@root, "BambuWidget.qml"))
+    @service_source = File.read(File.join(@root, "BambuService.qml"))
+    @dashboard_source = File.read(File.join(@root, "BambuDashboard.qml"))
+    @source = [@widget_source, @service_source, @dashboard_source].join("\n")
     @settings_source = File.read(File.join(@root, "BambuSettingsView.qml"))
     @telemetry_source = File.read(File.join(@root, "BambuTelemetryPane.qml"))
     @viewport_source = File.read(File.join(@root, "BambuModelViewport.qml"))
     @button_source = File.read(File.join(@root, "BambuButton.qml"))
+    @printer_icon_source = File.read(File.join(@root, "BambuPrinterIcon.qml"))
     @geometry_source = File.read(File.join(@root, "BambuGeometryAssembler.qml"))
     @backend_source = File.read(File.join(@root, "BambuBackendSession.qml"))
     manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
@@ -63,8 +67,8 @@ class QmlContractTest < Minitest::Test
     assert_includes @source, "property int currentLayer: 0"
     assert_match(/currentLayer = Math\.max\(0, Math\.floor\(finiteNumber\(printer\.layer, 0\)\)\)/,
                  @source)
-    assert_match(/layerValue:\s*\(root\.currentLayer \|\| "--"\) \+ " \/ " \+ \(root\.totalLayers \|\| "--"\)/,
-                 @source)
+    assert_match(/layerValue:\s*\(root\.service\.currentLayer \|\| "--"\) \+ " \/ "\s*\+ \(root\.service\.totalLayers \|\| "--"\)/,
+                 @dashboard_source)
   end
 
   def test_process_lifecycle_resets_state_and_schedules_one_restart
@@ -106,11 +110,11 @@ class QmlContractTest < Minitest::Test
     assert_match(/onStarted:.*nativeBuildStarted = true/m, native_build)
     assert_match(/onRunningChanged:.*handleNativeBuildRunningChanged/m, native_build)
     assert_match(/function handleNativeBuildRunningChanged\(\).*if \(nativeBuild\.running\).*return.*if \(componentReady && !nativeBuildStarted\).*root\.markRendererUnavailable\(\)/m,
-                 @source)
-    assert_match(/Component\.onCompleted:\s*\{.*componentReady = true.*Qt\.callLater\(root\.resolveInitialView\).*nativeBuild\.running = true.*if \(!nativeBuild\.running && !nativeBuildStarted\).*root\.markRendererUnavailable\(\)/m,
-                 @source)
-    assert_match(/BambuModelViewport\s*\{.*id: modelPane.*rendererStatus: root\.rendererStatus.*nativeRouteUrl: root\.nativeRouteUrl.*onRendererLoadFailed: root\.markRendererUnavailable\(\)/m,
-                 @source)
+                 @service_source)
+    assert_match(/function initialize\(\).*componentReady = true.*backendSession\.start\(\).*nativeBuild\.running = true.*if \(!nativeBuild\.running && !root\.nativeBuildStarted\).*root\.markRendererUnavailable\(\)/m,
+                 @service_source)
+    assert_match(/BambuModelViewport\s*\{.*rendererStatus: root\.service\.rendererStatus.*nativeRouteUrl: root\.service\.nativeRouteUrl.*onRendererLoadFailed: root\.service\.markRendererUnavailable\(\)/m,
+                 @dashboard_source)
     assert_match(/function segmentLimit\(\).*finiteNumber\(root\.maxSegments, 500000\)/m,
                  @source)
   end
@@ -128,8 +132,9 @@ class QmlContractTest < Minitest::Test
 
     assert_match(/function compactLabel\(\).*var state = root\.connected \? root\.displayGcodeState : "OFFLINE"/m,
                  @source)
-    assert_match(/tooltipText:.*root\.displayGcodeState/m, @source)
-    assert_match(/printerState: root\.displayGcodeState/, @source)
+    assert_match(/function tooltipText\(\).*root\.service\.displayGcodeState/m,
+                 @widget_source)
+    assert_match(/printerState: root\.service\.displayGcodeState/, @dashboard_source)
     assert_match(/function resetOperationalState\(\).*finishReadyTimer\.stop\(\).*finishGraceExpired = false/m,
                  @source)
   end
@@ -150,14 +155,15 @@ class QmlContractTest < Minitest::Test
     assert_includes @source,
                     "readonly property string backendConfigurationFingerprint: JSON.stringify(root.configuration())"
     assert_includes @source, "property bool componentReady: false"
-    assert_match(/Component\.onCompleted:\s*\{.*componentReady = true.*Qt\.callLater\(root\.resolveInitialView\)/m, @source)
-    assert_match(/onPopupOpenChanged:.*if \(!popupOpen\).*settingsView\.clearAccessCode\(\).*viewMode = nextIdleView\(\)/m,
-                 @source)
+    assert_match(/function initialize\(\).*componentReady = true.*refreshSettings\(\).*backendSession\.start\(\)/m,
+                 @service_source)
+    assert_match(/function close\(\).*settingsView\.clearAccessCode\(\).*root\.viewMode = root\.nextIdleView\(\)/m,
+                 @dashboard_source)
     refute_includes @source, "onSettingsChanged:"
     assert_match(/onBackendConfigurationFingerprintChanged:.*if \(!componentReady \|\| persistingSettings\) return.*resetOperationalState\(\).*sendConfiguration\(\)/m,
                  @source)
-    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*geometryAssembler\.reset\(-1\).*viewMode = nextIdleView\(\)/m,
-                 @source)
+    assert_match(/function resetOperationalState\(\).*connected = false.*gcodeState = "OFFLINE".*percent = 0.*nozzleTemp = NaN.*modelError = "".*processError = "".*secretRequired = false.*secretStored = false.*secretStatusKnown = false.*geometryAssembler\.reset\(-1\)/m,
+                 @service_source)
   end
 
   def test_raw_process_chunks_are_reassembled_with_a_hard_line_limit
@@ -176,7 +182,7 @@ class QmlContractTest < Minitest::Test
                  @backend_source)
     assert_match(/discarding = false.*offset = newlineIndex \+ 1/m,
                  @backend_source)
-    assert_equal 4, (@source + @backend_source).scan('splitMarker: ""').length
+    assert_equal 6, (@source + @backend_source).scan('splitMarker: ""').length
   end
 
   def test_secret_and_geometry_safety_contract
@@ -207,9 +213,9 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/function refreshModel\(\)\s*{\s*writeCommand\(\{ "op": "refresh_model" \}\)\s*}/m,
                  @source)
-    assert_includes @source, "onReloadRequested: root.refreshModel()"
-    assert_match(/BambuModelViewport\s*{.*daemonReady: root\.daemonReady && backendSession\.running/m,
-                 @source)
+    assert_includes @dashboard_source, "onReloadRequested: root.service.refreshModel()"
+    assert_match(/BambuModelViewport\s*{.*daemonReady: root\.service\.daemonReady && root\.service\.backendRunning/m,
+                 @dashboard_source)
     assert_includes @viewport_source, "enabled: viewport.daemonReady"
   end
 
@@ -243,16 +249,16 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/function resetOperationalState\(\).*modelLoadPhase = "".*modelLoadProgress = -1.*modelLoadedBytes = 0.*modelTotalBytes = 0/m,
                  @source)
-    assert_match(/BambuModelViewport\s*\{.*modelLoadPhase: root\.modelLoadPhase.*modelLoadProgress: root\.modelLoadProgress.*modelLoadedBytes: root\.modelLoadedBytes.*modelTotalBytes: root\.modelTotalBytes/m,
-                 @source)
+    assert_match(/BambuModelViewport\s*\{.*modelLoadPhase: root\.service\.modelLoadPhase.*modelLoadProgress: root\.service\.modelLoadProgress.*modelLoadedBytes: root\.service\.modelLoadedBytes.*modelTotalBytes: root\.service\.modelTotalBytes/m,
+                 @dashboard_source)
   end
 
   def test_fresh_printer_report_clears_recovered_process_error
     assert_includes @source, 'property string processErrorReportUpdate: ""'
     assert_match(/function reportProcessError\(message\).*processError = String\(message \|\| ""\).*processErrorReportUpdate = processError === "" \? "" : lastUpdate/m,
                  @source)
-    assert_match(/var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*if \(hasFreshReport\) \{\s*connectionVerified = true\s*if \(processError !== "" && reportUpdate !== processErrorReportUpdate\) \{\s*processError = ""\s*processErrorReportUpdate = ""/m,
-                 @source)
+    assert_match(/var reportUpdate = String\(printer\.lastUpdate \|\| ""\).*if \(hasFreshReport\) \{.*connectionVerified = true.*if \(processError !== "" && reportUpdate !== processErrorReportUpdate\).*processError = "".*processErrorReportUpdate = ""/m,
+                 @service_source)
   end
 
   def test_geometry_source_selection_uses_only_complete_available_sources
@@ -264,9 +270,10 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/readonly property string activeSegmentPath:.*geometryBundle\.gcode.*geometry\.path/m,
                  @source)
-    assert_match(/segmentValue:\s*root\.activeSegmentCount\.toLocaleString/m, @source)
-    assert_match(/BambuModelViewport\s*\{.*previewAvailable: root\.previewAvailable.*gcodeAvailable: root\.gcodeGeometryAvailable.*selectedSource: root\.selectedGeometrySource.*previewSource: root\.previewAvailable.*onSourceRequested: function\(source\).*root\.selectGeometrySource\(source\)/m,
-                 @source)
+    assert_match(/segmentValue:\s*root\.service\.activeSegmentCount\.toLocaleString/m,
+                 @dashboard_source)
+    assert_match(/BambuModelViewport\s*\{.*previewAvailable: root\.service\.previewAvailable.*gcodeAvailable: root\.service\.gcodeGeometryAvailable.*selectedSource: root\.service\.selectedGeometrySource.*previewSource: root\.service\.previewAvailable.*onSourceRequested: function\(source\).*root\.service\.selectGeometrySource\(source\)/m,
+                 @dashboard_source)
   end
 
   def test_state_and_json_line_parsing_are_null_safe
@@ -301,10 +308,10 @@ class QmlContractTest < Minitest::Test
     assert_match(/readonly property bool wideLayout:\s*width >= Style\.space\(640\)/,
                  @source)
     assert_includes @source, "id: telemetryPane"
-    assert_includes @source, "id: modelPane"
+    assert_includes @source, "BambuModelViewport {"
     assert_match(/width:\s*dashboard\.wideLayout\s*\? Style\.space\(300\)\s*:\s*dashboard\.width/m,
                  @source)
-    assert_match(/width:\s*dashboard\.wideLayout\s*\? Math\.max\(0, dashboard\.width - telemetryPane\.width - dashboardLayout\.spacing\)\s*:\s*dashboard\.width/m,
+    assert_match(/width:\s*dashboard\.wideLayout\s*\? Math\.max\(0, dashboard\.width - telemetryPane\.width\s*- dashboardLayout\.spacing\)\s*:\s*dashboard\.width/m,
                  @source)
   end
 
@@ -333,25 +340,24 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_symbolic_printer_icon_participates_in_bar_layout
-    assert_includes @source, "import QtQuick.Effects"
-    assert_includes @source,
+    assert_includes @printer_icon_source, "import QtQuick.Effects"
+    assert_includes @service_source,
                     'readonly property url printerIconSource: Qt.resolvedUrl("assets/printer-open-frame.svg")'
     refute_includes @source, "function isSuccessPrintState"
     refute_includes @source, "barPrintActive"
     assert_match(/readonly property bool barFinishActive: root\.connected && !root\.stale\s*&& root\.isFinishedState\(root\.displayGcodeState\)/m,
-                 @source)
-    assert_match(/readonly property color printerIconColor: root\.errorActive \? root\.errorColor\s*: \(root\.barFinishActive \? root\.successColor : root\.foreground\)/m,
-                 @source)
-    assert_includes @source, "component PrinterIcon: Item {"
-    assert_match(/Image\s*{.*id: printerIconImage.*source: root\.printerIconSource.*visible: false.*layer\.enabled: true/m,
-                 @source)
-    assert_match(/MultiEffect\s*{.*source: printerIconImage.*colorization: 1\.0.*colorizationColor: iconRoot\.tintColor/m,
-                 @source)
-    assert_match(/WidgetButton\s*{.*id: button.*text: "".*labelVisible: false.*hasVisualContent: true.*fixedWidth: root\.vertical \? barSize : buttonContent\.implicitWidth \+ scaledHorizontalMargin \* 2.*fixedHeight: barSize/m,
-                 @source)
-    assert_match(/Row\s*{.*id: buttonContent.*height: button\.fixedHeight.*PrinterIcon\s*{.*anchors\.verticalCenter: parent\.verticalCenter.*tintColor: root\.printerIconColor.*Text\s*{.*height: parent\.height.*verticalAlignment: Text\.AlignVCenter.*visible: !root\.vertical.*text: root\.compactLabel\(\)/m,
-                 @source)
-    assert_operator @source.scan("PrinterIcon {").length, :>=, 2
+                 @service_source)
+    assert_match(/readonly property color printerIconColor: !root\.service \? root\.foreground\s*: \(root\.service\.errorActive \? root\.errorColor\s*: \(root\.service\.barFinishActive \? root\.successColor : root\.foreground\)\)/m,
+                 @widget_source)
+    assert_match(/Image\s*{.*id: sourceImage.*source: icon\.source.*visible: false.*layer\.enabled: true/m,
+                 @printer_icon_source)
+    assert_match(/MultiEffect\s*{.*source: sourceImage.*colorization: 1\.0.*colorizationColor: icon\.tintColor/m,
+                 @printer_icon_source)
+    assert_match(/WidgetButton\s*{.*id: button.*text: "".*labelVisible: false.*hasVisualContent: true.*fixedWidth: root\.vertical \? barSize\s*: buttonContent\.implicitWidth \+ scaledHorizontalMargin \* 2.*fixedHeight: barSize/m,
+                 @widget_source)
+    assert_match(/Row\s*{.*id: buttonContent.*height: button\.fixedHeight.*BambuPrinterIcon\s*{.*anchors\.verticalCenter: parent\.verticalCenter.*tintColor: root\.printerIconColor.*Text\s*{.*height: parent\.height.*verticalAlignment: Text\.AlignVCenter.*visible: !root\.vertical.*text: root\.compactLabel\(\)/m,
+                 @widget_source)
+    assert_operator @source.scan("BambuPrinterIcon {").length, :>=, 2
     refute_includes @source, "󰐫"
   end
 
@@ -368,42 +374,44 @@ class QmlContractTest < Minitest::Test
                  @telemetry_source)
     assert_match(/function printerHasError\(\).*state === "ERROR".*state === "FAILED"/m,
                  @source)
-    assert_match(/printerState: root\.displayGcodeState/, @source)
+    assert_match(/printerState: root\.service\.displayGcodeState/, @dashboard_source)
     assert_match(/label: "STATUS"; value: pane\.modelState; valueColor: \(pane\.errorActive \|\| pane\.modelErrorActive\) \? pane\.errorColor/m,
                  @telemetry_source)
 
-    assert_includes @source, 'readonly property color errorColor: "#ff5f56"'
-    assert_includes @source, 'readonly property color successColor: "#39FF88"'
+    assert_includes @dashboard_source, 'readonly property color errorColor: "#ff5f56"'
+    assert_includes @dashboard_source, 'readonly property color successColor: "#39FF88"'
     assert_match(/readonly property bool errorActive: root\.printerHasError\(\)\s*\|\| root\.processError !== ""/m,
-                 @source)
-    global_error_definition = @source[
+                 @service_source)
+    global_error_definition = @service_source[
       /readonly property bool errorActive:.*?(?=\n  readonly property)/m
     ]
     refute_nil global_error_definition
     refute_includes global_error_definition, "modelStatus"
-    assert_includes @source,
+    assert_includes @service_source,
                     'readonly property bool modelErrorActive: root.modelStatus === "error"'
-    assert_match(/BambuTelemetryPane\s*{.*errorColor: root\.errorColor.*errorActive: root\.errorActive.*modelErrorActive: root\.modelErrorActive/m,
-                 @source)
+    assert_match(/BambuTelemetryPane\s*{.*errorColor: root\.errorColor.*errorActive: root\.service\.errorActive.*modelErrorActive: root\.service\.modelErrorActive/m,
+                 @dashboard_source)
     assert_match(/BambuTelemetryPane\s*{.*successColor: root\.successColor/m,
-                 @source)
-    assert_match(/BambuModelViewport\s*{.*errorColor: root\.errorColor.*errorActive: root\.errorActive \|\| root\.modelErrorActive.*printing: root\.connected && root\.gcodeState === "RUNNING"/m,
-                 @source)
-    assert_match(/BambuSettingsView\s*{.*errorColor: root\.errorColor/m, @source)
-    assert_match(/text: root\.processError \|\| "Waiting for a fresh printer report…".*color: root\.processError \? root\.errorColor : root\.dim/m,
-                 @source)
+                 @dashboard_source)
+    assert_match(/BambuModelViewport\s*{.*errorColor: root\.errorColor.*errorActive: root\.service\.errorActive \|\| root\.service\.modelErrorActive.*printing: root\.service\.connected && root\.service\.gcodeState === "RUNNING"/m,
+                 @dashboard_source)
+    assert_match(/BambuSettingsView\s*{.*errorColor: root\.errorColor/m,
+                 @dashboard_source)
+    assert_match(/text: root\.service\.processError \|\| "Waiting for a fresh printer report…".*color: root\.service\.processError \? root\.errorColor : root\.dim/m,
+                 @dashboard_source)
     assert_match(/text: form\.validationError\s*color: form\.errorColor/m,
                  @settings_source)
   end
 
   def test_vertical_bar_is_icon_only
     assert_match(/function compactLabel\(\).*if \(!root\.hasConnectionTarget\) return "SETUP".*if \(!root\.connectionVerified\) return "WAIT"/m,
-                 @source)
-    assert_match(/Text\s*{.*height: parent\.height.*verticalAlignment: Text\.AlignVCenter.*visible: !root\.vertical && root\.showBarSummary\s*width: Math\.min\(implicitWidth, Style\.space\(220\)\)\s*text: root\.compactLabel\(\)/m,
-                 @source)
-    assert_match(/formatTemp\(root\.nozzleTemp\).*formatTemp\(root\.bedTemp\)/m, @source)
-    assert_match(/tooltipText:.*!root\.connectionVerified \? "CONNECTING".*root\.percent.*formatTemp\(root\.nozzleTemp\).*formatTemp\(root\.bedTemp\)/m,
-                 @source)
+                 @service_source)
+    assert_match(/Text\s*{.*height: parent\.height.*verticalAlignment: Text\.AlignVCenter.*visible: !root\.vertical && \(!root\.service \|\| root\.service\.showBarSummary\)\s*width: Math\.min\(implicitWidth, Style\.space\(220\)\)\s*text: root\.compactLabel\(\)/m,
+                 @widget_source)
+    assert_match(/formatTemp\(root\.service\.nozzleTemp\).*formatTemp\(root\.service\.bedTemp\)/m,
+                 @widget_source)
+    assert_match(/function tooltipText\(\).*!root\.service\.connectionVerified \? "CONNECTING".*root\.service\.percent.*formatTemp\(root\.service\.nozzleTemp\).*formatTemp\(root\.service\.bedTemp\)/m,
+                 @widget_source)
   end
 
   def test_key_catcher_uses_the_panels_inset_content_area
@@ -500,8 +508,8 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/function persistSettings\(draft\).*entry\.explosionFactor = draft\.explosionFactor/m,
                  @source)
-    assert_match(/BambuModelViewport\s*\{.*explosionFactor: root\.explosionFactor/m,
-                 @source)
+    assert_match(/BambuModelViewport\s*\{.*explosionFactor: root\.service\.explosionFactor/m,
+                 @dashboard_source)
 
     assert_local_only("explosionFactor")
   end
@@ -516,8 +524,8 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/function persistSettings\(draft\).*entry\.autoRotate = draft\.autoRotate/m,
                  @source)
-    assert_match(/BambuModelViewport\s*\{.*autoRotateDefault: root\.autoRotate/m,
-                 @source)
+    assert_match(/BambuModelViewport\s*\{.*autoRotateDefault: root\.service\.autoRotate/m,
+                 @dashboard_source)
 
     assert_local_only("autoRotate")
   end
@@ -530,10 +538,10 @@ class QmlContractTest < Minitest::Test
     assert_match(/function settingsDraft\(\).*showBarSummary: root\.showBarSummary/m, @source)
     assert_match(/function persistSettings\(draft\).*entry\.showBarSummary = draft\.showBarSummary/m,
                  @source)
-    assert_match(/Text\s*\{.*visible: !root\.vertical && root\.showBarSummary.*text: root\.compactLabel\(\)/m,
-                 @source)
-    assert_match(/PrinterIcon\s*\{\s*anchors\.verticalCenter: parent\.verticalCenter/m,
-                 @source)
+    assert_match(/Text\s*\{.*visible: !root\.vertical && \(!root\.service \|\| root\.service\.showBarSummary\).*text: root\.compactLabel\(\)/m,
+                 @widget_source)
+    assert_match(/BambuPrinterIcon\s*\{\s*anchors\.verticalCenter: parent\.verticalCenter/m,
+                 @widget_source)
   end
 
   private

@@ -5,7 +5,9 @@ require_relative "test_helper"
 class HtmlUiTranslationContractTest < Minitest::Test
   def setup
     @root = File.expand_path("..", __dir__)
-    @widget = File.read(File.join(@root, "BambuWidget.qml"))
+    @widget = ["BambuWidget.qml", "BambuDashboard.qml"].map do |name|
+      File.read(File.join(@root, name))
+    end.join("\n")
   end
 
   def test_dashboard_is_composed_from_native_lightweight_qml_components
@@ -27,7 +29,7 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  @widget)
     assert_match(/id:\s*telemetryPane.*width:\s*dashboard\.wideLayout\s*\? Style\.space\(300\)\s*:\s*dashboard\.width/m,
                  @widget)
-    assert_match(/id:\s*modelPane.*width:\s*dashboard\.wideLayout\s*\? Math\.max\(0, dashboard\.width - telemetryPane\.width - dashboardLayout\.spacing\)\s*:\s*dashboard\.width/m,
+    assert_match(/BambuModelViewport\s*\{.*width:\s*dashboard\.wideLayout\s*\? Math\.max\(0, dashboard\.width - telemetryPane\.width\s*- dashboardLayout\.spacing\)\s*:\s*dashboard\.width/m,
                  @widget)
   end
 

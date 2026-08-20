@@ -109,9 +109,26 @@ remove it.
 serial number, trusted certificates and LAN code. It preserves the printer
 name and visual preferences so the plugin is ready for a new connection.
 
+### Desktop app and launcher
+
+Select **Open app** at the bottom of the widget panel to move the dashboard
+into its own window. It is a normal Wayland application window, so Hyprland
+tiles, focuses, resizes and moves it between workspaces like other Omarchy
+apps. The window and bar panel share one background printer session; opening
+both does not create a second MQTT or FTPS connection.
+
+The launcher entry is opt-in. In **Settings → Desktop**, select **Add to app
+launcher** to install a standard per-user desktop entry and icon. Bambu
+Companion will then appear in the Omarchy launcher as an application. Use
+**Remove from app launcher** before removing the plugin if you no longer want
+the entry. Neither installing nor updating the plugin changes the app launcher
+without this explicit action.
+
 ## Features
 
 - Compact bar icon with optional status, progress and temperature summary.
+- Full dashboard in a normal, resizable tiled application window.
+- Optional Omarchy launcher entry managed from the plugin's Settings view.
 - Live connection, print state, progress and remaining-time reporting.
 - Current and target nozzle/bed temperatures.
 - Current layer, total layers and exact or estimated Z progress.
@@ -234,7 +251,8 @@ the plugin.
 - The plugin does not overwrite user configuration without explicit consent:
   printer settings are written only with **Save & Connect** or
   **Trust & Connect**, cleared only after confirming **Disconnect printer**, and
-  the bar-summary preference changes only when its toggle is changed.
+  the bar-summary preference changes only when its toggle is changed. The
+  desktop entry is installed or removed only with its Settings action.
 - The LAN access code is never stored in plugin settings, the repository,
   process arguments or normal logs.
 - `secret-tool` stores the code in GNOME Keyring when available. Otherwise it

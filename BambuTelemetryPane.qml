@@ -35,8 +35,10 @@ Item {
   property string segmentValue: "0 SEGMENTS"
   property string modelState: "IDLE"
   property string dimensionsValue: "--"
+  property bool appButtonVisible: false
 
   signal settingsRequested()
+  signal appRequested()
 
   readonly property color surface: Qt.rgba(
     foreground.r, foreground.g, foreground.b, 0.035)
@@ -130,7 +132,7 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    anchors.bottom: settingsButton.top
+    anchors.bottom: actionRow.top
     anchors.margins: pane.inset
     anchors.bottomMargin: Style.space(8)
     contentWidth: width
@@ -255,18 +257,37 @@ Item {
     }
   }
 
-  BambuButton {
-    id: settingsButton
+  Row {
+    id: actionRow
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     anchors.margins: pane.inset
     height: Style.space(36)
-    clip: true
-    text: "SETTINGS"
-    foreground: pane.foreground
-    accent: pane.accent
-    bordered: true
-    onClicked: pane.settingsRequested()
+    spacing: Style.space(8)
+
+    BambuButton {
+      width: pane.appButtonVisible
+        ? Math.max(0, (parent.width - parent.spacing) / 2) : parent.width
+      height: parent.height
+      clip: true
+      text: "SETTINGS"
+      foreground: pane.foreground
+      accent: pane.accent
+      bordered: true
+      onClicked: pane.settingsRequested()
+    }
+
+    BambuButton {
+      visible: pane.appButtonVisible
+      width: Math.max(0, (parent.width - parent.spacing) / 2)
+      height: parent.height
+      clip: true
+      text: "OPEN APP"
+      foreground: pane.foreground
+      accent: pane.accent
+      bordered: true
+      onClicked: pane.appRequested()
+    }
   }
 }

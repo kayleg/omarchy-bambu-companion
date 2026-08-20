@@ -6,13 +6,17 @@ require "json"
 class RepositoryContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   REQUIRED = %w[
-    .gitignore manifest.json BambuWidget.qml bambu-companion daemon.rb Gemfile Gemfile.lock
+    .gitignore manifest.json BambuWidget.qml BambuService.qml BambuDashboard.qml
+    BambuPrinterIcon.qml BambuApp.qml assets/bambu-companion.svg
+    bambu-companion bambu-companion-desktop-entry
+    io.github.ypmrg.bambu-companion.desktop daemon.rb Gemfile Gemfile.lock
     README.md LICENSE bin/test native/build
   ].freeze
 
   def test_required_installable_files_exist
     REQUIRED.each { |path| assert File.file?(File.join(ROOT, path)), "missing #{path}" }
-    %w[bambu-companion bin/test test/system/launcher_test.sh
+    %w[bambu-companion bambu-companion-desktop-entry bin/test
+       test/system/launcher_test.sh test/system/desktop_entry_test.sh
        test/support/fake-bundle test/support/fake-gem native/build].each do |path|
       assert File.executable?(File.join(ROOT, path)), "#{path} must be executable"
     end
@@ -36,9 +40,13 @@ class RepositoryContractTest < Minitest::Test
     defaults = manifest.fetch("barWidget").fetch("defaults")
 
     assert_equal "io.github.ypmrg.bambu-companion", manifest.fetch("id")
-    assert_equal "1.1.0", manifest.fetch("version")
+    assert_equal "1.2.5", manifest.fetch("version")
     assert_includes manifest.fetch("kinds"), "bar-widget"
+    assert_includes manifest.fetch("kinds"), "service"
+    assert_includes manifest.fetch("kinds"), "panel"
     assert_equal "BambuWidget.qml", manifest.fetch("entryPoints").fetch("barWidget")
+    assert_equal "BambuService.qml", manifest.fetch("entryPoints").fetch("service")
+    assert_equal "BambuApp.qml", manifest.fetch("entryPoints").fetch("panel")
     assert_equal "", defaults.fetch("host")
     assert_equal 8883, defaults.fetch("mqttPort")
     assert_equal 990, defaults.fetch("ftpsPort")
@@ -78,7 +86,10 @@ class RepositoryContractTest < Minitest::Test
   end
 
   def test_offline_demo_feature_and_fixtures_are_absent
-    production_paths = %w[manifest.json BambuWidget.qml BambuSettingsView.qml README.md]
+    production_paths = %w[
+      manifest.json BambuWidget.qml BambuService.qml BambuDashboard.qml
+      BambuSettingsView.qml README.md
+    ]
       .concat(Dir[File.join(ROOT, "lib/**/*.rb")])
     production = production_paths.map do |path|
       File.read(path.start_with?(ROOT) ? path : File.join(ROOT, path))
@@ -98,7 +109,10 @@ class RepositoryContractTest < Minitest::Test
   end
 
   def test_production_configuration_has_no_default_lan_code
-    production = %w[manifest.json BambuWidget.qml daemon.rb bambu-companion]
+    production = %w[
+      manifest.json BambuWidget.qml BambuService.qml BambuDashboard.qml
+      daemon.rb bambu-companion
+    ]
       .concat(Dir[File.join(ROOT, "lib/**/*.rb")].map { |path| path.delete_prefix("#{ROOT}/") })
       .map { |path| File.read(File.join(ROOT, path)) }.join("\n")
 
@@ -142,14 +156,15 @@ class RepositoryContractTest < Minitest::Test
 
   def test_user_configuration_changes_require_an_explicit_widget_action
     widget = File.read(File.join(ROOT, "BambuWidget.qml"))
+    service = File.read(File.join(ROOT, "BambuService.qml"))
     launcher = File.read(File.join(ROOT, "bambu-companion"))
     readme = File.read(File.join(ROOT, "README.md"))
 
-    assert_equal 1, widget.scan("root.bar.shell.updateEntryInline(root.moduleName, entry)").length
+    assert_equal 1, service.scan("root.shell.updateEntryInline(root.moduleName, entry)").length
     assert_match(/function commitSettingsEntry\(entry\).*updateEntryInline\(root\.moduleName, entry\)/m,
-                 widget)
-    assert_match(/function saveSettings\(.*persistSettings\(draft\)/m, widget)
-    assert_match(/onBarSummaryToggled:.*persistBarSummary\(enabled\)/m, widget)
+                 service)
+    assert_match(/function saveSettings\(.*persistSettings\(draft\)/m, service)
+    assert_match(/BambuDashboard\s*\{/, widget)
     refute_match(%r{(?:\$HOME|~)/\.config}, launcher)
     assert_includes readme, "does not overwrite user configuration"
   end

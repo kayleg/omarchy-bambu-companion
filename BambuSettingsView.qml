@@ -22,6 +22,9 @@ Item {
   property bool secretStatusKnown: false
   property bool autoRotate: true
   property bool showBarSummary: true
+  property bool desktopEntryInstalled: false
+  property bool desktopEntryBusy: false
+  property string desktopEntryError: ""
   property string validationError: ""
 
   readonly property bool inputActive: hostInput.activeFocus
@@ -36,6 +39,7 @@ Item {
   signal disconnectRequested()
   signal forgetCodeRequested()
   signal barSummaryToggled(bool enabled)
+  signal desktopEntryToggled(bool enabled)
   signal inputFocusReleased()
 
   implicitHeight: Style.space(500)
@@ -513,6 +517,58 @@ Item {
               form.barSummaryToggled(form.showBarSummary)
             }
           }
+        }
+      }
+
+      SectionLabel { text: "DESKTOP" }
+
+      Column {
+        width: parent.width
+        spacing: Style.space(6)
+
+        Text {
+          width: parent.width
+          text: form.desktopEntryInstalled
+            ? "● AVAILABLE IN THE APP LAUNCHER"
+            : "○ NOT IN THE APP LAUNCHER"
+          color: form.desktopEntryInstalled ? form.foreground : form.dim
+          wrapMode: Text.Wrap
+          font.family: form.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        Text {
+          width: parent.width
+          text: "Installs a standard desktop entry. The app opens as a normal tiled window."
+          color: form.dim
+          wrapMode: Text.Wrap
+          font.family: form.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        BambuButton {
+          width: parent.width
+          height: Style.space(36)
+          enabled: !form.desktopEntryBusy
+          clip: true
+          text: form.desktopEntryBusy ? "UPDATING APP LAUNCHER…"
+            : (form.desktopEntryInstalled
+              ? "REMOVE FROM APP LAUNCHER" : "ADD TO APP LAUNCHER")
+          foreground: form.foreground
+          accent: form.accent
+          bordered: true
+          onClicked: form.desktopEntryToggled(!form.desktopEntryInstalled)
+        }
+
+        Text {
+          visible: form.desktopEntryError !== ""
+          width: parent.width
+          text: form.desktopEntryError
+          color: form.errorColor
+          wrapMode: Text.Wrap
+          font.family: form.fontFamily
+          font.pixelSize: Style.font.bodySmall
         }
       }
 

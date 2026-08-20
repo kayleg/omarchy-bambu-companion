@@ -1,0 +1,101 @@
+#!/bin/bash
+set -euo pipefail
+
+desktop_id="io.github.ypmrg.bambu-companion"
+launcher_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+plugin_dir="$(cd -- "$(dirname -- "$launcher_path")" && pwd)"
+desktop_source="$plugin_dir/$desktop_id.desktop"
+icon_source="$plugin_dir/assets/bambu-companion.svg"
+
+if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+  data_root="$XDG_DATA_HOME"
+elif [[ -n "${HOME:-}" ]]; then
+  data_root="$HOME/.local/share"
+else
+  echo "bambu-companion-desktop-entry: XDG_DATA_HOME or HOME must be set" >&2
+  exit 2
+fi
+
+applications_dir="$data_root/applications"
+icons_dir="$data_root/icons/hicolor/scalable/apps"
+desktop_target="$applications_dir/$desktop_id.desktop"
+icon_target="$icons_dir/$desktop_id.svg"
+
+managed_desktop_entry() {
+  [[ -f "$desktop_target" && ! -L "$desktop_target" ]] \
+    && grep -qx 'X-Bambu-Companion-Managed=true' "$desktop_target"
+}
+
+refuse_unmanaged_target() {
+  echo "bambu-companion-desktop-entry: refusing to replace an unmanaged desktop entry" >&2
+  exit 2
+}
+
+refresh_desktop_database() {
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
+  fi
+}
+
+action="${1:-}"
+case "$action" in
+status)
+  managed_desktop_entry
+  ;;
+install)
+  [[ -f "$desktop_source" ]] || {
+    echo "bambu-companion-desktop-entry: desktop entry template is missing" >&2
+    exit 2
+  }
+  [[ -f "$icon_source" ]] || {
+    echo "bambu-companion-desktop-entry: application icon is missing" >&2
+    exit 2
+  }
+  desktop_was_managed=false
+  if [[ -e "$desktop_target" || -L "$desktop_target" ]]; then
+    managed_desktop_entry || refuse_unmanaged_target
+    desktop_was_managed=true
+  fi
+  if [[ -e "$icon_target" || -L "$icon_target" ]]; then
+    [[ ! -L "$icon_target" ]] || {
+      echo "bambu-companion-desktop-entry: refusing to replace a symbolic-link icon" >&2
+      exit 2
+    }
+    [[ -f "$icon_target" ]] || {
+      echo "bambu-companion-desktop-entry: refusing to replace a non-regular icon path" >&2
+      exit 2
+    }
+    if [[ "$desktop_was_managed" != true ]] && ! cmp -s -- "$icon_source" "$icon_target"; then
+      echo "bambu-companion-desktop-entry: refusing to replace an unmanaged application icon" >&2
+      exit 2
+    fi
+  fi
+  if command -v desktop-file-validate >/dev/null 2>&1; then
+    desktop-file-validate "$desktop_source"
+  fi
+  mkdir -p -- "$applications_dir" "$icons_dir"
+  install -m 0644 -- "$desktop_source" "$desktop_target"
+  install -m 0644 -- "$icon_source" "$icon_target"
+  refresh_desktop_database
+  ;;
+uninstall)
+  desktop_was_managed=false
+  if [[ -e "$desktop_target" || -L "$desktop_target" ]]; then
+    managed_desktop_entry || {
+      echo "bambu-companion-desktop-entry: refusing to remove an unmanaged desktop entry" >&2
+      exit 2
+    }
+    desktop_was_managed=true
+    rm -f -- "$desktop_target"
+  fi
+  if [[ -f "$icon_target" && ! -L "$icon_target" ]] \
+      && { [[ "$desktop_was_managed" == true ]] || cmp -s -- "$icon_source" "$icon_target"; }; then
+    rm -f -- "$icon_target"
+  fi
+  refresh_desktop_database
+  ;;
+*)
+  echo "Usage: bambu-companion-desktop-entry {status|install|uninstall}" >&2
+  exit 2
+  ;;
+esac
