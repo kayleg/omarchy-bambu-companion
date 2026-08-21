@@ -527,9 +527,9 @@ class QmlSettingsContractTest < Minitest::Test
 
     assert_match(/id: dashboard\s*width: panelScroll\.width\s*height: wideLayout \? root\.viewportHeight/m,
                  widget)
-    assert_match(/id: viewportHeader.*height: Style\.space\(36\).*id: viewportTitle.*font\.pixelSize: Style\.font\.caption/m,
+    assert_match(/id: viewportHeader.*height: Style\.space\(36\).*id: viewportTitle.*font\.pixelSize: bambuStyle\.captionFontSize/m,
                  viewport)
-    assert_match(/id: settingsHeader.*height: Style\.space\(36\).*text: "SETTINGS".*font\.pixelSize: Style\.font\.caption/m,
+    assert_match(/id: settingsHeader.*height: Style\.space\(36\).*text: "SETTINGS".*font\.pixelSize: bambuStyle\.captionFontSize/m,
                  settings)
 
     assert_match(/id: actionRow.*anchors\.bottom: parent\.bottom.*anchors\.margins: pane\.inset.*height: Style\.space\(36\)/m,

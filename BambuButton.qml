@@ -8,6 +8,8 @@ import qs.Ui
 Item {
   id: root
 
+  BambuStyle { id: bambuStyle }
+
   property string text: ""
   property string tooltipText: ""
   property color foreground: Color.foreground
@@ -15,8 +17,8 @@ Item {
   property color accent: Color.accent
   property bool bordered: false
   property bool active: false
-  property real fontSize: Style.font.body
-  property real horizontalPadding: Style.spacing.controlPaddingX
+  property real fontSize: bambuStyle.bodyFontSize
+  property real horizontalPadding: bambuStyle.controlPaddingX
   readonly property real borderInset: Math.max(1, Style.space(1))
 
   signal clicked()

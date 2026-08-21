@@ -1,10 +1,11 @@
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
-import qs.Commons
 
 Item {
   id: root
+
+  BambuStyle { id: bambuStyle }
 
   readonly property string moduleName: "io.github.ypmrg.bambu-companion"
   property var shell: null
@@ -48,7 +49,7 @@ Item {
     id: appWindow
     visible: false
     title: "Bambu Companion"
-    color: Color.popups.background
+    color: bambuStyle.popupBackground
     implicitWidth: 1000
     implicitHeight: 640
     minimumSize: Qt.size(420, 320)

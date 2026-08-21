@@ -47,7 +47,8 @@ class ViewportRouteContractTest < Minitest::Test
     assert_includes geometry, "item.bounds = viewport.activeBounds"
     refute_includes view, "item.segmentPath"
     refute_includes view, "item.bounds"
-    assert_match(/onLoaded:\s*\{\s*syncRouteGeometry\(\).*syncRouteItem\(\)/m, @source)
+    assert_match(/onLoaded:\s*\{\s*viewport\.syncRouteGeometry\(\).*viewport\.syncRouteItem\(\)/m,
+                 @source)
     assert_match(/onActiveSegmentPathChanged:\s*\{.*syncRouteGeometry\(\)/m, @source)
     assert_match(/onActiveBoundsChanged:\s*syncRouteGeometry\(\)/, @source)
     assert_equal 1, @source.scan(/item\.segmentPath\s*=/).length
@@ -76,7 +77,7 @@ class ViewportRouteContractTest < Minitest::Test
       assert_includes icon, 'stroke="#fff"'
       refute_includes icon, 'stroke="#000"'
     end
-    assert_match(/component SourceIconButton: BambuButton.*MultiEffect.*colorization:\s*1.*colorizationColor:\s*foreground/m,
+    assert_match(/component SourceIconButton: BambuButton.*MultiEffect.*colorization:\s*1.*colorizationColor:\s*sourceButton\.foreground/m,
                  @source)
   end
 
@@ -182,7 +183,8 @@ class ViewportRouteContractTest < Minitest::Test
     refute_includes @source, "function buildNozzlePath"
     refute_includes @source, "function nozzlePosition"
     assert_includes @source, "id: nozzleMarker"
-    assert_match(/item\.mapToView\(world\[0\], world\[1\], world\[2\]\)/, @source)
+    assert_match(/mapToView\.call\(item, world\[0\], world\[1\], world\[2\]\)/,
+                 @source)
     assert_match(/running:.*viewport\.selectedSource === "gcode".*viewport\.rendererStatus === "ready".*viewport\.printing/m,
                  @source)
     assert_match(/function syncNozzleMarker\(\).*!viewport\.printing.*viewport\.selectedSource !== "gcode".*routeCamera\.dragging.*sampleAvailable = false/m,
@@ -190,7 +192,8 @@ class ViewportRouteContractTest < Minitest::Test
     assert_includes @source, "readonly property real nozzleSpeed: 50"
     assert_match(/if \(viewport\.printing\).*nozzleDistance \+= elapsed \/ 1000 \* viewport\.nozzleSpeed/m,
                  @source)
-    assert_includes @source, "item.sampleNozzle(viewport.zCurrent, routeCamera.nozzleDistance)"
+    assert_match(/sampleNozzle\.call\(\s*item, viewport\.zCurrent, routeCamera\.nozzleDistance\)/,
+                 @source)
     assert_includes @source, "property bool sampleAvailable: false"
   end
 

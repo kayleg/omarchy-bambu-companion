@@ -5,6 +5,8 @@ import qs.Ui
 Item {
   id: root
 
+  BambuStyle { id: bambuStyle }
+
   required property var service
   required property real viewportHeight
   property bool surfaceActive: false
@@ -19,7 +21,7 @@ Item {
   readonly property color errorColor: "#ff5f56"
   readonly property color dim: Qt.rgba(foreground.r, foreground.g,
                                        foreground.b, 0.55)
-  readonly property string fontFamily: Style.font.family
+  readonly property string fontFamily: bambuStyle.fontFamily
   readonly property real preferredViewportHeight:
     Math.max(Style.space(520), telemetryPane.implicitHeight)
 
@@ -153,7 +155,7 @@ Item {
     Rectangle {
       id: panelBackdrop
       anchors.fill: parent
-      readonly property color baseColor: Color.popups.background
+      readonly property color baseColor: bambuStyle.popupBackground
       color: Qt.rgba(
         baseColor.r * 0.94 + root.foreground.r * 0.06,
         baseColor.g * 0.94 + root.foreground.g * 0.06,
@@ -427,7 +429,7 @@ Item {
               horizontalAlignment: Text.AlignHCenter
               elide: Text.ElideRight
               font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
+              font.pixelSize: bambuStyle.subtitleFontSize
               font.bold: true
             }
 
@@ -438,7 +440,7 @@ Item {
               wrapMode: Text.Wrap
               horizontalAlignment: Text.AlignHCenter
               font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
+              font.pixelSize: bambuStyle.bodySmallFontSize
             }
 
             BambuButton {

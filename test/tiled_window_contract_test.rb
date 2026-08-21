@@ -50,7 +50,7 @@ class TiledWindowContractTest < Minitest::Test
   end
 
   def test_widget_can_summon_the_app_without_starting_another_backend
-    assert_match(/function openApp\(\).*root\.bar\.shell\.summon\(root\.moduleName, "\{}"\).*root\.close\(\).*return true/m,
+    assert_match(/function openApp\(\).*root\.barShell\.summon\(root\.moduleName, "\{}"\).*root\.close\(\).*return true/m,
                  @widget)
     assert_match(/showOpenAppButton: true.*onOpenAppRequested: root\.openApp\(\)/m,
                  @widget)

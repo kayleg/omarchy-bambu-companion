@@ -1,9 +1,13 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Effects
 import qs.Commons
 
 Item {
   id: pane
+
+  BambuStyle { id: bambuStyle }
 
   property color foreground: Color.foreground
   property color accent: Color.accent
@@ -13,7 +17,7 @@ Item {
   property bool errorActive: false
   property bool modelErrorActive: false
   property bool demoActive: false
-  property string fontFamily: Style.font.family
+  property string fontFamily: bambuStyle.fontFamily
   property url printerIconSource
 
   property string printerName: "3D Printer"
@@ -73,7 +77,7 @@ Item {
       text: parent.objectName
       color: pane.dim
       font.family: pane.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
       font.bold: true
       font.letterSpacing: 1
     }
@@ -95,7 +99,7 @@ Item {
       color: pane.dim
       elide: Text.ElideRight
       font.family: pane.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
     }
 
     Text {
@@ -107,13 +111,13 @@ Item {
       horizontalAlignment: Text.AlignRight
       elide: Text.ElideRight
       font.family: pane.fontFamily
-      font.pixelSize: Style.font.bodySmall
+      font.pixelSize: bambuStyle.bodySmallFontSize
     }
   }
 
   component SidebarPrinterIcon: Item {
-    implicitWidth: Style.bar.iconCanvas
-    implicitHeight: Style.bar.iconCanvas
+    implicitWidth: bambuStyle.barIconCanvas
+    implicitHeight: bambuStyle.barIconCanvas
 
     Image {
       id: sourceImage
@@ -167,7 +171,7 @@ Item {
             : (pane.online ? pane.successColor : pane.dim))
         elide: Text.ElideRight
         font.family: pane.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
         font.bold: true
       }
 
@@ -190,7 +194,7 @@ Item {
           verticalAlignment: Text.AlignVCenter
           elide: Text.ElideRight
           font.family: pane.fontFamily
-          font.pixelSize: Style.font.subtitle
+          font.pixelSize: bambuStyle.subtitleFontSize
           font.bold: true
         }
       }
@@ -201,7 +205,7 @@ Item {
         color: pane.dim
         elide: Text.ElideMiddle
         font.family: pane.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
       }
 
       Rectangle {
@@ -232,7 +236,7 @@ Item {
           text: pane.percent + "% COMPLETE"
           color: pane.accent
           font.family: pane.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: bambuStyle.bodySmallFontSize
           font.bold: true
         }
         Text {
@@ -241,7 +245,7 @@ Item {
           text: pane.remainingValue + " LEFT"
           color: pane.dim
           font.family: pane.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: bambuStyle.captionFontSize
         }
       }
 
@@ -294,7 +298,7 @@ Item {
           text: "v" + pane.appVersion
           color: pane.foreground
           font.family: pane.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: bambuStyle.bodySmallFontSize
         }
 
         BambuButton {
@@ -331,7 +335,7 @@ Item {
           horizontalAlignment: Text.AlignRight
           elide: Text.ElideRight
           font.family: pane.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: bambuStyle.captionFontSize
           font.bold: pane.updateAvailable
         }
       }

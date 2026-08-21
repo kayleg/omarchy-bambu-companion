@@ -6,19 +6,28 @@ BarWidget {
   id: root
   moduleName: "io.github.ypmrg.bambu-companion"
 
+  BambuStyle { id: bambuStyle }
+
   property bool popupOpen: false
   readonly property bool opened: popupOpen
-  readonly property var service: root.bar && root.bar.shell
-    ? root.bar.shell.serviceFor(root.moduleName) : null
+  readonly property var barShell: root.barMember("shell")
+  readonly property var service: root.barShell
+    ? root.barShell.serviceFor(root.moduleName) : null
 
-  readonly property color foreground: root.bar ? root.bar.foreground : Color.foreground
+  readonly property color foreground: root.barMember("foreground") !== undefined
+    ? root.barMember("foreground") : Color.foreground
   readonly property color accent: Color.accent
   readonly property color successColor: "#39FF88"
   readonly property color errorColor: "#ff5f56"
-  readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+  readonly property string fontFamily: root.barMember("fontFamily") !== undefined
+    ? String(root.barMember("fontFamily")) : bambuStyle.fontFamily
   readonly property color printerIconColor: !root.service ? root.foreground
     : (root.service.barErrorActive ? root.errorColor
       : (root.service.barFinishActive ? root.successColor : root.foreground))
+
+  function barMember(name) {
+    return root.bar ? root.bar[name] : undefined
+  }
 
   function open() {
     if (!root.service) return
@@ -36,8 +45,8 @@ BarWidget {
   }
 
   function openApp() {
-    if (!root.bar || !root.bar.shell) return false
-    if (!root.bar.shell.summon(root.moduleName, "{}")) return false
+    if (!root.barShell) return false
+    if (!root.barShell.summon(root.moduleName, "{}")) return false
     root.close()
     return true
   }
@@ -59,9 +68,10 @@ BarWidget {
     target: root.service
 
     function onAttentionRequested(mode, message) {
-      if (!root.bar || !root.bar.shell || !root.bar.findPanelWidget) return
-      if (root.bar.shell.isPluginOpen(root.moduleName)) return
-      if (root.bar.findPanelWidget(root.moduleName) === root)
+      var findPanelWidget = root.barMember("findPanelWidget")
+      if (!root.barShell || typeof findPanelWidget !== "function") return
+      if (root.barShell.isPluginOpen(root.moduleName)) return
+      if (findPanelWidget.call(root.bar, root.moduleName) === root)
         root.openAttention(mode, message)
     }
   }
@@ -80,7 +90,7 @@ BarWidget {
     activeColor: root.accent
     active: root.popupOpen
     fontFamily: root.fontFamily
-    fontSize: Style.font.caption
+    fontSize: bambuStyle.captionFontSize
     tooltipText: root.tooltipText()
     onPressed: {
       if (root.popupOpen) root.close()
@@ -109,7 +119,7 @@ BarWidget {
         color: root.foreground
         elide: Text.ElideRight
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
         renderType: Text.NativeRendering
       }
     }

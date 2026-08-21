@@ -447,7 +447,7 @@ class QmlContractTest < Minitest::Test
 
   def test_keyboard_panel_has_a_themed_content_backdrop_for_quickshell_composition
     assert_match(/KeyboardPanel\s*{.*padding:\s*0/m, @source)
-    assert_match(/PanelKeyCatcher\s*{.*Rectangle\s*{\s*id: panelBackdrop\s*anchors\.fill: parent\s*readonly property color baseColor: Color\.popups\.background\s*color: Qt\.rgba\(\s*baseColor\.r \* 0\.94 \+ root\.foreground\.r \* 0\.06,.*1\.0\)/m,
+    assert_match(/PanelKeyCatcher\s*{.*Rectangle\s*{\s*id: panelBackdrop\s*anchors\.fill: parent\s*readonly property color baseColor: bambuStyle\.popupBackground\s*color: Qt\.rgba\(\s*baseColor\.r \* 0\.94 \+ root\.foreground\.r \* 0\.06,.*1\.0\)/m,
                  @source)
   end
 

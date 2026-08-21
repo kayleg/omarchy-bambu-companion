@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
@@ -6,13 +8,15 @@ import qs.Ui
 Item {
   id: form
 
+  BambuStyle { id: bambuStyle }
+
   clip: true
 
   property color foreground: Color.foreground
   property color accent: Color.accent
   property color errorColor: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
-  property string fontFamily: Style.font.family
+  property string fontFamily: bambuStyle.fontFamily
   property bool daemonReady: false
   property bool allowBack: true
   property bool requireAccessCode: false
@@ -162,7 +166,7 @@ Item {
     color: form.dim
     wrapMode: Text.Wrap
     font.family: form.fontFamily
-    font.pixelSize: Style.font.caption
+    font.pixelSize: bambuStyle.captionFontSize
     font.bold: true
     font.letterSpacing: 0.5
   }
@@ -173,7 +177,7 @@ Item {
     verticalAlignment: Text.AlignBottom
     color: form.accent
     font.family: form.fontFamily
-    font.pixelSize: Style.font.caption
+    font.pixelSize: bambuStyle.captionFontSize
     font.bold: true
     font.letterSpacing: 1
   }
@@ -212,7 +216,7 @@ Item {
       color: form.foreground
       elide: Text.ElideRight
       font.family: form.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
       font.bold: true
       font.letterSpacing: 1
     }
@@ -400,7 +404,7 @@ Item {
             ? form.foreground : (form.secretRequired ? form.accent : form.dim)
           elide: Text.ElideRight
           font.family: form.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: bambuStyle.captionFontSize
           font.bold: true
         }
       }
@@ -527,7 +531,7 @@ Item {
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         font.family: form.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
       }
     }
   }

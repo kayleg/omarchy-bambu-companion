@@ -5,11 +5,13 @@ import qs.Commons
 Item {
   id: icon
 
+  BambuStyle { id: bambuStyle }
+
   property color tintColor: Color.foreground
   property url source
 
-  implicitWidth: Style.bar.iconCanvas
-  implicitHeight: Style.bar.iconCanvas
+  implicitWidth: bambuStyle.barIconCanvas
+  implicitHeight: bambuStyle.barIconCanvas
 
   Image {
     id: sourceImage

@@ -972,7 +972,7 @@ Item {
       onRead: function(chunk) { console.warn(String(chunk).trim()) }
     }
     onStarted: root.nativeBuildStarted = true
-    onExited: function(exitCode) {
+    onExited: function(exitCode) { // qmllint disable signal-handler-parameters
       if (exitCode === 0)
         root.markRendererReady()
       else
@@ -998,7 +998,7 @@ Item {
         pluginUpdateProcess.errorOutput += String(chunk || "")
       }
     }
-    onExited: function(exitCode) {
+    onExited: function(exitCode) { // qmllint disable signal-handler-parameters
       var action = pluginUpdateProcess.action
       if (action === "check") {
         root.pluginUpdateStatusKnown = exitCode === 0 || exitCode === 1

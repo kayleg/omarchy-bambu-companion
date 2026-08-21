@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Effects
 import qs.Commons
@@ -5,12 +7,14 @@ import qs.Commons
 Item {
   id: viewport
 
+  BambuStyle { id: bambuStyle }
+
   property color foreground: Color.foreground
   property color accent: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
   property color errorColor: Color.accent
   property bool errorActive: false
-  property string fontFamily: Style.font.family
+  property string fontFamily: bambuStyle.fontFamily
   property bool panelActive: false
   property bool printerConfigured: false
   property bool daemonReady: false
@@ -113,6 +117,10 @@ Item {
     return amount.toFixed(amount >= 100 ? 0 : 1) + " " + units[unit]
   }
 
+  function objectMember(object, name) {
+    return object ? object[name] : undefined
+  }
+
   function syncRouteGeometry() {
     var item = routeLoader.item
     if (!item) return
@@ -147,12 +155,19 @@ Item {
       nozzleMarker.sampleAvailable = false
       return
     }
-    var world = item.sampleNozzle(viewport.zCurrent, routeCamera.nozzleDistance)
+    var sampleNozzle = viewport.objectMember(item, "sampleNozzle")
+    var mapToView = viewport.objectMember(item, "mapToView")
+    if (typeof sampleNozzle !== "function" || typeof mapToView !== "function") {
+      nozzleMarker.sampleAvailable = false
+      return
+    }
+    var world = sampleNozzle.call(
+      item, viewport.zCurrent, routeCamera.nozzleDistance)
     if (!world || world.length !== 3) {
       nozzleMarker.sampleAvailable = false
       return
     }
-    var point = item.mapToView(world[0], world[1], world[2])
+    var point = mapToView.call(item, world[0], world[1], world[2])
     if (!point || !isFinite(point.x) || !isFinite(point.y)) {
       nozzleMarker.sampleAvailable = false
       return
@@ -193,7 +208,7 @@ Item {
       text: "PRINT PREVIEW"
       color: viewport.foreground
       font.family: viewport.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
       font.bold: true
       font.letterSpacing: 1
     }
@@ -211,7 +226,7 @@ Item {
       horizontalAlignment: Text.AlignRight
       elide: Text.ElideRight
       font.family: viewport.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
     }
   }
 
@@ -357,8 +372,8 @@ Item {
         if (status === Loader.Error) viewport.rendererLoadFailed()
       }
       onLoaded: {
-        syncRouteGeometry()
-        syncRouteItem()
+        viewport.syncRouteGeometry()
+        viewport.syncRouteItem()
       }
     }
 
@@ -500,6 +515,8 @@ Item {
     }
 
     component SourceIconButton: BambuButton {
+      id: sourceButton
+
       required property string sourceName
       required property bool available
       required property string sourceLabel
@@ -520,7 +537,7 @@ Item {
         anchors.centerIn: parent
         width: Style.space(16)
         height: width
-        source: iconSource
+        source: sourceButton.iconSource
         sourceSize.width: width
         sourceSize.height: height
         visible: false
@@ -531,7 +548,7 @@ Item {
         anchors.fill: sourceIconImage
         source: sourceIconImage
         colorization: 1
-        colorizationColor: foreground
+        colorizationColor: sourceButton.foreground
       }
     }
 
@@ -583,7 +600,7 @@ Item {
         text: viewport.coordinateOverlay()
         color: viewport.dim
         font.family: viewport.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
       }
     }
 
@@ -630,13 +647,13 @@ Item {
             text: "● PRINTED"
             color: viewport.errorActive ? viewport.errorColor : viewport.accent
             font.family: viewport.fontFamily
-            font.pixelSize: Style.font.caption
+            font.pixelSize: bambuStyle.captionFontSize
           }
           Text {
             text: "● REMAINING"
             color: viewport.dim
             font.family: viewport.fontFamily
-            font.pixelSize: Style.font.caption
+            font.pixelSize: bambuStyle.captionFontSize
           }
         }
       }
@@ -650,7 +667,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         font.family: viewport.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
         font.bold: true
       }
 
@@ -664,7 +681,7 @@ Item {
         horizontalAlignment: Text.AlignRight
         verticalAlignment: Text.AlignVCenter
         font.family: viewport.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
         font.bold: true
       }
     }
@@ -680,7 +697,7 @@ Item {
       elide: Text.ElideRight
       horizontalAlignment: Text.AlignHCenter
       font.family: viewport.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
     }
 
     Column {
@@ -702,7 +719,7 @@ Item {
           text: viewport.emptyModelTitle()
           color: viewport.errorActive ? viewport.errorColor : viewport.dim
           font.family: viewport.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: bambuStyle.captionFontSize
           font.bold: true
         }
 
@@ -794,7 +811,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         font.family: viewport.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
       }
     }
   }

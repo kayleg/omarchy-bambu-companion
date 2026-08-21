@@ -7,7 +7,7 @@ class RepositoryContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   REQUIRED = %w[
     .gitignore .github/workflows/ci.yml manifest.json
-    BambuWidget.qml BambuService.qml BambuDashboard.qml
+    BambuWidget.qml BambuService.qml BambuDashboard.qml BambuStyle.qml
     BambuPrinterIcon.qml BambuApp.qml bambu-companion
     bambu-companion-update-check daemon.rb Gemfile Gemfile.lock
     README.md LICENSE bin/test native/build
@@ -137,9 +137,12 @@ class RepositoryContractTest < Minitest::Test
     assert_match(/^Security:\n\s+Enabled: true$/m, rubocop_config)
     assert_includes test_all, "rubocop --cache false"
     assert_includes test_all, "shellcheck"
-    assert_match(/qmllint.*\*\.qml/, test_all)
+    assert_match(/qmllint_command.*\*\.qml/m, test_all)
+    assert_includes test_all, "--max-warnings 0"
+    assert_includes test_all, "--unused-imports warning"
     assert_includes test_all, 'qml_import_root="$(mktemp -d)"'
-    assert_includes test_all, '"$qmllint_command" -I "$qml_import_root"'
+    assert_includes test_all,
+                    '"$qmllint_command" --max-warnings 0 --unused-imports warning'
 
     workflow = File.read(File.join(ROOT, ".github/workflows/ci.yml"))
     assert_includes workflow, "archlinux:base"

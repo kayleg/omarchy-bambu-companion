@@ -1,8 +1,12 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import qs.Commons
 
 Item {
   id: dialog
+
+  BambuStyle { id: bambuStyle }
 
   property string mode: ""
   property bool probing: false
@@ -13,8 +17,8 @@ Item {
   property color accent: Color.accent
   property color errorColor: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
-  property color background: Color.popups.background
-  property string fontFamily: Style.font.family
+  property color background: bambuStyle.popupBackground
+  property string fontFamily: bambuStyle.fontFamily
 
   readonly property bool certificateMode: mode === "certificate"
   readonly property bool disconnectMode: mode === "disconnect"
@@ -66,7 +70,7 @@ Item {
       text: parent.title
       color: dialog.foreground
       font.family: dialog.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
       font.bold: true
     }
 
@@ -76,7 +80,7 @@ Item {
       color: dialog.foreground
       wrapMode: Text.WrapAnywhere
       font.family: dialog.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
     }
 
     Text {
@@ -85,7 +89,7 @@ Item {
       color: dialog.dim
       elide: Text.ElideRight
       font.family: dialog.fontFamily
-      font.pixelSize: Style.font.caption
+      font.pixelSize: bambuStyle.captionFontSize
     }
   }
 
@@ -139,7 +143,7 @@ Item {
         color: dialog.foreground
         elide: Text.ElideRight
         font.family: dialog.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: bambuStyle.captionFontSize
         font.bold: true
         font.letterSpacing: 1
       }
@@ -173,7 +177,7 @@ Item {
           wrapMode: Text.Wrap
           horizontalAlignment: Text.AlignHCenter
           font.family: dialog.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: bambuStyle.bodySmallFontSize
           font.bold: true
         }
 
@@ -197,7 +201,7 @@ Item {
           color: dialog.accent
           wrapMode: Text.Wrap
           font.family: dialog.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: bambuStyle.captionFontSize
           font.bold: true
         }
 
@@ -210,7 +214,7 @@ Item {
           color: dialog.foreground
           wrapMode: Text.Wrap
           font.family: dialog.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: bambuStyle.bodySmallFontSize
         }
       }
     }

@@ -63,6 +63,7 @@ bundle exec rubocop --cache false daemon.rb lib test
 shellcheck bambu-companion bambu-companion-update-check native/build \
   test/system/launcher_test.sh test/system/update_check_test.sh \
   test/support/fake-bundle test/support/fake-gem bin/test
-"$qmllint_command" -I "$qml_import_root" ./*.qml
+"$qmllint_command" --max-warnings 0 --unused-imports warning \
+  -I "$qml_import_root" ./*.qml
 
 echo "All local Bambu Companion checks passed."
