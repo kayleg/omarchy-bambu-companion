@@ -206,34 +206,29 @@ Item {
                      form.foreground.b, 0.12)
     }
 
-    Text {
+    BambuButton {
+      visible: form.allowBack
       anchors.left: parent.left
-      anchors.leftMargin: Style.space(12)
-      anchors.right: settingsClose.left
-      anchors.rightMargin: Style.space(8)
+      anchors.leftMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(64)
+      height: Style.space(30)
+      text: "BACK"
+      tooltipText: "BACK TO PRINTER"
+      foreground: form.foreground
+      accent: form.accent
+      bordered: true
+      onClicked: form.backRequested()
+    }
+
+    Text {
+      anchors.centerIn: parent
       text: "SETTINGS"
       color: form.foreground
-      elide: Text.ElideRight
       font.family: form.fontFamily
       font.pixelSize: bambuStyle.captionFontSize
       font.bold: true
       font.letterSpacing: 1
-    }
-
-    BambuButton {
-      id: settingsClose
-      visible: form.allowBack
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(64)
-      height: Style.space(30)
-      text: "CLOSE"
-      foreground: form.foreground
-      accent: form.accent
-      bordered: false
-      onClicked: form.backRequested()
     }
   }
 

@@ -17,6 +17,9 @@ class QmlContractTest < Minitest::Test
     @printer_icon_source = File.read(File.join(@root, "BambuPrinterIcon.qml"))
     @geometry_source = File.read(File.join(@root, "BambuGeometryAssembler.qml"))
     @backend_source = File.read(File.join(@root, "BambuBackendSession.qml"))
+    @event_store_source = File.read(File.join(@root, "BambuEventStore.qml"))
+    @event_history_source = File.read(File.join(@root, "BambuEventHistory.qml"))
+    @event_button_source = File.read(File.join(@root, "BambuEventButton.qml"))
     manifest = JSON.parse(File.read(File.join(@root, "manifest.json")))
     @widget_defaults = manifest.fetch("barWidget").fetch("defaults")
     @widget_schema = manifest.fetch("barWidget").fetch("schema")
@@ -382,9 +385,9 @@ class QmlContractTest < Minitest::Test
 
     assert_includes @dashboard_source, 'readonly property color errorColor: "#ff5f56"'
     assert_includes @dashboard_source, 'readonly property color successColor: "#39FF88"'
-    assert_match(/readonly property bool errorActive: root\.printerHasError\(\)\s*\|\| root\.processError !== ""/m,
+    assert_match(/readonly property bool errorActive: root\.printerHasError\(\)\s*\|\| root\.activePrinterErrorCount > 0\s*\|\| root\.processError !== ""/m,
                  @service_source)
-    assert_match(/readonly property bool barErrorActive: root\.printerHasError\(\)\s*\|\| root\.processErrorAffectsBar/m,
+    assert_match(/readonly property bool barErrorActive: root\.printerHasError\(\)\s*\|\| root\.activePrinterErrorCount > 0 \|\| root\.unreadErrorCount > 0\s*\|\| root\.processErrorAffectsBar/m,
                  @service_source)
     assert_match(/reportProcessError\(message\.message,\s*message\.scope === "mqtt" && message\.code === "connection"\)/m,
                  @service_source)
@@ -410,7 +413,7 @@ class QmlContractTest < Minitest::Test
   end
 
   def test_vertical_bar_is_icon_only
-    assert_match(/function statusSummary\(separator\).*if \(!root\.hasConnectionTarget\) return "SETUP".*if \(!root\.printerStateKnown\) return "CONNECTING".*if \(!root\.connected\) return "OFFLINE"/m,
+    assert_match(/function statusSummary\(separator\).*if \(!root\.hasConnectionTarget\) return "SETUP".*if \(!root\.printerStateKnown\) return "CONNECTING".*if \(root\.barErrorActive\) return "ERROR".*if \(!root\.connected\) return "OFFLINE"/m,
                  @service_source)
     refute_includes @service_source, 'return "WAIT"'
     assert_match(/Text\s*{.*height: parent\.height.*verticalAlignment: Text\.AlignVCenter.*visible: !root\.vertical && \(!root\.service \|\| root\.service\.showBarSummary\)\s*width: Math\.min\(implicitWidth, Style\.space\(220\)\)\s*text: root\.compactLabel\(\)/m,
@@ -419,6 +422,111 @@ class QmlContractTest < Minitest::Test
                  @service_source)
     assert_match(/function compactLabel\(\).*service\.statusSummary\(" "\).*function tooltipText\(\).*service\.statusSummary\(" · "\)/m,
                  @widget_source)
+  end
+
+
+  def test_event_history_is_live_bounded_and_tracks_print_transitions
+    assert_includes @service_source, "BambuEventStore {"
+    assert_includes @service_source, "property alias eventHistory: eventStore.events"
+    assert_match(/function startDemo\(\).*root\.demoActive = true\s*eventStore\.loadDemoEvents\(\).*"op": "start_demo"/m,
+                 @service_source)
+    assert_match(/function resetDemoState\(\)\s*{\s*eventStore\.clearDemoEvents\(\)/m,
+                 @service_source)
+    refute_match(/Component\.onCompleted:.*loadDemoEvents/m, @service_source)
+    assert_match(/function handleState\(message\).*eventStore\.recordPrintTransition\(.*eventStore\.reconcileAlerts\(printer\.alerts/m,
+                 @service_source)
+    assert_includes @event_store_source, "readonly property int maximumEvents: 200"
+    transition = @event_store_source[/function recordPrintTransition\(.*?\n  }/m]
+    refute_nil transition
+    %w[started resumed paused completed failed].each do |state|
+      assert_includes transition, "Print #{state}"
+    end
+    assert_match(/function appendEvent\(values\).*updated\.slice\(0, store\.maximumEvents\)/m,
+                 @event_store_source)
+  end
+
+  def test_printer_alerts_have_distinct_error_and_maintenance_semantics
+    assert_match(/var severity = String\(alert\.kind \|\| "warning"\) === "error" \? "error" : "warning"/,
+                 @event_store_source)
+    assert_match(/readonly property bool errorActive: root\.printerHasError\(\).*root\.activePrinterErrorCount > 0/m,
+                 @service_source)
+    error_definitions = @service_source[/readonly property bool errorActive:.*?readonly property bool modelErrorActive:/m]
+    refute_nil error_definitions
+    refute_includes error_definitions, "activePrinterWarningCount"
+    assert_match(/unreadWarningCount: root\.service\.unreadWarningCount/m,
+                 @dashboard_source)
+    assert_match(/eventColor: root\.unreadErrorCount > 0 \? root\.errorColor\s*: root\.unreadWarningCount > 0 \? root\.warningColor\s*: root\.active \? root\.accent : root\.foreground/m,
+                 @event_button_source)
+    refute_includes @source, "activePrinterWarningCount"
+    refute_includes @source, "eventWarningActive"
+  end
+
+  def test_event_notifications_support_read_all_click_and_half_second_hover_read
+    assert_match(/function markRead\(id\)/, @event_store_source)
+    assert_match(/function markAllRead\(\)/, @event_store_source)
+    assert_match(/text: "READ ALL".*onClicked:.*history\.service\.markAllEventsRead\(\)/m,
+                 @event_history_source)
+    assert_match(/Timer \{\s*interval: 500\s*repeat: false\s*running: eventMouse\.containsMouse && !eventDelegate\.modelData\.read\s*onTriggered:.*history\.service\.markEventRead/m,
+                 @event_history_source)
+    assert_match(/onClicked: history\.openEvent\(eventDelegate\.modelData\)/,
+                 @event_history_source)
+    assert_includes @event_history_source, 'property string logFontFamily: "monospace"'
+    assert_match(/id: logTime.*width: implicitWidth.*history\.formatTimestamp\(eventDelegate\.modelData\.timestamp, false\)/m,
+                 @event_history_source)
+    assert_match(/id: logLevel.*width: implicitWidth.*history\.eventLevel\(eventDelegate\.modelData\)/m,
+                 @event_history_source)
+    assert_match(/id: logChannel.*width: implicitWidth.*history\.eventChannel\(eventDelegate\.modelData\)/m,
+                 @event_history_source)
+    assert_match(/anchors\.left: logChannel\.right.*history\.eventMessage\(eventDelegate\.modelData\)/m,
+                 @event_history_source)
+  end
+
+  def test_event_button_moved_from_telemetry_to_viewport_source_rail
+    refute_includes @telemetry_source, "BambuEventButton"
+    assert_match(
+      /BambuModelViewport\s*{.*eventsActive: root\.viewMode === "events".*unreadEventCount: root\.service\.unreadEventCount.*unreadErrorCount: root\.service\.unreadErrorCount.*unreadWarningCount: root\.service\.unreadWarningCount.*onEventsRequested: root\.toggleEvents\(\)/m,
+      @dashboard_source
+    )
+    assert_match(/iconSource:.*assets\/list-restart\.svg.*BambuButton\s*{.*text: "".*width: Style\.space\(5\)/m,
+                 @event_button_source)
+  end
+
+  def test_unread_errors_pulse_and_take_over_the_optional_bar_summary
+    assert_match(/SequentialAnimation on opacity \{\s*running: root\.unreadErrorCount > 0\s*loops: Animation\.Infinite/m,
+                 @event_button_source)
+    assert_match(/unreadErrorCount: root\.service\.unreadErrorCount/,
+                 @dashboard_source)
+    assert_match(/readonly property bool barErrorActive:.*root\.unreadErrorCount > 0/m,
+                 @service_source)
+    refute_includes @source, "eventErrorAttention"
+    assert_match(/function statusSummary\(separator\).*if \(root\.barErrorActive\) return "ERROR"/m,
+                 @service_source)
+    assert_match(/visible: !root\.vertical && \(!root\.service \|\| root\.service\.showBarSummary\)/,
+                 @widget_source)
+  end
+
+  def test_event_details_open_inside_the_dashboard_overlay
+    assert_match(/BambuEventHistory \{\s*visible: root\.viewMode === "events".*width: dashboard\.overlayWidth.*height: dashboard\.overlayHeight/m,
+                 @dashboard_source)
+    assert_includes @event_history_source, 'text: "LOG RECORD"'
+    %w[TIMELINE CONTEXT].each do |section|
+      assert_includes @event_history_source, "title: \"#{section}\""
+    end
+    assert_includes @event_history_source, 'title: "RAW EVENT"'
+    refute_includes @event_history_source, "Qt.openUrlExternally"
+    refute_includes @source, "supportUrl"
+  end
+
+  def test_overlay_navigation_uses_explicit_back_buttons
+    assert_match(/id: historyHeader.*height: Style\.space\(36\).*BambuButton\s*{\s*anchors\.left: parent\.left.*text: "BACK".*onClicked: history\.closeRequested\(\).*Text\s*{\s*anchors\.centerIn: parent\s*text: "PRINTER EVENT LOG".*BambuButton\s*{\s*anchors\.right: parent\.right.*text: "READ ALL"/m,
+                 @event_history_source)
+    assert_match(/id: detailsHeader.*height: Style\.space\(36\).*BambuButton\s*{\s*anchors\.left: parent\.left.*text: "BACK".*tooltipText: "BACK TO EVENT LOG".*onClicked: history\.closeDetails\(\).*Text\s*{\s*anchors\.centerIn: parent\s*text: "LOG RECORD"/m,
+                 @event_history_source)
+    assert_equal 2, @event_history_source.scan('text: "BACK"').length
+    assert_match(/id: settingsHeader.*height: Style\.space\(36\).*BambuButton\s*{\s*visible: form\.allowBack.*anchors\.left: parent\.left.*text: "BACK".*onClicked: form\.backRequested\(\).*Text\s*{\s*anchors\.centerIn: parent\s*text: "SETTINGS"/m,
+                 @settings_source)
+    refute_includes @event_history_source, "BambuCloseButton"
+    refute_includes @settings_source, "BambuCloseButton"
   end
 
   def test_key_catcher_uses_the_panels_inset_content_area

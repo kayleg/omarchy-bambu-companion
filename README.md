@@ -142,6 +142,8 @@ git checkouts continue to show their current version without an update action.
 - Full dashboard in a normal, resizable tiled window opened from the widget.
 - First-run local demo using a bundled OpenSCAD OMARCHY logo model.
 - Live connection, print state, progress and remaining-time reporting.
+- Live event history for print starts, pauses, completions, failures and file identity.
+- HMS maintenance notices and print errors with unread state and detailed diagnostics.
 - Current and target nozzle/bed temperatures.
 - Current layer, total layers and exact or estimated Z progress.
 - Speed profile, fan speeds, Wi-Fi signal and last report time.
@@ -161,6 +163,35 @@ to Settings for configuration.
 
 After a completed print, `FINISH` remains visible for 60 seconds and then
 settles to `READY`. Starting another job cancels that delay immediately.
+
+## Event history and alerts
+
+Select the event-log icon below the preview controls to open the live timeline.
+Normal print activity is recorded with its local date and time. Printer HMS
+notices and print-process errors also include the exact reported code, module,
+severity, active/cleared state, current file, printer model and firmware when
+those fields are available.
+
+Fatal and serious HMS conditions and non-zero print-error codes are red error
+events. Common, informational and maintenance HMS notices are orange and do
+not put the printer into the plugin's error state. An unread error makes the
+Events button pulse red, turns the bar printer icon red and replaces the
+optional horizontal bar summary with `ERROR`. Orange notices affect only the
+Events button and timeline.
+
+Opening an event marks it read and shows its full details inside the plugin.
+Hovering an unread timeline entry for half a second also marks it read. Use
+**Read all** to clear every unread badge. Reading an event does not hide it or
+change whether the underlying printer alert is still active.
+
+Most printer reports contain an HMS code rather than diagnostic prose. When
+the printer supplies text, Bambu Companion displays it verbatim. Otherwise it
+shows a conservative module/severity explanation and preserves the raw values.
+It does not guess a more specific fault than the telemetry supports.
+
+The timeline retains the newest 200 events in memory for the current Omarchy
+Shell session. Closing the panel or tiled app does not clear it; restarting the
+shell does. No event history is uploaded or written to disk.
 
 ## Print preview
 

@@ -243,11 +243,11 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
     assert_match(/ScrollBar\.vertical: ScrollBar \{\s*policy: settingsScroll\.interactive\s*\? ScrollBar\.AlwaysOn : ScrollBar\.AlwaysOff\s*\}/m,
                  source)
-    assert_match(/id: settingsHeader\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*id: settingsClose.*text: "CLOSE".*bordered: false/m,
+    assert_match(/id: settingsHeader\s*anchors\.left: parent\.left\s*anchors\.right: parent\.right.*BambuButton\s*\{\s*visible: form\.allowBack.*anchors\.left: parent\.left.*width: Style\.space\(64\).*text: "BACK".*tooltipText: "BACK TO PRINTER".*Text\s*\{\s*anchors\.centerIn: parent\s*text: "SETTINGS"/m,
                  source)
     refute_includes source, 'text: "×"'
     assert_match(/BambuTextField\s*\{.*id: hostInput/m, source)
-    assert_match(/BambuButton\s*\{.*id: settingsClose/m, source)
+    assert_match(/BambuButton\s*\{\s*visible: form\.allowBack.*text: "BACK"/m, source)
     assert_match(/component FieldLabel: Text \{.*width: parent \? parent\.width : implicitWidth/m, source)
     assert_includes source, "wrapMode: Text.Wrap"
     assert_match(/form\.secretRequired \? "○ NO LAN CODE SAVED"/m, source)

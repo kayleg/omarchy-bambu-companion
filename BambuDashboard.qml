@@ -19,6 +19,7 @@ Item {
   readonly property color accent: Color.accent
   readonly property color successColor: "#39FF88"
   readonly property color errorColor: "#ff5f56"
+  readonly property color warningColor: "#ff9f43"
   readonly property color dim: Qt.rgba(foreground.r, foreground.g,
                                        foreground.b, 0.55)
   readonly property string fontFamily: bambuStyle.fontFamily
@@ -84,6 +85,14 @@ Item {
   function toggleSettings() {
     if (root.viewMode === "settings") root.backToStatus()
     else root.openSettings("")
+  }
+
+  function toggleEvents() {
+    if (root.viewMode === "events") root.backToStatus()
+    else {
+      root.viewMode = "events"
+      root.focusPanelTop()
+    }
   }
 
   function backToStatus() {
@@ -170,7 +179,8 @@ Item {
       if (root.service.securityModalMode !== "") {
         root.service.cancelSecurityModal()
         root.focusPanelTop()
-      } else if (root.viewMode === "setup" || root.viewMode === "settings") {
+      } else if (root.viewMode === "setup" || root.viewMode === "settings"
+                 || root.viewMode === "events") {
         root.backToStatus()
       } else {
         root.closeRequested()
@@ -281,6 +291,11 @@ Item {
             daemonReady: root.service.daemonReady && root.service.backendRunning
             printing: root.service.demoActive
               || (root.service.connected && root.service.gcodeState === "RUNNING")
+            eventsActive: root.viewMode === "events"
+            unreadEventCount: root.service.unreadEventCount
+            unreadErrorCount: root.service.unreadErrorCount
+            unreadWarningCount: root.service.unreadWarningCount
+            warningColor: root.warningColor
             previewAvailable: root.service.previewAvailable
             gcodeAvailable: root.service.gcodeGeometryAvailable
             selectedSource: root.service.selectedGeometrySource
@@ -303,6 +318,7 @@ Item {
               root.service.selectGeometrySource(source)
             }
             onReloadRequested: root.service.refreshModel()
+            onEventsRequested: root.toggleEvents()
             onRendererLoadFailed: root.service.markRendererUnavailable()
           }
         }
@@ -319,6 +335,7 @@ Item {
 
         Rectangle {
           visible: root.viewMode === "setup" || root.viewMode === "settings"
+            || root.viewMode === "events"
           x: dashboard.overlayX
           y: dashboard.overlayY
           width: dashboard.overlayWidth
@@ -382,6 +399,25 @@ Item {
             root.applyOperationResult(
               root.service.trustAndConnect(draft, accessCode), false)
           }
+        }
+
+        BambuEventHistory {
+          visible: root.viewMode === "events"
+          x: dashboard.overlayX
+          y: dashboard.overlayY
+          width: dashboard.overlayWidth
+          height: dashboard.overlayHeight
+          z: 23
+          service: root.service
+          foreground: root.foreground
+          accent: root.accent
+          errorColor: root.errorColor
+          warningColor: root.warningColor
+          successColor: root.successColor
+          dim: root.dim
+          background: panelBackdrop.color
+          fontFamily: root.fontFamily
+          onCloseRequested: root.backToStatus()
         }
 
         Item {

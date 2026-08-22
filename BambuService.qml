@@ -43,6 +43,8 @@ Item {
   property real coolingFanSpeed: NaN
   property real heatbreakFanSpeed: NaN
   property string lastUpdate: ""
+  property string productName: ""
+  property string firmwareVersion: ""
   property string modelStatus: "idle"
   property string modelErrorCode: ""
   property string modelError: ""
@@ -69,6 +71,12 @@ Item {
   property var ftpsTlsIdentity: ({})
   property bool demoActive: false
   property int demoSessionId: 0
+
+  property alias eventHistory: eventStore.events
+  property alias unreadEventCount: eventStore.unreadCount
+  property alias unreadErrorCount: eventStore.unreadErrorCount
+  property alias unreadWarningCount: eventStore.unreadWarningCount
+  property alias activePrinterErrorCount: eventStore.activeErrorCount
 
   readonly property string currentVersion: root.manifest && root.manifest.version
     ? String(root.manifest.version) : "unknown"
@@ -155,8 +163,10 @@ Item {
   readonly property url nativeRouteUrl: Qt.resolvedUrl("file://" + nativeRoutePath)
   property bool nativeBuildStarted: false
   readonly property bool errorActive: root.printerHasError()
+    || root.activePrinterErrorCount > 0
     || root.processError !== ""
   readonly property bool barErrorActive: root.printerHasError()
+    || root.activePrinterErrorCount > 0 || root.unreadErrorCount > 0
     || root.processErrorAffectsBar
   readonly property bool modelErrorActive: root.modelStatus === "error"
     && root.modelError !== ""
@@ -549,6 +559,7 @@ Item {
   function statusSummary(separator) {
     if (!root.hasConnectionTarget) return "SETUP"
     if (!root.printerStateKnown) return "CONNECTING"
+    if (root.barErrorActive) return "ERROR"
     if (!root.connected) return "OFFLINE"
     var gap = separator === undefined ? " " : String(separator)
     return root.displayGcodeState + gap + root.percent + "%" + gap
@@ -579,6 +590,14 @@ Item {
     processError = String(message || "")
     processErrorReportUpdate = processError === "" ? "" : lastUpdate
     processErrorAffectsBar = processError !== "" && hideInBar !== true
+  }
+
+  function markEventRead(id) {
+    return eventStore.markRead(id)
+  }
+
+  function markAllEventsRead() {
+    return eventStore.markAllRead()
   }
 
   function writeCommand(command) {
@@ -671,6 +690,7 @@ Item {
     root.resetOperationalState()
     root.demoSessionId = nextId
     root.demoActive = true
+    eventStore.loadDemoEvents()
     if (root.writeCommand({
       "op": "start_demo", "protocol": 1,
       "requestId": nextId
@@ -691,6 +711,7 @@ Item {
   }
 
   function resetDemoState() {
+    eventStore.clearDemoEvents()
     root.demoActive = false
     root.resetOperationalState()
   }
@@ -713,6 +734,9 @@ Item {
     var printer = objectOrEmpty(message.printer)
     var model = objectOrEmpty(message.model)
     var stateWasUnknown = !root.printerStateKnown
+    var wasConnected = root.connected
+    var previousGcodeState = root.gcodeState
+    var previousSubtaskName = root.subtaskName
     var nextGeneration = isNonNegativeInteger(model.generation) ? model.generation : -1
     geometryAssembler.setGeneration(nextGeneration)
     printerStateKnown = true
@@ -742,6 +766,8 @@ Item {
     coolingFanSpeed = finiteNumber(printer.coolingFanSpeed, NaN)
     heatbreakFanSpeed = finiteNumber(printer.heatbreakFanSpeed, NaN)
     lastUpdate = reportUpdate
+    productName = String(printer.productName || root.productName || "")
+    firmwareVersion = String(printer.firmwareVersion || root.firmwareVersion || "")
     modelStatus = String(model.status || "idle")
     modelLoadPhase = String(model.loadPhase || "")
     modelLoadProgress = Math.max(-1, Math.min(100,
@@ -757,6 +783,24 @@ Item {
       ? "" : String(error.message)
     if (modelErrorCode === "certificate_changed") {
       handleTlsMismatch("FTPS certificate changed. Check and approve the printer again.")
+    }
+    if (!root.demoActive) {
+      var eventContext = {
+        printerName: root.displayName,
+        productName: root.productName,
+        firmwareVersion: root.firmwareVersion,
+        jobName: root.subtaskName,
+        printerState: root.gcodeState
+      }
+      eventStore.recordConnection(!stateWasUnknown, wasConnected, root.connected,
+                                  eventContext, reportUpdate)
+      if (hasFreshReport) {
+        eventStore.recordPrintTransition(
+          previousGcodeState, root.gcodeState,
+          previousSubtaskName, root.subtaskName,
+          eventContext, reportUpdate)
+      }
+      eventStore.reconcileAlerts(printer.alerts, eventContext, reportUpdate)
     }
     if (stateWasUnknown) root.statusAvailable()
   }
@@ -788,6 +832,8 @@ Item {
     coolingFanSpeed = NaN
     heatbreakFanSpeed = NaN
     lastUpdate = ""
+    productName = ""
+    firmwareVersion = ""
     modelStatus = "idle"
     modelErrorCode = ""
     modelError = ""
@@ -802,6 +848,7 @@ Item {
     secretStored = false
     secretStatusKnown = false
     clearTlsProbeState()
+    eventStore.deactivateAlerts(new Date().toISOString())
     geometryAssembler.reset(-1)
   }
 
@@ -948,6 +995,10 @@ Item {
     id: geometryAssembler
     maxSegments: root.segmentLimit()
     segmentDirectory: root.geometryDirectory
+  }
+
+  BambuEventStore {
+    id: eventStore
   }
 
   BambuBackendSession {

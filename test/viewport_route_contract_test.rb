@@ -71,7 +71,7 @@ class ViewportRouteContractTest < Minitest::Test
   end
 
   def test_source_icons_are_white_masks_recolored_by_the_plugin_palette
-    %w[route.svg image.svg].each do |name|
+    %w[route.svg image.svg list-restart.svg].each do |name|
       icon = File.read(File.expand_path("../assets/#{name}", __dir__))
 
       assert_includes icon, 'stroke="#fff"'
@@ -163,6 +163,12 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
     refute_includes @source, 'text: "MODEL"'
     refute_includes @source, 'text: "G-CODE"'
+  end
+
+  def test_event_log_button_is_square_below_preview_with_separator
+    assert_includes @source, "signal eventsRequested()"
+    assert_match(/id:\s*sourceButtons.*sourceName:\s*"preview".*assets\/image\.svg.*Item\s*{.*height:\s*Style\.space\(7\).*Rectangle\s*{.*width:\s*Style\.space\(18\).*height:\s*1.*BambuEventButton\s*{.*width:\s*sourceButtons\.width.*height:\s*width.*onClicked:\s*viewport\.eventsRequested\(\)/m,
+                 @source)
   end
 
   def test_switching_source_does_not_reset_the_route_camera

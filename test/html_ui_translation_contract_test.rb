@@ -87,7 +87,8 @@ class HtmlUiTranslationContractTest < Minitest::Test
     source = component_source("BambuSettingsView.qml")
 
     assert_includes source, 'text: "SETTINGS"'
-    assert_match(/id:\s*settingsClose.*visible:\s*form\.allowBack.*text:\s*"CLOSE".*bordered:\s*false/m, source)
+    assert_match(/BambuButton\s*{.*visible:\s*form\.allowBack.*anchors\.left:\s*parent\.left.*width:\s*Style\.space\(64\).*text:\s*"BACK".*tooltipText:\s*"BACK TO PRINTER".*Text\s*{\s*anchors\.centerIn:\s*parent\s*text:\s*"SETTINGS"/m,
+                 source)
     assert_match(/Flickable\s*{.*id:\s*settingsScroll.*contentHeight:\s*settingsContent\.implicitHeight/m,
                  source)
     assert_match(/id:\s*settingsScroll.*clip:\s*true/m, source)

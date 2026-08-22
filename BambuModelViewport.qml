@@ -13,12 +13,17 @@ Item {
   property color accent: Color.accent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
   property color errorColor: Color.accent
+  property color warningColor: "#ff9f43"
   property bool errorActive: false
   property string fontFamily: bambuStyle.fontFamily
   property bool panelActive: false
   property bool printerConfigured: false
   property bool daemonReady: false
   property bool printing: false
+  property bool eventsActive: false
+  property int unreadEventCount: 0
+  property int unreadErrorCount: 0
+  property int unreadWarningCount: 0
   readonly property real nozzleSpeed: 50
   property bool previewAvailable: false
   property bool gcodeAvailable: false
@@ -40,6 +45,7 @@ Item {
 
   signal reloadRequested()
   signal sourceRequested(string source)
+  signal eventsRequested()
   signal rendererLoadFailed()
 
   readonly property color surface: Qt.rgba(
@@ -578,6 +584,33 @@ Item {
         available: viewport.previewAvailable
         sourceLabel: "2D preview"
         iconSource: Qt.resolvedUrl("assets/image.svg")
+      }
+
+      Item {
+        width: sourceButtons.width
+        height: Style.space(7)
+
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(18)
+          height: 1
+          color: Qt.rgba(viewport.foreground.r, viewport.foreground.g,
+                         viewport.foreground.b, 0.22)
+        }
+      }
+
+      BambuEventButton {
+        width: sourceButtons.width
+        height: width
+        foreground: viewport.foreground
+        accent: viewport.accent
+        errorColor: viewport.errorColor
+        warningColor: viewport.warningColor
+        active: viewport.eventsActive
+        unreadCount: viewport.unreadEventCount
+        unreadErrorCount: viewport.unreadErrorCount
+        unreadWarningCount: viewport.unreadWarningCount
+        onClicked: viewport.eventsRequested()
       }
     }
 
