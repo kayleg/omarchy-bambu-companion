@@ -118,6 +118,12 @@ class MqttSessionTest < Minitest::Test
     assert_equal({ "pushing" => { "sequence_id" => "0", "command" => "pushall" } }, JSON.parse(payload))
     refute retain
     assert_equal 0, qos
+    version_topic, version_payload, version_retain, version_qos = client.publications.fetch(1)
+    assert_equal "device/0309C123456789/request", version_topic
+    assert_equal({ "info" => { "sequence_id" => "1", "command" => "get_version" } },
+                 JSON.parse(version_payload))
+    refute version_retain
+    assert_equal 0, version_qos
     assert_equal 7, reports.dig(0, "print", "mc_percent")
   end
 

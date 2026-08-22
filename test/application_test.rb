@@ -709,9 +709,15 @@ class ApplicationTest < Minitest::Test
               "bed_target_temper" => 65, "layer_num" => 1,
               "total_layer_num" => 150, "mc_remaining_time" => 6,
               "spd_lvl" => 2, "spd_mag" => 100, "wifi_signal" => "-49dBm",
-              "cooling_fan_speed" => "11", "heatbreak_fan_speed" => "10"
+              "cooling_fan_speed" => "11", "heatbreak_fan_speed" => "10",
+              "hms" => [{ "attr" => 0x0700_2300, "code" => 0x0003_0001 }],
+              "print_error" => 0
             }
           )
+          sessions.first.report("info" => { "module" => [{
+            "name" => "ota", "product_name" => "Bambu Lab P1S",
+            "sw_ver" => "01.08.05.00"
+          }] })
           sessions.first.report("print" => { "mc_percent" => 47, "layer_num" => 2 })
         end
       }
@@ -745,6 +751,11 @@ class ApplicationTest < Minitest::Test
     assert_equal "-49dBm", final.fetch("wifiSignal")
     assert_equal 11.0, final.fetch("coolingFanSpeed")
     assert_equal 10.0, final.fetch("heatbreakFanSpeed")
+    assert_equal "Bambu Lab P1S", final.fetch("productName")
+    assert_equal "01.08.05.00", final.fetch("firmwareVersion")
+    alert = final.fetch("alerts").fetch(0)
+    assert_equal "HMS_0700_2300_0003_0001", alert.fetch("code")
+    assert_equal "warning", alert.fetch("kind")
     assert_equal [{ hints: { subtask_name: "cube.gcode" } }], worker.submissions
     assert_equal(states.length.times.map { |index| index + 1 }, states.map { |state| state.fetch("sequence") })
     refute_includes output.string, SECRET

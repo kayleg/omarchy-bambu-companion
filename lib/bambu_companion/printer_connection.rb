@@ -240,8 +240,22 @@ module BambuCompanion
         remainingMinutes: state[:remaining_minutes], speedLevel: state[:speed_level],
         speedMagnitude: state[:speed_magnitude], wifiSignal: state[:wifi_signal],
         coolingFanSpeed: state[:cooling_fan_speed],
-        heatbreakFanSpeed: state[:heatbreak_fan_speed]
+        heatbreakFanSpeed: state[:heatbreak_fan_speed],
+        productName: state[:product_name], firmwareVersion: state[:firmware_version],
+        alerts: alert_payload(state[:alerts])
       }
+    end
+
+    def alert_payload(alerts)
+      Array(alerts).map do |alert|
+        {
+          id: alert[:id], source: alert[:source], kind: alert[:kind],
+          severity: alert[:severity], severityLevel: alert[:severity_level],
+          module: alert[:module], title: alert[:title],
+          description: alert[:description], code: alert[:code],
+          rawAttr: alert[:raw_attr], rawCode: alert[:raw_code]
+        }
+      end
     end
 
     def retry_model_if_due(worker, hints, printer)

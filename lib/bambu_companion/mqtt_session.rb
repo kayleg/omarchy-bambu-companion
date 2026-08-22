@@ -88,6 +88,7 @@ module BambuCompanion
       yield if block_given?
       client.subscribe(report_topic)
       client.publish(request_topic, JSON.generate(pushall), false, 0)
+      client.publish(request_topic, JSON.generate(get_version), false, 0)
       @on_connection.call(true, nil)
       start_reader = Queue.new
       reader = Thread.new do
@@ -156,6 +157,7 @@ module BambuCompanion
     def report_topic = "device/#{@config.serial}/report"
     def request_topic = "device/#{@config.serial}/request"
     def pushall = { "pushing" => { "sequence_id" => "0", "command" => "pushall" } }
+    def get_version = { "info" => { "sequence_id" => "1", "command" => "get_version" } }
 
     def parse_report(payload)
       payload = String(payload)

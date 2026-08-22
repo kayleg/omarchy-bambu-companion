@@ -144,6 +144,98 @@ class PrinterStateTest < Minitest::Test
     refute @state.update("print" => { "mc_percent" => 1 }).load_model
   end
 
+  def test_decodes_hms_severity_without_treating_maintenance_as_an_error
+    update = @state.update("print" => {
+      "hms" => [
+        { "attr" => 0x0700_2300, "code" => 0x0003_0001 },
+        { "attr" => 0x0800_0100, "code" => 0x0002_0007,
+          "message" => "Toolhead sensor needs attention" }
+      ]
+    })
+
+    maintenance, serious = update.snapshot.fetch(:alerts)
+    assert_equal "HMS_0700_2300_0003_0001", maintenance.fetch(:code)
+    assert_equal "warning", maintenance.fetch(:kind)
+    assert_equal "common", maintenance.fetch(:severity)
+    assert_equal "AMS", maintenance.fetch(:module)
+    assert_match(/not treated as a print error/, maintenance.fetch(:description))
+
+    assert_equal "error", serious.fetch(:kind)
+    assert_equal "serious", serious.fetch(:severity)
+    assert_equal "Toolhead sensor needs attention", serious.fetch(:description)
+  end
+
+  def test_hms_alerts_are_cached_across_deltas_and_cleared_explicitly
+    first = @state.update("print" => {
+      "hms" => [{ "attr" => 0x0500_0500, "code" => 0x0001_0007 }]
+    })
+    delta = @state.update("print" => { "mc_percent" => 25 })
+    cleared = @state.update("print" => { "hms" => [] })
+
+    assert_equal 1, first.snapshot.fetch(:alerts).length
+    assert_equal first.snapshot.fetch(:alerts), delta.snapshot.fetch(:alerts)
+    assert_empty cleared.snapshot.fetch(:alerts)
+  end
+
+  def test_print_error_is_a_separate_transient_error_channel
+    failed = @state.update("print" => {
+      "hms" => [], "print_error" => 0x0500_C010,
+      "fail_reason" => "SD card read failed"
+    })
+    delta = @state.update("print" => { "mc_percent" => 0 })
+    cleared = @state.update("print" => { "print_error" => 0 })
+
+    alert = failed.snapshot.fetch(:alerts).fetch(0)
+    assert_equal "print_error", alert.fetch(:source)
+    assert_equal "error", alert.fetch(:kind)
+    assert_equal "0x0500C010", alert.fetch(:code)
+    assert_equal "SD card read failed", alert.fetch(:description)
+    assert_equal failed.snapshot.fetch(:alerts), delta.snapshot.fetch(:alerts)
+    assert_empty cleared.snapshot.fetch(:alerts)
+  end
+
+  def test_mc_print_error_is_used_as_a_fallback_and_snapshots_are_deeply_frozen
+    update = @state.update("print" => {
+      "mc_print_error_code" => "117473286"
+    })
+
+    alert = update.snapshot.fetch(:alerts).fetch(0)
+    assert_equal "0x07008006", alert.fetch(:code)
+    assert_raises(FrozenError) { alert[:title].replace("changed") }
+    assert_raises(FrozenError) { update.snapshot.fetch(:alerts) << {} }
+  end
+
+  def test_zero_print_error_wins_over_a_stale_legacy_fallback
+    @state.update("print" => { "mc_print_error_code" => "117473286" })
+    cleared = @state.update("print" => { "print_error" => 0 })
+
+    assert_empty cleared.snapshot.fetch(:alerts)
+  end
+
+  def test_changed_print_error_does_not_reuse_the_previous_failure_reason
+    @state.update("print" => {
+      "print_error" => 0x0500_C010,
+      "fail_reason" => "SD card read failed"
+    })
+    changed = @state.update("print" => { "print_error" => 0x0700_8006 })
+
+    alert = changed.snapshot.fetch(:alerts).fetch(0)
+    assert_equal "0x07008006", alert.fetch(:code)
+    refute_equal "SD card read failed", alert.fetch(:description)
+    assert_match(/print-process failure/, alert.fetch(:description))
+  end
+
+  def test_extracts_printer_product_and_firmware_from_version_report
+    update = @state.update("info" => { "module" => [
+      { "name" => "ams/0", "product_name" => "AMS" },
+      { "name" => "ota", "product_name" => "Bambu Lab P1S",
+        "sw_ver" => "01.08.05.00" }
+    ] })
+
+    assert_equal "Bambu Lab P1S", update.snapshot.fetch(:product_name)
+    assert_equal "01.08.05.00", update.snapshot.fetch(:firmware_version)
+  end
+
   def test_connection_marks_cached_data_stale
     @state.connected!
     refute @state.snapshot.fetch(:stale)
