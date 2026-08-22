@@ -25,8 +25,6 @@ class GcodeRoute : public QQuickItem {
                  NOTIFY explosionFactorChanged)
   Q_PROPERTY(qreal cutoffZ READ cutoffZ WRITE setCutoffZ NOTIFY cutoffZChanged)
   Q_PROPERTY(qreal padding READ padding WRITE setPadding NOTIFY paddingChanged)
-  Q_PROPERTY(
-      bool dragging READ dragging WRITE setDragging NOTIFY draggingChanged)
   Q_PROPERTY(QColor printedColor READ printedColor WRITE setPrintedColor NOTIFY
                  printedColorChanged)
   Q_PROPERTY(QColor remainingColor READ remainingColor WRITE setRemainingColor
@@ -49,7 +47,6 @@ public:
   qreal explosionFactor() const { return m_explosionFactor; }
   qreal cutoffZ() const { return m_cutoffZ; }
   qreal padding() const { return m_padding; }
-  bool dragging() const { return m_dragging; }
   QColor printedColor() const { return m_printedColor; }
   QColor remainingColor() const { return m_remainingColor; }
   QColor plateColor() const { return m_plateColor; }
@@ -61,7 +58,6 @@ public:
   void setExplosionFactor(qreal explosionFactor);
   void setCutoffZ(qreal cutoffZ);
   void setPadding(qreal padding);
-  void setDragging(bool dragging);
   void setPrintedColor(const QColor &color);
   void setRemainingColor(const QColor &color);
   void setPlateColor(const QColor &color);
@@ -77,7 +73,6 @@ signals:
   void explosionFactorChanged();
   void cutoffZChanged();
   void paddingChanged();
-  void draggingChanged();
   void printedColorChanged();
   void remainingColorChanged();
   void plateColorChanged();
@@ -110,7 +105,6 @@ private:
   qreal m_explosionFactor = 0.0;
   qreal m_cutoffZ = std::numeric_limits<qreal>::quiet_NaN();
   qreal m_padding = 0.0;
-  bool m_dragging = false;
   QColor m_printedColor{255, 153, 51, qRound(0.74 * 255)};
   QColor m_remainingColor{255, 255, 255, qRound(0.10 * 255)};
   QColor m_plateColor{255, 255, 255, qRound(0.07 * 255)};

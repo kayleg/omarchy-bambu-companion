@@ -77,8 +77,9 @@ class HtmlUiTranslationContractTest < Minitest::Test
                  source)
     assert_match(/yaw:\s*normalizeAngle\(startYaw \+ deltaX \/ viewportWidth \* Math\.PI \* 2\)/,
                  source)
-    assert_match(/pitch:\s*clampPitch\(startPitch \+ deltaY \/ viewportHeight \* Math\.PI\)/,
+    assert_match(/pitch:\s*normalizeSignedAngle\(\s*startPitch \+ deltaY \/ viewportHeight \* Math\.PI\)/m,
                  source)
+    refute_includes source, "clampPitch"
     assert_match(/onPositionChanged: function\(mouse\).*mouse\.x - routeCamera\.lastDragX.*mouse\.y - routeCamera\.lastDragY/m,
                  source)
   end

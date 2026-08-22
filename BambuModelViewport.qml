@@ -144,7 +144,6 @@ Item {
     item.explosionFactor = routeCamera.explosionFactor
     item.cutoffZ = viewport.zCurrent
     item.padding = Math.max(Style.space(12), Math.min(routeCamera.width, routeCamera.height) * 0.07)
-    item.dragging = routeCamera.dragging
     var printed = viewport.errorActive ? viewport.errorColor : viewport.accent
     item.printedColor = Qt.rgba(printed.r, printed.g, printed.b, 0.74)
     item.remainingColor = Qt.rgba(viewport.foreground.r, viewport.foreground.g,
@@ -280,20 +279,24 @@ Item {
         return normalized < 0 ? normalized + turn : normalized
       }
 
-      function clampPitch(value) {
-        var minimum = -Math.PI / 2 + 0.05
-        return Math.max(minimum, Math.min(-0.05, value))
+      function normalizeSignedAngle(value) {
+        var normalized = normalizeAngle(value)
+        return normalized >= Math.PI ? normalized - Math.PI * 2 : normalized
       }
 
       function orientationAfterDrag(startYaw, startPitch, deltaX, deltaY,
                                     viewportWidth, viewportHeight) {
         if (!isFinite(viewportWidth) || viewportWidth <= 0
             || !isFinite(viewportHeight) || viewportHeight <= 0) {
-          return { yaw: normalizeAngle(startYaw), pitch: clampPitch(startPitch) }
+          return {
+            yaw: normalizeAngle(startYaw),
+            pitch: normalizeSignedAngle(startPitch)
+          }
         }
         return {
           yaw: normalizeAngle(startYaw + deltaX / viewportWidth * Math.PI * 2),
-          pitch: clampPitch(startPitch + deltaY / viewportHeight * Math.PI)
+          pitch: normalizeSignedAngle(
+            startPitch + deltaY / viewportHeight * Math.PI)
         }
       }
 
@@ -359,7 +362,7 @@ Item {
       onMaximumZoomChanged: setZoom(Math.min(zoom, maximumZoom))
       onMinimumZoomChanged: setZoom(Math.max(zoom, minimumZoom))
       onExplosionProgressChanged: viewport.syncRouteItem()
-      onDraggingChanged: viewport.syncRouteItem()
+      onDraggingChanged: viewport.syncNozzleMarker()
       onWidthChanged: viewport.syncRouteItem()
       onHeightChanged: viewport.syncRouteItem()
       onNozzleDistanceChanged: viewport.syncNozzleMarker()

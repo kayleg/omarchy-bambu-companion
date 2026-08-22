@@ -118,18 +118,19 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
   end
 
-  def test_two_axis_drag_covers_full_yaw_without_crossing_the_build_plane
+  def test_two_axis_drag_allows_complete_orbits_across_both_sides_of_the_plate
     normalize = extract_function("normalizeAngle")
-    clamp = extract_function("clampPitch")
+    normalize_signed = extract_function("normalizeSignedAngle")
     drag = extract_function("orientationAfterDrag")
     script = <<~JAVASCRIPT
       #{normalize}
-      #{clamp}
+      #{normalize_signed}
       #{drag}
       console.log(JSON.stringify([
         orientationAfterDrag(0, -0.28, 300, 0, 600, 360),
         orientationAfterDrag(0, -0.28, -150, 180, 600, 360),
-        orientationAfterDrag(1, -0.28, 600, -1000, 600, 360)
+        orientationAfterDrag(1, -0.28, 600, 360, 600, 360),
+        orientationAfterDrag(1, -0.28, 0, 720, 600, 360)
       ]))
     JAVASCRIPT
     values = run_javascript(script)
@@ -137,11 +138,21 @@ class ViewportRouteContractTest < Minitest::Test
     assert_in_delta Math::PI, values[0].fetch("yaw"), 1e-9
     assert_in_delta(-0.28, values[0].fetch("pitch"), 1e-9)
     assert_in_delta Math::PI * 1.5, values[1].fetch("yaw"), 1e-9
-    assert_in_delta(-0.05, values[1].fetch("pitch"), 1e-9)
+    assert_in_delta(-0.28 + (Math::PI / 2), values[1].fetch("pitch"), 1e-9)
     assert_in_delta 1.0, values[2].fetch("yaw"), 1e-9
-    assert_operator values[2].fetch("pitch"), :<, -1.4
+    assert_in_delta(-0.28 + Math::PI, values[2].fetch("pitch"), 1e-9)
+    assert_in_delta 1.0, values[3].fetch("yaw"), 1e-9
+    assert_in_delta(-0.28, values[3].fetch("pitch"), 1e-9)
+    refute_includes @source, "clampPitch"
     assert_match(/MouseArea\s*\{.*anchors\.fill: parent.*onPressed: function\(mouse\).*dragging = true.*onPositionChanged: function\(mouse\).*orientationAfterDrag.*onReleased:.*dragging = false/m,
                  @source)
+  end
+
+  def test_native_plate_is_not_toggled_by_the_drag_state
+    sync_body = @source[/function syncRouteItem\(\) \{.*?\n  \}/m]
+    refute_nil sync_body
+    refute_includes sync_body, "item.dragging"
+    assert_match(/onDraggingChanged:\s*viewport\.syncNozzleMarker\(\)/, @source)
   end
 
   def test_reload_sits_with_rotation_controls_and_route_view_uses_the_footer_space

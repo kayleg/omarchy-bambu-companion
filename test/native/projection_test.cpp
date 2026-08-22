@@ -9,6 +9,7 @@
 
 int main() {
   using namespace Bambu;
+  constexpr float initial_pitch = -0.28f;
   Bounds bounds{107.453f, 144.607f, 80.309f, 99.606f, 0.2f, 30.0f};
   const float collapsed = display_z(0.4f, 0.2f, 0.0f, 20.0f);
   const float halfway = display_z(0.4f, 0.2f, 0.5f, 20.0f);
@@ -17,7 +18,7 @@ int main() {
   const float clamped = display_z(0.4f, 0.2f, 2.0f, 20.0f);
 
   const Projection fitted = make_projection(
-      600, 360, kReferenceYaw, kReferencePitch, 24, 1.0f, bounds, 1.0f, 20.0f);
+      600, 360, 0.0f, initial_pitch, 24, 1.0f, bounds, 1.0f, 20.0f);
   float frame_left = std::numeric_limits<float>::infinity();
   float frame_right = -std::numeric_limits<float>::infinity();
   float frame_top = std::numeric_limits<float>::infinity();
@@ -86,12 +87,53 @@ int main() {
   const bool nonfinite_rejected = !unpack_little_endian_segments(
       nonfinite, sizeof(nonfinite), 1, &rejected);
   std::cout << ",\"zoomedCenter\":{\"x\":" << zoomed.x << ",\"y\":" << zoomed.y
-            << "},\"focusedLayer\":{\"x\":" << focused_layer.x
+            << "},\"rotationFrames\":[";
+  const float orbit_yaws[] = {0.0f, 0.8f, 1.1f, 2.6f, 5.4f};
+  const float orbit_pitches[] = {-0.28f, -1.5707963268f, 0.55f,
+                                 1.5707963268f, 2.8615926536f};
+  for (int orbit_index = 0; orbit_index < 5; ++orbit_index) {
+    const Projection orbit =
+        make_projection(600, 360, orbit_yaws[orbit_index],
+                        orbit_pitches[orbit_index], 24, 1.0f, bounds, 1.0f,
+                        20.0f);
+    float left = std::numeric_limits<float>::infinity();
+    float right = -std::numeric_limits<float>::infinity();
+    float top = std::numeric_limits<float>::infinity();
+    float bottom = -std::numeric_limits<float>::infinity();
+    for (int x_index = 0; x_index < 2; ++x_index) {
+      const float x = x_index ? bounds.max_x : bounds.min_x;
+      for (int y_index = 0; y_index < 2; ++y_index) {
+        const float y = y_index ? bounds.max_y : bounds.min_y;
+        for (int z_index = 0; z_index < 2; ++z_index) {
+          const float z = z_index ? bounds.max_z : bounds.min_z;
+          const Vec2 corner = project_point(orbit, x, y, z);
+          left = std::min(left, corner.x);
+          right = std::max(right, corner.x);
+          top = std::min(top, corner.y);
+          bottom = std::max(bottom, corner.y);
+        }
+      }
+    }
+    const Vec2 center = project_point(orbit, mid_x, mid_y, mid_z);
+    if (orbit_index)
+      std::cout << ",";
+    std::cout << "{\"scale\":" << orbit.scale << ",\"left\":" << left
+              << ",\"right\":" << right << ",\"top\":" << top
+              << ",\"bottom\":" << bottom << ",\"centerX\":" << center.x
+              << ",\"centerY\":" << center.y << "}";
+  }
+  std::cout << "],\"plateForeground\":["
+            << (viewing_from_below(-1.5707963268f) ? "true" : "false") << ","
+            << (viewing_from_below(-0.28f) ? "true" : "false") << ","
+            << (viewing_from_below(0.0f) ? "true" : "false") << ","
+            << (viewing_from_below(0.28f) ? "true" : "false") << ","
+            << (viewing_from_below(1.5707963268f) ? "true" : "false")
+            << "],\"focusedLayer\":{\"x\":" << focused_layer.x
             << ",\"y\":" << focused_layer.y << "},\"factorInvariantFocus\":[";
   for (int factor_index = 0; factor_index < 3; ++factor_index) {
     const float factor = explosion_factors[factor_index];
     const Projection layer_projection =
-        make_projection(600, 360, 0, kReferencePitch, 24, 1.0f, bounds, 1.0f,
+        make_projection(600, 360, 0, initial_pitch, 24, 1.0f, bounds, 1.0f,
                         factor, current_z, &current_layer);
     const Vec2 layer_center = project_point(
         layer_projection, (current_layer.min_x + current_layer.max_x) * 0.5f,

@@ -88,8 +88,9 @@ void fillSegments(QSGGeometry *geometry, const std::vector<float> &packed) {
   geometry->markVertexDataDirty();
 }
 
-void fillPlate(QSGGeometry *geometry, const Bambu::Bounds &bounds, bool hide) {
-  const int lineCount = hide ? 0 : (kPlateDivisions + 1) * 2;
+void fillPlate(QSGGeometry *geometry, const Bambu::Bounds &bounds,
+               bool haveRoute) {
+  const int lineCount = haveRoute ? (kPlateDivisions + 1) * 2 : 0;
   geometry->allocate(lineCount * 6);
   if (lineCount == 0)
     return;
@@ -118,6 +119,26 @@ QSGGeometry *ensureGeometry(QSGGeometryNode *node) {
   }
   return geometry;
 }
+
+class RouteRootNode : public QSGNode {
+public:
+  QSGGeometryNode *plateNode = nullptr;
+  QSGGeometryNode *routeNode = nullptr;
+
+  void setPlateForeground(bool foreground) {
+    if (foreground == m_plateForeground)
+      return;
+    removeChildNode(plateNode);
+    if (foreground)
+      appendChildNode(plateNode);
+    else
+      prependChildNode(plateNode);
+    m_plateForeground = foreground;
+  }
+
+private:
+  bool m_plateForeground = false;
+};
 
 class RouteMaterialShader : public QSGMaterialShader {
 public:
@@ -293,7 +314,6 @@ void GcodeRoute::setSegmentPath(const QString &path) {
     m_bounds = derivedBounds();
   invalidateNozzlePath();
   m_geometryDirty = true;
-  m_plateDirty = true;
   update();
 }
 
@@ -383,15 +403,6 @@ void GcodeRoute::setPadding(qreal padding) {
     return;
   m_padding = padding;
   emit paddingChanged();
-  update();
-}
-
-void GcodeRoute::setDragging(bool dragging) {
-  if (m_dragging == dragging)
-    return;
-  m_dragging = dragging;
-  m_plateDirty = true;
-  emit draggingChanged();
   update();
 }
 
@@ -580,26 +591,23 @@ QSGNode *GcodeRoute::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) {
     m_plateDirty = true;
   }
 
-  QSGNode *root = oldNode;
-  QSGGeometryNode *routeNode = nullptr;
-  QSGGeometryNode *plateNode = nullptr;
+  auto *root = static_cast<RouteRootNode *>(oldNode);
   if (!root) {
-    root = new QSGNode;
-    plateNode = new QSGGeometryNode;
-    plateNode->setFlag(QSGNode::OwnsMaterial, true);
-    plateNode->setMaterial(new RouteMaterial);
-    ensureGeometry(plateNode);
-    root->appendChildNode(plateNode);
+    root = new RouteRootNode;
+    root->plateNode = new QSGGeometryNode;
+    root->plateNode->setFlag(QSGNode::OwnsMaterial, true);
+    root->plateNode->setMaterial(new RouteMaterial);
+    ensureGeometry(root->plateNode);
+    root->appendChildNode(root->plateNode);
 
-    routeNode = new QSGGeometryNode;
-    routeNode->setFlag(QSGNode::OwnsMaterial, true);
-    routeNode->setMaterial(new RouteMaterial);
-    ensureGeometry(routeNode);
-    root->appendChildNode(routeNode);
-  } else {
-    plateNode = static_cast<QSGGeometryNode *>(root->childAtIndex(0));
-    routeNode = static_cast<QSGGeometryNode *>(root->childAtIndex(1));
+    root->routeNode = new QSGGeometryNode;
+    root->routeNode->setFlag(QSGNode::OwnsMaterial, true);
+    root->routeNode->setMaterial(new RouteMaterial);
+    ensureGeometry(root->routeNode);
+    root->appendChildNode(root->routeNode);
   }
+  QSGGeometryNode *plateNode = root->plateNode;
+  QSGGeometryNode *routeNode = root->routeNode;
 
   if (m_geometryDirty) {
     fillSegments(ensureGeometry(routeNode), m_segments);
@@ -608,13 +616,13 @@ QSGNode *GcodeRoute::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) {
     m_plateDirty = true;
   }
   if (m_plateDirty) {
-    const bool hidePlate = m_dragging || m_segments.size() < 6;
-    fillPlate(ensureGeometry(plateNode), m_bounds, hidePlate);
+    fillPlate(ensureGeometry(plateNode), m_bounds, m_segments.size() >= 6);
     plateNode->markDirty(QSGNode::DirtyGeometry);
     m_plateDirty = false;
   }
 
   const Bambu::Projection proj = currentProjection();
+  root->setPlateForeground(Bambu::viewing_from_below(float(m_pitch)));
   auto *routeMat = static_cast<RouteMaterial *>(routeNode->material());
   routeMat->setProjection(proj);
   routeMat->setLineWidth(kRouteLineWidth);

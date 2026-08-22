@@ -17,7 +17,7 @@ class ProjectionMathTest < Minitest::Test
     assert_in_delta 4.4, values[4], 1e-5
   end
 
-  def test_projection_frame_centers_and_fills_the_viewport
+  def test_projection_scale_centers_and_fits_the_viewport
     frame = run_fixture.fetch("frame")
     assert_in_delta 300, (frame.fetch("left") + frame.fetch("right")) / 2.0, 1e-3
     assert_in_delta 180, (frame.fetch("top") + frame.fetch("bottom")) / 2.0, 1e-3
@@ -25,11 +25,26 @@ class ProjectionMathTest < Minitest::Test
     assert_operator frame.fetch("right"), :<=, 576 + 1e-3
     assert_operator frame.fetch("top"), :>=, 24 - 1e-3
     assert_operator frame.fetch("bottom"), :<=, 336 + 1e-3
-    occupancy = [
-      (frame.fetch("right") - frame.fetch("left")) / 552.0,
-      (frame.fetch("bottom") - frame.fetch("top")) / 312.0
-    ].max
-    assert_in_delta 1.0, occupancy, 1e-3
+  end
+
+  def test_projection_scale_and_center_are_invariant_across_complete_orbits
+    frames = run_fixture.fetch("rotationFrames")
+    reference_scale = frames.first.fetch("scale")
+
+    frames.each do |frame|
+      assert_in_delta reference_scale, frame.fetch("scale"), 1e-5
+      assert_in_delta 300, frame.fetch("centerX"), 1e-3
+      assert_in_delta 180, frame.fetch("centerY"), 1e-3
+      assert_operator frame.fetch("left"), :>=, 24 - 1e-3
+      assert_operator frame.fetch("right"), :<=, 576 + 1e-3
+      assert_operator frame.fetch("top"), :>=, 24 - 1e-3
+      assert_operator frame.fetch("bottom"), :<=, 336 + 1e-3
+    end
+  end
+
+  def test_plate_painter_order_switches_only_below_the_build_plane
+    assert_equal [false, false, false, true, true],
+                 run_fixture.fetch("plateForeground")
   end
 
   def test_project_point_applies_zoom_around_the_fitted_center
@@ -51,7 +66,8 @@ class ProjectionMathTest < Minitest::Test
     focused.each do |sample|
       assert_in_delta 300, sample.fetch("centerX"), 1e-3
       assert_in_delta 180, sample.fetch("centerY"), 1e-3
-      assert_in_delta 0.5, sample.fetch("occupancy"), 1e-3
+      assert_operator sample.fetch("occupancy"), :>, 0
+      assert_operator sample.fetch("occupancy"), :<=, 0.5 + 1e-3
       assert_in_delta focused.first.fetch("scale"), sample.fetch("scale"), 1e-5
     end
   end

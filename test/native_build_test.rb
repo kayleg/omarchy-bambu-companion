@@ -127,7 +127,7 @@ class NativeBuildTest < Minitest::Test
     projection = File.read(File.join(ROOT, "native/projection.hpp"))
 
     assert_includes source, "m_focusLayerBounds"
-    assert_includes projection, "layer_frame.scale * kFocusOccupancy"
+    assert_match(/projection_scale\(.*\) \*\s*kFocusOccupancy/m, projection)
     refute_includes source, "kExplodedBaseZoom"
   end
 
@@ -138,6 +138,18 @@ class NativeBuildTest < Minitest::Test
     assert_includes header, "sampleNozzle(qreal z, qreal distance)"
     assert_includes source, "std::fmod(distance, qreal(pathLength))"
     refute_match(/sampleNozzle\(qreal z, qreal phase\)/, source)
+  end
+
+  def test_plate_stays_visible_while_orbiting_and_tracks_the_viewing_side
+    source = File.read(File.join(ROOT, "native/gcode_route.cpp"))
+    header = File.read(File.join(ROOT, "native/gcode_route.hpp"))
+
+    refute_includes source, "m_dragging"
+    refute_includes header, "m_dragging"
+    assert_includes source,
+                    "fillPlate(ensureGeometry(plateNode), m_bounds, m_segments.size() >= 6)"
+    assert_includes source,
+                    "setPlateForeground(Bambu::viewing_from_below(float(m_pitch)))"
   end
 
   private
