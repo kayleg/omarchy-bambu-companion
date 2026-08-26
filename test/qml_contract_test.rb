@@ -190,6 +190,21 @@ class QmlContractTest < Minitest::Test
     assert_match(/stdout: SplitParser.*stderr: SplitParser/m, plugin_update_process)
   end
 
+  def test_in_plugin_update_restarts_the_shell_after_a_successful_pull
+    assert_match(
+      /function runPluginUpdateAction\(action\).*command = action === "check".*pluginUpdateCheckPath.*"omarchy", "plugin", "update", root\.moduleName, "--yes"/m,
+      @service_source
+    )
+    assert_match(
+      /Process \{\s*id: shellRestartProcess\s*command: \["setsid", "-f", "omarchy", "restart", "shell"\]/m,
+      @service_source
+    )
+    assert_match(
+      /exitCode === 0.*shellRestartProcess\.running = true/m,
+      @service_source
+    )
+  end
+
   def test_secret_and_geometry_safety_contract
     refute_match(/command:\s*\[[^\]]*accessCode/m, @source)
     refute_match(/setting\("(?:accessCode|password|secret)"/, @source)

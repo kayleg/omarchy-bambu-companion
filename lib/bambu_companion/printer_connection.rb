@@ -5,7 +5,6 @@ require_relative "camera_store"
 require_relative "model_worker"
 require_relative "mqtt_session"
 require_relative "printer_state"
-require_relative "rtsps_snapshot"
 require_relative "tls_certificate"
 
 module BambuCompanion

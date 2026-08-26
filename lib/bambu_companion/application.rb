@@ -103,9 +103,9 @@ module BambuCompanion
       when "start_demo" then start_demo(command)
       when "stop_demo" then stop_demo(command)
       when "refresh_model" then refresh_model
-      when "camera_start" then camera_start
-      when "camera_stop" then camera_stop
-      when "camera_snapshot" then camera_snapshot
+      when "camera_start" then printer_runtime&.start_camera
+      when "camera_stop" then printer_runtime&.stop_camera
+      when "camera_snapshot" then printer_runtime&.snapshot_camera
       when "probe_tls" then probe_tls(command)
       when "shutdown" then request_shutdown
       else
@@ -271,17 +271,6 @@ module BambuCompanion
     def refresh_model
       runtime = @control_mutex.synchronize { @runtime unless @shutdown }
       runtime&.refresh_preview
-    end
-
-    def camera_start = camera_op(:start_camera)
-
-    def camera_stop = camera_op(:stop_camera)
-
-    def camera_snapshot = camera_op(:snapshot_camera)
-
-    def camera_op(name)
-      runtime = printer_runtime
-      runtime.public_send(name) if runtime.respond_to?(name)
     end
 
     def printer_runtime

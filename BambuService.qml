@@ -525,12 +525,7 @@ Item {
   }
 
   function validCameraPath(path) {
-    if (typeof path !== "string" || path.length < 5 || path.length > 4096)
-      return false
-    var directory = String(root.cameraDirectory || "")
-    if (directory.length < 2 || directory.charAt(0) !== "/"
-        || directory.endsWith("/") || path.indexOf("\0") !== -1) return false
-    return path === directory + "/snapshot.jpg"
+    return path === root.cameraDirectory + "/snapshot.jpg"
   }
 
   function validTlsFingerprint(value) {
@@ -1157,6 +1152,9 @@ Item {
         root.pluginUpdateAvailable = false
         root.pluginUpdateStatusKnown = true
         root.pluginUpdateVersion = ""
+        shellRestartProcess.running = true
+        if (!shellRestartProcess.running)
+          root.pluginUpdateError = "Updated. Run omarchy restart shell to load it"
       } else {
         root.pluginUpdateError = pluginUpdateProcess.errorOutput.trim()
           || "Bambu Companion could not be updated"
@@ -1164,6 +1162,16 @@ Item {
       pluginUpdateProcess.action = ""
       pluginUpdateProcess.output = ""
       pluginUpdateProcess.errorOutput = ""
+    }
+  }
+
+  Process {
+    id: shellRestartProcess
+    command: ["setsid", "-f", "omarchy", "restart", "shell"]
+    running: false
+    onExited: function(exitCode) { // qmllint disable signal-handler-parameters
+      if (exitCode !== 0)
+        root.pluginUpdateError = "Updated. Run omarchy restart shell to load it"
     }
   }
 
