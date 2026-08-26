@@ -242,4 +242,86 @@ class PrinterStateTest < Minitest::Test
     @state.disconnected!
     assert @state.snapshot.fetch(:stale)
   end
+
+  def test_camera_defaults_to_absent
+    camera = @state.snapshot.fetch(:camera)
+
+    assert_equal false, camera.fetch(:present)
+    assert_equal "none", camera.fetch(:transport)
+    assert_equal false, camera.fetch(:liveview_enabled)
+  end
+
+  def test_p1_product_and_ipcam_dev_select_jpeg_tcp
+    @state.update("info" => { "module" => [
+      { "name" => "ota", "product_name" => "Bambu Lab P1S" }
+    ] })
+    update = @state.update("print" => {
+      "ipcam" => { "ipcam_dev" => "1" }
+    })
+
+    camera = update.snapshot.fetch(:camera)
+    assert_equal true, camera.fetch(:present)
+    assert_equal "jpeg_tcp", camera.fetch(:transport)
+    assert_equal true, camera.fetch(:liveview_enabled)
+  end
+
+  def test_rtsp_url_selects_rtsps_even_on_p1_name
+    @state.update("info" => { "module" => [
+      { "name" => "ota", "product_name" => "Bambu Lab P1S" }
+    ] })
+    update = @state.update("print" => {
+      "ipcam" => {
+        "ipcam_dev" => "1",
+        "rtsp_url" => "rtsps://192.168.1.50:322/streaming/live/1"
+      }
+    })
+
+    camera = update.snapshot.fetch(:camera)
+    assert_equal "rtsps", camera.fetch(:transport)
+    assert_equal true, camera.fetch(:liveview_enabled)
+  end
+
+  def test_disabled_rtsp_url_means_liveview_off
+    @state.update("info" => { "module" => [
+      { "name" => "ota", "product_name" => "Bambu Lab H2D" }
+    ] })
+    update = @state.update("print" => {
+      "ipcam" => { "ipcam_dev" => "1", "rtsp_url" => "disable" }
+    })
+
+    camera = update.snapshot.fetch(:camera)
+    assert_equal true, camera.fetch(:present)
+    assert_equal "rtsps", camera.fetch(:transport)
+    assert_equal false, camera.fetch(:liveview_enabled)
+  end
+
+  def test_h2_product_without_rtsp_url_still_selects_rtsps
+    @state.update("info" => { "module" => [
+      { "name" => "ota", "product_name" => "Bambu Lab H2D" }
+    ] })
+    update = @state.update("print" => { "ipcam" => { "ipcam_dev" => "1" } })
+
+    assert_equal "rtsps", update.snapshot.fetch(:camera).fetch(:transport)
+  end
+
+  def test_absent_ipcam_dev_disables_camera
+    @state.update("print" => { "ipcam" => { "ipcam_dev" => "1" } })
+    update = @state.update("print" => { "ipcam" => { "ipcam_dev" => "0" } })
+
+    camera = update.snapshot.fetch(:camera)
+    assert_equal false, camera.fetch(:present)
+    assert_equal "none", camera.fetch(:transport)
+  end
+
+  def test_partial_ipcam_updates_do_not_clear_known_fields
+    @state.update("print" => {
+      "ipcam" => { "ipcam_dev" => "1", "rtsp_url" => "disable" }
+    })
+    update = @state.update("print" => { "ipcam" => { "ipcam_record" => "enable" } })
+
+    camera = update.snapshot.fetch(:camera)
+    assert_equal true, camera.fetch(:present)
+    assert_equal "rtsps", camera.fetch(:transport)
+    assert_equal false, camera.fetch(:liveview_enabled)
+  end
 end

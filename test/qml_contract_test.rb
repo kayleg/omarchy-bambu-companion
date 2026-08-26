@@ -218,7 +218,8 @@ class QmlContractTest < Minitest::Test
                  @source)
     assert_match(/function refreshModel\(\)\s*{\s*writeCommand\(\{ "op": "refresh_model" \}\)\s*}/m,
                  @source)
-    assert_includes @dashboard_source, "onReloadRequested: root.service.refreshModel()"
+    assert_match(/onReloadRequested: \{.*selectedViewportSource === "camera".*snapshotCamera\(\).*refreshModel\(\)/m,
+                 @dashboard_source)
     assert_match(/BambuModelViewport\s*{.*daemonReady: root\.service\.daemonReady && root\.service\.backendRunning/m,
                  @dashboard_source)
     assert_includes @viewport_source, "enabled: viewport.daemonReady"
@@ -271,13 +272,17 @@ class QmlContractTest < Minitest::Test
                     "property alias selectedGeometrySource: geometryAssembler.selectedGeometrySource"
     assert_includes @source, "readonly property bool previewAvailable: geometryAssembler.previewAvailable"
     assert_includes @source, "readonly property bool gcodeGeometryAvailable: geometryAssembler.gcodeAvailable"
-    assert_match(/function selectGeometrySource\(source\).*geometryAssembler\.selectSource\(source\)/m,
+    assert_match(/function selectViewportSource\(source\)[\s\S]*source === "camera"[\s\S]*cameraSelectable[\s\S]*selectedViewportSource = "camera"[\s\S]*source !== "gcode" && source !== "preview"[\s\S]*geometryAssembler\.selectSource\(source\)[\s\S]*selectedViewportSource = source/m,
+                 @source)
+    assert_match(/readonly property bool cameraDesired:[\s\S]*selectedViewportSource === "camera"[\s\S]*cameraSelectable[\s\S]*popupCameraVisible \|\| root\.windowCameraVisible/m,
+                 @source)
+    assert_match(/function syncCameraSession\(\)[\s\S]*cameraDesired[\s\S]*camera_start[\s\S]*camera_stop/m,
                  @source)
     assert_match(/readonly property string activeSegmentPath:.*geometryBundle\.gcode.*geometry\.path/m,
                  @source)
     assert_match(/segmentValue:\s*root\.service\.activeSegmentCount\.toLocaleString/m,
                  @dashboard_source)
-    assert_match(/BambuModelViewport\s*\{.*previewAvailable: root\.service\.previewAvailable.*gcodeAvailable: root\.service\.gcodeGeometryAvailable.*selectedSource: root\.service\.selectedGeometrySource.*previewSource: root\.service\.previewAvailable.*onSourceRequested: function\(source\).*root\.service\.selectGeometrySource\(source\)/m,
+    assert_match(/BambuModelViewport\s*\{[\s\S]*previewAvailable: root\.service\.previewAvailable[\s\S]*gcodeAvailable: root\.service\.gcodeGeometryAvailable[\s\S]*cameraAvailable: root\.service\.cameraSelectable[\s\S]*selectedSource: root\.service\.selectedViewportSource[\s\S]*previewSource: root\.service\.previewAvailable[\s\S]*onSourceRequested: function\(source\)[\s\S]*root\.service\.selectViewportSource\(source\)/m,
                  @dashboard_source)
   end
 

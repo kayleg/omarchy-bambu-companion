@@ -94,8 +94,33 @@ Item {
 
   property alias geometryBundle: geometryAssembler.geometryBundle
   property alias selectedGeometrySource: geometryAssembler.selectedGeometrySource
+  property string selectedViewportSource: "gcode"
   readonly property bool previewAvailable: geometryAssembler.previewAvailable
   readonly property bool gcodeGeometryAvailable: geometryAssembler.gcodeAvailable
+  property bool popupCameraVisible: false
+  property bool windowCameraVisible: false
+  property bool cameraPresent: false
+  property string cameraTransport: "none"
+  property bool cameraLiveviewEnabled: false
+  property bool cameraFfmpegAvailable: false
+  property string cameraStatus: "idle"
+  property string cameraStatusCode: ""
+  property string cameraStatusMessage: ""
+  property string cameraFramePath: ""
+  property int cameraFrameGeneration: 0
+  property bool cameraSessionRequested: false
+  readonly property bool cameraSelectable: !root.demoActive && root.connected
+    && root.cameraPresent
+    && (root.cameraTransport === "jpeg_tcp"
+      || (root.cameraTransport === "rtsps" && root.cameraLiveviewEnabled
+        && root.cameraFfmpegAvailable))
+  readonly property bool cameraDesired: root.selectedViewportSource === "camera"
+    && root.cameraSelectable
+    && (root.popupCameraVisible || root.windowCameraVisible)
+  readonly property bool cameraFrameAvailable: root.cameraFramePath !== ""
+  readonly property url cameraFrameSource: root.cameraFrameAvailable
+    ? Qt.resolvedUrl("file://" + root.cameraFramePath + "?g="
+      + root.cameraFrameGeneration) : ""
   readonly property int activeSegmentCount: {
     var geometry = root.geometryBundle.gcode
     if (!geometry) return 0
@@ -159,6 +184,7 @@ Item {
   readonly property string nativeRoutePath:
     nativeDataRoot + "/qml/native/RouteHost.qml"
   readonly property string geometryDirectory: nativeDataRoot + "/geometry"
+  readonly property string cameraDirectory: nativeDataRoot + "/camera"
   property string rendererStatus: "compiling"
   readonly property url nativeRouteUrl: Qt.resolvedUrl("file://" + nativeRoutePath)
   property bool nativeBuildStarted: false
@@ -470,8 +496,41 @@ Item {
       && value >= 0 && Math.floor(value) === value
   }
 
-  function selectGeometrySource(source) {
-    return geometryAssembler.selectSource(source)
+  function selectViewportSource(source) {
+    if (source === "camera") {
+      if (!root.cameraSelectable) return false
+      selectedViewportSource = "camera"
+      return true
+    }
+    if (source !== "gcode" && source !== "preview") return false
+    geometryAssembler.selectSource(source)
+    selectedViewportSource = source
+    return true
+  }
+
+  function snapshotCamera() {
+    return writeCommand({ "op": "camera_snapshot" })
+  }
+
+  function syncCameraSession() {
+    if (root.cameraDesired) {
+      if (root.cameraSessionRequested) return
+      if (root.writeCommand({ "op": "camera_start" }))
+        root.cameraSessionRequested = true
+      return
+    }
+    if (!root.cameraSessionRequested) return
+    root.writeCommand({ "op": "camera_stop" })
+    root.cameraSessionRequested = false
+  }
+
+  function validCameraPath(path) {
+    if (typeof path !== "string" || path.length < 5 || path.length > 4096)
+      return false
+    var directory = String(root.cameraDirectory || "")
+    if (directory.length < 2 || directory.charAt(0) !== "/"
+        || directory.endsWith("/") || path.indexOf("\0") !== -1) return false
+    return path === directory + "/snapshot.jpg"
   }
 
   function validTlsFingerprint(value) {
@@ -767,6 +826,13 @@ Item {
     heatbreakFanSpeed = finiteNumber(printer.heatbreakFanSpeed, NaN)
     lastUpdate = reportUpdate
     productName = String(printer.productName || root.productName || "")
+    var camera = objectOrEmpty(printer.camera)
+    cameraPresent = camera.present === true
+    cameraTransport = String(camera.transport || "none")
+    cameraLiveviewEnabled = camera.liveviewEnabled === true
+    cameraFfmpegAvailable = camera.ffmpegAvailable === true
+    if (root.selectedViewportSource === "camera" && !root.cameraSelectable)
+      selectedViewportSource = geometryAssembler.selectedGeometrySource
     firmwareVersion = String(printer.firmwareVersion || root.firmwareVersion || "")
     modelStatus = String(model.status || "idle")
     modelLoadPhase = String(model.loadPhase || "")
@@ -850,6 +916,20 @@ Item {
     clearTlsProbeState()
     eventStore.deactivateAlerts(new Date().toISOString())
     geometryAssembler.reset(-1)
+    selectedViewportSource = "gcode"
+    cameraPresent = false
+    cameraTransport = "none"
+    cameraLiveviewEnabled = false
+    cameraFfmpegAvailable = false
+    cameraStatus = "idle"
+    cameraStatusCode = ""
+    cameraStatusMessage = ""
+    cameraFramePath = ""
+    cameraFrameGeneration = 0
+    if (root.cameraSessionRequested) {
+      root.writeCommand({ "op": "camera_stop" })
+      root.cameraSessionRequested = false
+    }
   }
 
   function handleLine(line) {
@@ -922,6 +1002,16 @@ Item {
       if (!root.demoActive) handleState(message)
     } else if (message.event === "demo_state") {
       handleDemoState(message)
+    } else if (message.event === "camera_frame") {
+      if (!root.validCameraPath(message.path)) return
+      cameraFramePath = String(message.path)
+      cameraFrameGeneration = isNonNegativeInteger(message.generation)
+        ? message.generation : root.cameraFrameGeneration + 1
+      cameraStatus = "streaming"
+    } else if (message.event === "camera_status") {
+      cameraStatus = String(message.state || "idle")
+      cameraStatusCode = String(message.code || "")
+      cameraStatusMessage = String(message.message || "")
     } else if (String(message.event || "").indexOf("geometry_") === 0) {
       var demoGeometry = message.demoSession !== undefined
       if ((demoGeometry && root.demoActive
@@ -991,10 +1081,17 @@ Item {
 
   Component.onCompleted: root.initialize()
 
+  onCameraDesiredChanged: root.syncCameraSession()
+  onDaemonReadyChanged: root.syncCameraSession()
+
   BambuGeometryAssembler {
     id: geometryAssembler
     maxSegments: root.segmentLimit()
     segmentDirectory: root.geometryDirectory
+    onSelectedGeometrySourceChanged: {
+      if (root.selectedViewportSource !== "camera")
+        root.selectedViewportSource = geometryAssembler.selectedGeometrySource
+    }
   }
 
   BambuEventStore {

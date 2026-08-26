@@ -281,6 +281,10 @@ class QmlSettingsContractTest < Minitest::Test
                  dashboard)
     assert_match(/function onStatusAvailable\(\).*viewMode === "connecting".*viewMode = "status"/m,
                  dashboard)
+    assert_match(/function onPrinterStateKnownChanged\(\).*printerStateKnown.*viewMode === "connecting".*viewMode = "status"/m,
+                 dashboard)
+    assert_match(/function applyOperationResult\(.*response\.mode === "connecting" && root\.service\.printerStateKnown.*viewMode = "status"/m,
+                 dashboard)
     assert_match(/function backToStatus\(\).*!root\.service\.demoActive && !root\.service\.requiresInitialSetup.*!root\.service\.printerStateKnown.*enterConnecting\(\).*return.*viewMode = "status"/m,
                  dashboard)
   end

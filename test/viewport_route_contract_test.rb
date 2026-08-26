@@ -71,7 +71,7 @@ class ViewportRouteContractTest < Minitest::Test
   end
 
   def test_source_icons_are_white_masks_recolored_by_the_plugin_palette
-    %w[route.svg image.svg list-restart.svg].each do |name|
+    %w[route.svg image.svg camera.svg list-restart.svg].each do |name|
       icon = File.read(File.expand_path("../assets/#{name}", __dir__))
 
       assert_includes icon, 'stroke="#fff"'
@@ -168,9 +168,9 @@ class ViewportRouteContractTest < Minitest::Test
     assert_includes @source, "property bool gcodeAvailable: false"
     assert_includes @source, 'property string selectedSource: "gcode"'
     assert_includes @source, "signal sourceRequested(string source)"
-    assert_match(/component SourceIconButton: BambuButton\s*\{.*required property string sourceName.*required property bool available.*enabled: available.*active: viewport\.selectedSource === sourceName.*onClicked: viewport\.sourceRequested\(sourceName\)/m,
+    assert_match(/component SourceIconButton: BambuButton\s*\{.*required property string sourceName.*required property bool available.*enabled:\s*sourceName === "camera" \? available : true.*active: viewport\.selectedSource === sourceName.*onClicked: viewport\.sourceRequested\(sourceName\)/m,
                  @source)
-    assert_match(/Column\s*\{\s*id:\s*sourceButtons.*anchors\.top:\s*coordinateBadge\.bottom.*SourceIconButton\s*\{.*sourceName:\s*"gcode".*available:\s*viewport\.gcodeAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/route\.svg"\).*SourceIconButton\s*\{.*sourceName:\s*"preview".*available:\s*viewport\.previewAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/image\.svg"\)/m,
+    assert_match(/Column\s*\{\s*id:\s*sourceButtons.*anchors\.top:\s*coordinateBadge\.bottom.*SourceIconButton\s*\{.*sourceName:\s*"gcode".*available:\s*viewport\.gcodeAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/route\.svg"\).*SourceIconButton\s*\{.*sourceName:\s*"camera".*available:\s*viewport\.cameraAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/camera\.svg"\).*SourceIconButton\s*\{.*sourceName:\s*"preview".*available:\s*viewport\.previewAvailable.*iconSource:\s*Qt\.resolvedUrl\("assets\/image\.svg"\)/m,
                  @source)
     refute_includes @source, 'text: "MODEL"'
     refute_includes @source, 'text: "G-CODE"'
@@ -193,6 +193,14 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
     assert_match(/Loader\s*\{\s*id:\s*routeLoader.*visible:\s*viewport\.rendererStatus === "ready"/m,
                  @source)
+  end
+
+  def test_camera_still_uses_a_cached_busting_image_not_a_video_item
+    refute_match(/MediaPlayer|VideoOutput|QtMultimedia/i, @source)
+    assert_match(/Image\s*\{.*source:\s*viewport\.cameraFrameSource.*fillMode:\s*Image\.PreserveAspectFit.*cache:\s*false.*visible:\s*viewport\.selectedSource === "camera" && viewport\.cameraFrameAvailable/m,
+                 @source)
+    assert_includes @source, "CHAMBER CAMERA"
+    assert_includes @source, "WAITING FOR CAMERA"
   end
 
   def test_simulated_nozzle_is_sampled_by_the_native_renderer
@@ -306,7 +314,7 @@ class ViewportRouteContractTest < Minitest::Test
   end
 
   def test_empty_gcode_column_covers_compiling_unavailable_and_missing_segments
-    assert_match(/visible:\s*viewport\.selectedSource === "preview"\s*\? !viewport\.previewAvailable\s*: \(viewport\.rendererStatus !== "ready" \|\| !viewport\.gcodeAvailable\)/m,
+    assert_match(/visible:\s*viewport\.selectedSource === "preview"\s*\? !viewport\.previewAvailable\s*: \(viewport\.selectedSource === "camera"\s*\? !viewport\.cameraFrameAvailable\s*: \(viewport\.rendererStatus !== "ready" \|\| !viewport\.gcodeAvailable\)\)/m,
                  @source)
     assert_match(/function emptyModelTitle\(\).*rendererStatus === "compiling".*COMPILING ROUTE RENDERER.*rendererStatus === "unavailable".*ROUTE RENDERER UNAVAILABLE/m,
                  @source)

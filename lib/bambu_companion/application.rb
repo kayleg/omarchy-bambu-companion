@@ -31,6 +31,7 @@ module BambuCompanion
     def initialize(input: $stdin, output: $stdout, secret_store: SecretStore.new,
                    mqtt_factory: nil, worker_factory: nil,
                    demo_factory: nil, demo_path: DEMO_GCODE_PATH,
+                   camera_factory: nil,
                    outbound_capacity: AsyncIpcEmitter::DEFAULT_CAPACITY,
                    writer_join_seconds: AsyncIpcEmitter::DEFAULT_JOIN_SECONDS,
                    monotonic_clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
@@ -40,6 +41,7 @@ module BambuCompanion
       @secret_store = secret_store
       @mqtt_factory = mqtt_factory
       @worker_factory = worker_factory
+      @camera_factory = camera_factory
       @demo_factory = demo_factory || ->(**arguments) { DemoSession.new(**arguments) }
       @demo_path = File.expand_path(demo_path)
       @installation_id = String(installation_id)
@@ -101,6 +103,9 @@ module BambuCompanion
       when "start_demo" then start_demo(command)
       when "stop_demo" then stop_demo(command)
       when "refresh_model" then refresh_model
+      when "camera_start" then camera_start
+      when "camera_stop" then camera_stop
+      when "camera_snapshot" then camera_snapshot
       when "probe_tls" then probe_tls(command)
       when "shutdown" then request_shutdown
       else
@@ -268,6 +273,25 @@ module BambuCompanion
       runtime&.refresh_preview
     end
 
+    def camera_start = camera_op(:start_camera)
+
+    def camera_stop = camera_op(:stop_camera)
+
+    def camera_snapshot = camera_op(:snapshot_camera)
+
+    def camera_op(name)
+      runtime = printer_runtime
+      runtime.public_send(name) if runtime.respond_to?(name)
+    end
+
+    def printer_runtime
+      @control_mutex.synchronize do
+        next if @shutdown || @demo_session_id
+
+        @runtime
+      end
+    end
+
     def start_demo(command)
       return unless supported_protocol?(command)
 
@@ -397,6 +421,7 @@ module BambuCompanion
         emitter: @emitter,
         mqtt_factory: @mqtt_factory,
         worker_factory: @worker_factory,
+        camera_factory: @camera_factory,
         monotonic_clock: @monotonic_clock,
         next_sequence: -> { next_sequence }
       )

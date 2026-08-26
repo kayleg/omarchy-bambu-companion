@@ -12,12 +12,21 @@ module BambuCompanion
       "mqttTlsFingerprint" => "11" * 32,
       "ftpsTlsFingerprint" => "22" * 32
     }.freeze
+
+    def self.minimal_jpeg(width: 1, height: 1, payload: "")
+      sof = [11, 8, height, width, 1, 1, 0x11, 0].pack("nCnnCCCC")
+      "\xFF\xD8\xFF\xC0".b + sof + payload.to_s.b + "\xFF\xD9".b
+    end
   end
 end
 
 class Minitest::Test
   def printer_config(overrides = {})
     BambuCompanion::TestFixtures::PRINTER_CONFIG.merge(overrides.transform_keys(&:to_s))
+  end
+
+  def minimal_jpeg(**arguments)
+    BambuCompanion::TestFixtures.minimal_jpeg(**arguments)
   end
 
   def config_fixture(overrides = {})

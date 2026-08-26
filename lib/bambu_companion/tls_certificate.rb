@@ -85,6 +85,23 @@ module BambuCompanion
       ), cause: nil
     end
 
+    def open_pinned(host:, port:, fingerprint:, connect_timeout: 8.0)
+      raw = Socket.tcp(String(host), Integer(port), connect_timeout: connect_timeout)
+      context = OpenSSL::SSL::SSLContext.new
+      configure_pinned_context(context, fingerprint)
+      tls = OpenSSL::SSL::SSLSocket.new(raw, context)
+      tls.sync_close = true
+      tls.hostname = String(host) if tls.respond_to?(:hostname=)
+      tls.connect
+      tls
+    rescue OpenSSL::SSL::SSLError => error
+      raw&.close
+      raise_if_pin_rejected!(context, error)
+    rescue StandardError
+      raw&.close
+      raise
+    end
+
     def identity(certificate)
       {
         "fingerprint" => fingerprint(certificate),

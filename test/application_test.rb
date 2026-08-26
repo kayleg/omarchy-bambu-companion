@@ -211,6 +211,35 @@ class ApplicationTest < Minitest::Test
     def stopped? = @stopped
   end
 
+  class FakeCameraSession
+    attr_reader :starts, :stops, :snapshots, :cameras
+
+    def initialize
+      @starts = 0
+      @stops = 0
+      @snapshots = 0
+      @cameras = []
+    end
+
+    def start(camera)
+      @starts += 1
+      @cameras << camera
+      self
+    end
+
+    def stop
+      @stops += 1
+      self
+    end
+
+    def snapshot
+      @snapshots += 1
+      self
+    end
+
+    def running? = @starts > @stops
+  end
+
   class ScriptedInput
     def initialize(objects, after: {})
       @objects = objects
@@ -1902,5 +1931,96 @@ class ApplicationTest < Minitest::Test
     assert_empty stdout
     assert_equal "bambu-companion: fatal error (RuntimeError)\n", stderr
     refute_includes stderr, SECRET
+  end
+
+  def test_state_includes_detected_camera_transport
+    sessions = []
+    input = ScriptedInput.new(
+      [
+        { op: "configure", protocol: 1, config: printer_config },
+        { op: "shutdown" }
+      ],
+      after: {
+        0 => lambda do
+          sessions.first.connect(true)
+          sessions.first.report("info" => { "module" => [{
+            "name" => "ota", "product_name" => "Bambu Lab P1S"
+          }] })
+          sessions.first.report("print" => {
+            "ipcam" => { "ipcam_dev" => "1" }
+          })
+        end
+      }
+    )
+    app, output, = build_app(
+      input: input,
+      secrets: Secrets.new({ "0309C123456789" => SECRET }),
+      session_factory: lambda { |**arguments|
+        sessions << Session.new(arguments)
+        sessions.last
+      }
+    )
+
+    app.run
+
+    camera = parsed_events(output).reverse.find { |event|
+      event["event"] == "state"
+    }.fetch("printer").fetch("camera")
+    assert_equal true, camera.fetch("present")
+    assert_equal "jpeg_tcp", camera.fetch("transport")
+    assert_equal true, camera.fetch("liveviewEnabled")
+    assert camera.key?("ffmpegAvailable")
+    refute camera.key?("rtsp_url")
+    refute camera.key?("rtspUrl")
+  end
+
+  def test_camera_ops_drive_the_session_and_stop_with_the_runtime
+    cameras = []
+    sessions = []
+    app, = build_app(
+      input: StringIO.new,
+      secrets: Secrets.new({ "0309C123456789" => SECRET }),
+      session_factory: lambda { |**arguments|
+        sessions << Session.new(arguments)
+        sessions.last
+      },
+      camera_factory: ->(**) { cameras << FakeCameraSession.new; cameras.last }
+    )
+    app.handle("op" => "configure", "protocol" => 1, "config" => printer_config)
+    sessions.first.connect(true)
+    sessions.first.report("print" => { "ipcam" => { "ipcam_dev" => "1" } })
+    sessions.first.report("info" => { "module" => [{
+      "name" => "ota", "product_name" => "Bambu Lab P1S"
+    }] })
+
+    app.handle("op" => "camera_start")
+    app.handle("op" => "camera_snapshot")
+    app.handle("op" => "camera_stop")
+    app.send(:shutdown)
+
+    camera = cameras.fetch(0)
+    assert_equal 1, camera.starts
+    assert_equal 1, camera.snapshots
+    assert_operator camera.stops, :>=, 2
+    assert_equal "jpeg_tcp", camera.cameras.first.fetch(:transport)
+    refute camera.running?
+  end
+
+  def test_demo_does_not_start_a_camera_session
+    cameras = []
+    app, = build_app(
+      input: StringIO.new,
+      secrets: ForbiddenSecrets.new,
+      demo_factory: ->(**arguments) { Demo.new(arguments) },
+      demo_path: "/bundled/omarchy.gcode",
+      camera_factory: ->(**) { cameras << FakeCameraSession.new; cameras.last }
+    )
+
+    app.handle("op" => "start_demo", "protocol" => 1, "requestId" => 8)
+    app.handle("op" => "camera_start")
+    app.handle("op" => "camera_snapshot")
+    app.send(:shutdown)
+
+    assert_empty cameras
   end
 end

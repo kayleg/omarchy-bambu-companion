@@ -48,9 +48,17 @@ module BambuCompanion
     STABLE_ID_FIELDS = %w[task_id subtask_id].freeze
     WEAK_IDENTITY_FIELDS = %w[file url gcode_file subtask_name plate_idx].freeze
 
+    CAMERA_ABSENT = {
+      present: false, transport: "none", liveview_enabled: false
+    }.freeze
+    RTSP_SERIES = /X1|X2|H2|P2/i
+
     def initialize(clock: -> { Time.now.utc })
       @clock = clock
-      @values = { connected: false, stale: true, last_update: nil }
+      @values = {
+        connected: false, stale: true, last_update: nil,
+        camera: CAMERA_ABSENT.dup
+      }
       @hms_alerts = [].freeze
       @print_error_seen = false
       @print_error_code = 0
@@ -81,6 +89,7 @@ module BambuCompanion
       end
       update_alerts(print_state)
       update_printer_identity(report)
+      update_camera(print_state)
       @values[:last_update] = @clock.call.utc.iso8601
       @values[:stale] = false if @values[:connected]
 
@@ -245,6 +254,58 @@ module BambuCompanion
       Integer(value) & 0xFFFF_FFFF
     rescue ArgumentError, TypeError
       nil
+    end
+
+    def update_camera(print_state)
+      ipcam = print_state["ipcam"]
+      current = @values[:camera] || CAMERA_ABSENT
+      present = current[:present]
+      rtsp_url = current[:rtsp_url]
+
+      if ipcam.is_a?(Hash)
+        if ipcam.key?("ipcam_dev")
+          present = ipcam_present?(ipcam["ipcam_dev"])
+        end
+        if ipcam.key?("rtsp_url")
+          rtsp_url = clean_string(ipcam["rtsp_url"])
+        end
+      end
+
+      @values[:camera] = camera_from(
+        present: present, rtsp_url: rtsp_url,
+        product_name: @values[:product_name]
+      )
+    end
+
+    def camera_from(present:, rtsp_url:, product_name:)
+      unless present
+        return { present: false, transport: "none", liveview_enabled: false,
+                 rtsp_url: rtsp_url }.freeze
+      end
+
+      url = rtsp_url.to_s
+      if url.match?(%r{\Artsps?://}i)
+        return {
+          present: true, transport: "rtsps", liveview_enabled: true,
+          rtsp_url: rtsp_url
+        }.freeze
+      end
+      if url.casecmp("disable").zero?
+        return {
+          present: true, transport: "rtsps", liveview_enabled: false,
+          rtsp_url: rtsp_url
+        }.freeze
+      end
+
+      transport = product_name.to_s.match?(RTSP_SERIES) ? "rtsps" : "jpeg_tcp"
+      {
+        present: true, transport: transport, liveview_enabled: true,
+        rtsp_url: rtsp_url
+      }.freeze
+    end
+
+    def ipcam_present?(value)
+      value.to_s.strip == "1"
     end
 
     def update_printer_identity(report)

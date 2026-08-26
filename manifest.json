@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.ypmrg.bambu-companion",
   "name": "Bambu Companion",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "author": "Matthieu G.C.",
   "license": "MIT",
-  "description": "Local Bambu Lab monitoring with 2D and G-code print previews",
+  "description": "Local Bambu Lab monitoring with 2D, G-code, and chamber camera previews",
   "kinds": ["service", "bar-widget", "panel"],
   "entryPoints": {
     "service": "BambuService.qml",
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Bambu Companion",
-    "description": "Status, temperatures, progress, and local 2D/G-code visualization",
+    "description": "Status, temperatures, progress, and local 2D, G-code, and camera previews",
     "category": "Hardware",
     "defaultSection": "right",
     "allowMultiple": false,

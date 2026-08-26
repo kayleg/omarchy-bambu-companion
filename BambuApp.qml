@@ -65,7 +65,8 @@ Item {
       anchors.fill: parent
       service: root.service
       viewportHeight: appWindow.height
-      surfaceActive: appWindow.visible
+      surfaceActive: appWindow.visible && !appWindow.minimized
+      cameraSurfaceRole: "window"
       onCloseRequested: root.requestClose()
     }
   }

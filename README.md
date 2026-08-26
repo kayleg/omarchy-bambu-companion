@@ -11,8 +11,9 @@
 > not heavy data transfers.
 
 Monitor a Bambu Lab printer from the Omarchy Quattro bar. Bambu Companion
-shows live print telemetry, the slicer's 2D plate preview and a lightweight,
-interactive wireframe extracted from the sliced G-code.
+shows live print telemetry, the slicer's 2D plate preview, a lightweight
+interactive wireframe extracted from the sliced G-code, and chamber camera
+stills while that view is open.
 
 ## Install
 
@@ -148,7 +149,7 @@ git checkouts continue to show their current version without an update action.
 - Current layer, total layers and exact or estimated Z progress.
 - Speed profile, fan speeds, Wi-Fi signal and last report time.
 - Landscape dashboard with telemetry on the left and print preview on the right.
-- Selectable slicer image and sliced G-code route when available.
+- Selectable slicer image, sliced G-code route, and chamber camera stills when available.
 - Animated exploded G-code layers with a configurable spacing factor.
 - Animated simulated nozzle marker on the current G-code layer.
 - Configurable accent color and wireframe detail limit.
@@ -213,10 +214,18 @@ a byte count and a determinate progress bar; extraction and parsing remain
 indeterminate. Large sliced archives can therefore be slow even though MQTT
 telemetry itself is already connected.
 
-The **Route** and **Image** icon buttons are always visible below the coordinate
-badge. A source that is unavailable is disabled. The 2D image is selected by
-default when G-code is unavailable; otherwise the G-code route is selected.
-Switching views preserves the G-code camera.
+The **Route**, **Camera** and **Image** icon buttons are always visible below
+the coordinate badge. Route and Image stay selectable even when no print file
+is loaded; the viewport then explains that preview data is available during a
+print. The Camera button is disabled until a LAN camera is usable. Switching
+views preserves the G-code orbit camera.
+
+Chamber camera stills use the printer's LAN camera. P1 and A1 families send
+JPEG frames on port 6000. X1, H2 and P2 families use encrypted RTSP on port
+322 (`ffmpeg` required). Some H2 firmware keeps LAN liveview off until
+**LAN Mode Liveview** is enabled on the printer. Stills refresh about once
+per second while the camera view is open on the bar popup or tiled window,
+and stop immediately when that view is hidden, minimized, or replaced.
 
 A new print starts a new preview generation, so late data from the previous job
 cannot replace it. The downloaded file is private and temporary, and is removed
@@ -234,7 +243,7 @@ Preview controls:
 | Drag vertically | Tilt the model without crossing the build plane |
 | Hold the pointer | Pause automatic rotation |
 | Mouse wheel | Zoom from `0.50×` to `4.00×` |
-| Route / Image icons | Select an available preview source |
+| Route / Camera / Image icons | Select an available preview source |
 | Auto-rotate | Enable or disable continuous rotation |
 | Explode | Animate additional vertical spacing between G-code layers |
 
@@ -422,8 +431,10 @@ omarchy restart shell
   preview metadata between the isolated backend and Quickshell. Large G-code
   geometry uses the private packed `float32` file announced by that protocol.
 
-The current release supports one printer. Multi-printer dashboards, camera
-streams, cloud access and printer-control actions are intentionally excluded.
+The current release supports one printer. Multi-printer dashboards, cloud
+access and printer-control actions are intentionally excluded. The chamber
+camera is stills only (about 1 Hz) and is idle whenever that view is not on
+screen.
 
 ## License
 

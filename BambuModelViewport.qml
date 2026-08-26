@@ -27,9 +27,15 @@ Item {
   readonly property real nozzleSpeed: 50
   property bool previewAvailable: false
   property bool gcodeAvailable: false
+  property bool cameraAvailable: false
+  property bool cameraFrameAvailable: false
+  property string cameraStatus: "idle"
+  property string cameraStatusCode: ""
+  property string cameraStatusMessage: ""
   property bool autoRotateDefault: true
   property string selectedSource: "gcode"
   property url previewSource: ""
+  property url cameraFrameSource: ""
   property string activeSegmentPath: ""
   property var activeBounds: ({})
   property real zCurrent: NaN
@@ -69,6 +75,13 @@ Item {
 
   function emptyModelTitle() {
     if (!viewport.printerConfigured) return "NO PRINTER CONFIGURED"
+    if (viewport.selectedSource === "camera") {
+      if (viewport.cameraStatusCode === "certificate_changed")
+        return "CAMERA CERTIFICATE CHANGED"
+      if (viewport.cameraStatus === "connecting"
+          || viewport.cameraStatus === "idle") return "WAITING FOR CAMERA"
+      return "CAMERA UNAVAILABLE"
+    }
     if (viewport.modelStatus === "loading") {
       if (viewport.modelLoadPhase === "downloading") return "DOWNLOADING PRINT FILE"
       if (viewport.modelLoadPhase === "processing") return "PROCESSING PRINT DATA"
@@ -87,6 +100,8 @@ Item {
   function emptyModelDetail() {
     if (!viewport.printerConfigured)
       return "OPEN SETTINGS TO CONFIGURE A PRINTER"
+    if (viewport.selectedSource === "camera")
+      return viewport.cameraStatusMessage
     if (viewport.modelStatus === "loading"
         && viewport.modelLoadPhase === "downloading") {
       var loaded = formatBytes(viewport.modelLoadedBytes)
@@ -107,6 +122,15 @@ Item {
       return "Automatic retries are limited · use Reload preview to try again"
     }
     return ""
+  }
+
+  function cameraUnavailableTooltip() {
+    if (!viewport.printerConfigured) return "Camera unavailable until a printer is connected"
+    if (viewport.cameraStatusCode === "ffmpeg_missing")
+      return "Install ffmpeg to view the camera"
+    if (viewport.cameraStatusCode === "liveview_disabled")
+      return "Enable LAN Mode Liveview on the printer"
+    return "Chamber camera unavailable"
   }
 
   function formatBytes(value) {
@@ -226,7 +250,7 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       text: viewport.selectedSource === "gcode"
         ? "DRAG TO ROTATE · WHEEL TO ZOOM · HOLD TO PAUSE"
-        : "2D SLICER PREVIEW"
+        : (viewport.selectedSource === "camera" ? "CHAMBER CAMERA" : "2D SLICER PREVIEW")
       color: viewport.dim
       horizontalAlignment: Text.AlignRight
       elide: Text.ElideRight
@@ -397,6 +421,17 @@ Item {
       visible: viewport.selectedSource === "preview" && viewport.previewAvailable
     }
 
+    Image {
+      anchors.fill: parent
+      anchors.margins: Style.space(12)
+      source: viewport.cameraFrameSource
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      cache: false
+      smooth: true
+      visible: viewport.selectedSource === "camera" && viewport.cameraFrameAvailable
+    }
+
     Item {
       id: nozzleMarker
       width: 10
@@ -531,10 +566,11 @@ Item {
       required property string sourceLabel
       required property url iconSource
 
-      enabled: available
+      enabled: sourceName === "camera" ? available : true
       active: viewport.selectedSource === sourceName
-      tooltipText: available ? "Show sliced " + sourceLabel
-        : sourceLabel + " unavailable for this print"
+      property string availableTooltip: "Show sliced " + sourceLabel
+      property string unavailableTooltip: sourceLabel + " unavailable for this print"
+      tooltipText: available ? availableTooltip : unavailableTooltip
       foreground: active ? viewport.accent
         : (enabled ? viewport.foreground : viewport.dim)
       accent: viewport.accent
@@ -578,6 +614,17 @@ Item {
         available: viewport.gcodeAvailable
         sourceLabel: "G-code route"
         iconSource: Qt.resolvedUrl("assets/route.svg")
+      }
+
+      SourceIconButton {
+        width: sourceButtons.width
+        height: width
+        sourceName: "camera"
+        available: viewport.cameraAvailable
+        sourceLabel: "chamber camera"
+        iconSource: Qt.resolvedUrl("assets/camera.svg")
+        availableTooltip: "Show chamber camera"
+        unavailableTooltip: viewport.cameraUnavailableTooltip()
       }
 
       SourceIconButton {
@@ -742,7 +789,9 @@ Item {
       spacing: Style.space(5)
       visible: viewport.selectedSource === "preview"
         ? !viewport.previewAvailable
-        : (viewport.rendererStatus !== "ready" || !viewport.gcodeAvailable)
+        : (viewport.selectedSource === "camera"
+          ? !viewport.cameraFrameAvailable
+          : (viewport.rendererStatus !== "ready" || !viewport.gcodeAvailable))
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter

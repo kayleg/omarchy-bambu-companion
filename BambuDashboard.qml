@@ -10,8 +10,12 @@ Item {
   required property var service
   required property real viewportHeight
   property bool surfaceActive: false
+  property string cameraSurfaceRole: "popup"
   property bool showOpenAppButton: false
   property string viewMode: "setup"
+  readonly property bool cameraSurfaceVisible: !!root.service
+    && root.surfaceActive && root.viewMode === "status"
+    && root.service.selectedViewportSource === "camera"
   property bool componentReady: false
   property alias focusTarget: keyCatcher
 
@@ -59,7 +63,10 @@ Item {
 
   function enterConnecting() {
     settingsView.clearAccessCode()
-    root.viewMode = root.service.hasConnectionTarget ? "connecting" : "setup"
+    if (root.service.printerStateKnown)
+      root.viewMode = "status"
+    else
+      root.viewMode = root.service.hasConnectionTarget ? "connecting" : "setup"
     root.focusPanelTop()
   }
 
@@ -116,16 +123,36 @@ Item {
     settingsView.reportError("")
     if (!preserveAccessCode) settingsView.clearAccessCode()
     if (response.mode && response.mode !== "settings") {
-      root.viewMode = response.mode
+      if (response.mode === "connecting" && root.service.printerStateKnown)
+        root.viewMode = "status"
+      else
+        root.viewMode = response.mode
       root.focusPanelTop()
     }
     return true
+  }
+
+  function reportCameraSurface() {
+    if (!root.service) return
+    if (root.cameraSurfaceRole === "window")
+      root.service.windowCameraVisible = root.cameraSurfaceVisible
+    else
+      root.service.popupCameraVisible = root.cameraSurfaceVisible
   }
 
   onSurfaceActiveChanged: {
     if (!root.componentReady) return
     if (root.surfaceActive) root.open()
     else root.close()
+  }
+
+  onCameraSurfaceVisibleChanged: root.reportCameraSurface()
+  Component.onDestruction: {
+    if (!root.service) return
+    if (root.cameraSurfaceRole === "window")
+      root.service.windowCameraVisible = false
+    else
+      root.service.popupCameraVisible = false
   }
 
   Component.onCompleted: {
@@ -144,6 +171,11 @@ Item {
 
     function onStatusAvailable() {
       if (root.viewMode === "connecting") root.viewMode = "status"
+    }
+
+    function onPrinterStateKnownChanged() {
+      if (root.service.printerStateKnown && root.viewMode === "connecting")
+        root.viewMode = "status"
     }
 
     function onRequiresInitialSetupChanged() {
@@ -298,9 +330,15 @@ Item {
             warningColor: root.warningColor
             previewAvailable: root.service.previewAvailable
             gcodeAvailable: root.service.gcodeGeometryAvailable
-            selectedSource: root.service.selectedGeometrySource
+            cameraAvailable: root.service.cameraSelectable
+            cameraFrameAvailable: root.service.cameraFrameAvailable
+            cameraStatus: root.service.cameraStatus
+            cameraStatusCode: root.service.cameraStatusCode
+            cameraStatusMessage: root.service.cameraStatusMessage
+            selectedSource: root.service.selectedViewportSource
             previewSource: root.service.previewAvailable
               ? root.service.geometryBundle.preview.url : ""
+            cameraFrameSource: root.service.cameraFrameSource
             activeSegmentPath: root.service.activeSegmentPath
             activeBounds: root.service.activeBounds
             zCurrent: root.service.zCurrent
@@ -315,9 +353,14 @@ Item {
             rendererStatus: root.service.rendererStatus
             nativeRouteUrl: root.service.nativeRouteUrl
             onSourceRequested: function(source) {
-              root.service.selectGeometrySource(source)
+              root.service.selectViewportSource(source)
             }
-            onReloadRequested: root.service.refreshModel()
+            onReloadRequested: {
+              if (root.service.selectedViewportSource === "camera")
+                root.service.snapshotCamera()
+              else
+                root.service.refreshModel()
+            }
             onEventsRequested: root.toggleEvents()
             onRendererLoadFailed: root.service.markRendererUnavailable()
           }

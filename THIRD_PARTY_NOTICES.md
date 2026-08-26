@@ -1,6 +1,6 @@
 # Third-party notices
 
-The Route, Image and List Restart interface icons are adapted from
+The Route, Camera, Image and List Restart interface icons are adapted from
 [Lucide](https://lucide.dev/) and are used under the ISC License:
 
 > Copyright (c) 2022, Lucide Contributors

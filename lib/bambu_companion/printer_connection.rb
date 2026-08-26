@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
+require_relative "camera_session"
+require_relative "camera_store"
 require_relative "model_worker"
 require_relative "mqtt_session"
 require_relative "printer_state"
+require_relative "rtsps_snapshot"
 require_relative "tls_certificate"
 
 module BambuCompanion
@@ -13,6 +16,7 @@ module BambuCompanion
     THREAD_JOIN_SECONDS = 0.5
 
     def initialize(config:, secret:, emitter:, mqtt_factory: nil, worker_factory: nil,
+                   camera_factory: nil,
                    monotonic_clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
                    next_sequence:)
       @config = config
@@ -33,6 +37,10 @@ module BambuCompanion
       @session_thread = nil
       @worker = nil
       @stopped = false
+      @ffmpeg_available = RtspsSnapshot.ffmpeg_available?
+      @camera = (camera_factory || method(:build_camera_session)).call(
+        config: config, secret: @secret, emitter: emitter
+      )
     end
 
     def start
@@ -63,6 +71,24 @@ module BambuCompanion
         retryable: true
       )
       self
+    end
+
+    def start_camera
+      camera = @state_mutex.synchronize { @printer.snapshot[:camera] }
+      return false unless camera && camera[:present] && active?
+
+      @camera.start(camera)
+      true
+    end
+
+    def stop_camera
+      @camera.stop
+      true
+    end
+
+    def snapshot_camera
+      @camera.snapshot
+      true
     end
 
     def refresh_preview
@@ -96,6 +122,7 @@ module BambuCompanion
           reset_model_retry_unlocked
         end
       end
+      safely_stop(@camera)
       safely_stop(session)
       stop_thread(thread)
       safely_stop(worker)
@@ -242,7 +269,18 @@ module BambuCompanion
         coolingFanSpeed: state[:cooling_fan_speed],
         heatbreakFanSpeed: state[:heatbreak_fan_speed],
         productName: state[:product_name], firmwareVersion: state[:firmware_version],
-        alerts: alert_payload(state[:alerts])
+        alerts: alert_payload(state[:alerts]),
+        camera: camera_payload(state[:camera])
+      }
+    end
+
+    def camera_payload(camera)
+      camera = camera.is_a?(Hash) ? camera : {}
+      {
+        present: camera[:present] == true,
+        transport: camera[:transport] || "none",
+        liveviewEnabled: camera[:liveview_enabled] == true,
+        ffmpegAvailable: @ffmpeg_available == true
       }
     end
 
@@ -256,6 +294,15 @@ module BambuCompanion
           rawAttr: alert[:raw_attr], rawCode: alert[:raw_code]
         }
       end
+    end
+
+    def build_camera_session(config:, secret:, emitter:)
+      CameraSession.new(
+        config: config,
+        secret: secret,
+        store: CameraStore.new,
+        emitter: emitter
+      )
     end
 
     def retry_model_if_due(worker, hints, printer)
