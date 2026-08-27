@@ -116,6 +116,9 @@ module BambuCompanion
       @process_mutex = Mutex.new
       @wait_thread = nil
       @closed = false
+      @stream_mutex = Mutex.new
+      @stream_gateway = nil
+      @stream_url = nil
     end
 
     def capture
@@ -164,7 +167,44 @@ module BambuCompanion
       gateway&.stop
     end
 
+    # Live playback without ffmpeg: hand the caller a plain-RTSP loopback URL
+    # and let a real video sink consume it. The gateway still terminates TLS
+    # against the pinned certificate and answers the Digest challenge, so the
+    # printer is reached exactly as it is for stills -- there is simply no
+    # decode, JPEG re-encode or disk round trip in between, which is what makes
+    # the result smooth rather than a frame a second.
+    def start_stream
+      return nil if closed?
+
+      @stream_mutex.synchronize do
+        return @stream_url if @stream_gateway
+
+        gateway = build_gateway(
+          host: @host, port: @port, username: @username, password: @password,
+          fingerprint: @fingerprint, timeout: @timeout
+        )
+        url = gateway.start
+        @stream_gateway = gateway
+        @stream_url = url
+      end
+    rescue RtspsError => error
+      stop_stream
+      raise RtspsError.new(error.code, redact(error.message)), cause: nil
+    end
+
+    def stop_stream
+      gateway = @stream_mutex.synchronize do
+        current = @stream_gateway
+        @stream_gateway = nil
+        @stream_url = nil
+        current
+      end
+      gateway&.stop
+      nil
+    end
+
     def close
+      stop_stream
       wait = @process_mutex.synchronize do
         @closed = true
         @wait_thread

@@ -11,6 +11,7 @@ module BambuCompanion
   class PrinterConnection
     MODEL_HINT_KEYS = %i[file url gcode_file subtask_name plate_idx].freeze
     MODEL_RETRY_DELAYS = [5.0, 10.0, 20.0, 30.0].freeze
+    LIVE_FRAME_INTERVAL = 0.05
     MODEL_MAX_RETRIES = 6
     THREAD_JOIN_SECONDS = 0.5
 
@@ -306,11 +307,16 @@ module BambuCompanion
     end
 
     def build_camera_session(config:, secret:, emitter:)
+      live = config.camera_live_stream
       CameraSession.new(
         config: config,
         secret: secret,
         store: CameraStore.new,
-        emitter: emitter
+        emitter: emitter,
+        live: live,
+        # The publish interval is the frame rate ceiling, so a live session needs
+        # a much smaller one than the one-still-per-second default.
+        interval: live ? LIVE_FRAME_INTERVAL : 1.0
       )
     end
 

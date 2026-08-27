@@ -195,10 +195,29 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
   end
 
-  def test_camera_still_uses_a_cached_busting_image_not_a_video_item
-    refute_match(/MediaPlayer|VideoOutput|QtMultimedia/i, @source)
-    assert_match(/Image\s*\{.*source:\s*viewport\.cameraFrameSource.*fillMode:\s*Image\.PreserveAspectFit.*cache:\s*false.*visible:\s*viewport\.selectedSource === "camera" && viewport\.cameraFrameAvailable/m,
+  # Upstream forbids a video item outright. This fork allows one for the opt-in
+  # live stream -- QtMultimedia with the FFmpeg backend plays the daemon's pinned
+  # loopback tunnel directly, which removes the per-frame decode, JPEG re-encode
+  # and disk write behind both the flicker and roughly 2 MB/s of I/O. The still
+  # path is unchanged and remains the default, so both must be present.
+  def test_camera_supports_a_video_sink_and_still_buffers
+    assert_match(/import QtMultimedia/, @source)
+    assert_match(/MediaPlayer\s*\{\s*id: cameraPlayer/m, @source)
+    assert_match(/VideoOutput\s*\{\s*id: cameraSink/m, @source)
+    # the still path stays the fallback whenever no stream is on offer
+    assert_match(/viewport\.cameraFrameAvailable && viewport\.cameraStreamUrl === ""/, @source)
+    assert_match(/Item\s*\{\s*id: cameraFrames.*visible:\s*viewport\.selectedSource === "camera"/m,
                  @source)
+    assert_match(/back\.source = viewport\.cameraFrameSource/, @source)
+    # Two buffers, both uncached: a single Image blanks while the next frame
+    # decodes, which strobes once the live stream delivers faster than about a
+    # frame a second.
+    assert_equal 2, @source.scan(/id: frame[AB]\b/).length
+    buffers = @source[/Item\s*\{\s*id: cameraFrames.*?\n    \}/m]
+
+    refute_nil buffers, "camera buffer block not found"
+    assert_equal 2, buffers.scan(/cache: false/).length
+    assert_equal 2, buffers.scan(/asynchronous: true/).length
     assert_includes @source, "CHAMBER CAMERA"
     assert_includes @source, "WAITING FOR CAMERA"
     assert_match(/text:\s*viewport\.emptyModelDetail\(\).*textFormat:\s*Text\.PlainText/m,
@@ -316,7 +335,7 @@ class ViewportRouteContractTest < Minitest::Test
   end
 
   def test_empty_gcode_column_covers_compiling_unavailable_and_missing_segments
-    assert_match(/visible:\s*viewport\.selectedSource === "preview"\s*\? !viewport\.previewAvailable\s*: \(viewport\.selectedSource === "camera"\s*\? !viewport\.cameraFrameAvailable\s*: \(viewport\.rendererStatus !== "ready" \|\| !viewport\.gcodeAvailable\)\)/m,
+    assert_match(/visible:\s*viewport\.selectedSource === "preview"\s*\? !viewport\.previewAvailable\s*: \(viewport\.selectedSource === "camera"\s*\? \(!viewport\.cameraFrameAvailable && viewport\.cameraStreamUrl === ""\)\s*: \(viewport\.rendererStatus !== "ready" \|\| !viewport\.gcodeAvailable\)\)/m,
                  @source)
     assert_match(/function emptyModelTitle\(\).*rendererStatus === "compiling".*COMPILING ROUTE RENDERER.*rendererStatus === "unavailable".*ROUTE RENDERER UNAVAILABLE/m,
                  @source)

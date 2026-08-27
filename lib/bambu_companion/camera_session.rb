@@ -6,10 +6,11 @@ require_relative "rtsps_snapshot"
 module BambuCompanion
   class CameraSession
     THREAD_JOIN_SECONDS = 0.5
+    WAIT_SLICE_SECONDS = 0.2
 
     def initialize(config:, secret:, store:, emitter:,
                    jpeg_factory: nil, rtsps_factory: nil,
-                   ffmpeg_available: nil,
+                   ffmpeg_available: nil, live: false, sleeper: nil,
                    interval: 1.0, clock: nil)
       @config = config
       @secret = String(secret)
@@ -18,6 +19,8 @@ module BambuCompanion
       @jpeg_factory = jpeg_factory || ->(**arguments) { JpegTcpClient.new(**arguments) }
       @rtsps_factory = rtsps_factory || ->(**arguments) { RtspsSnapshot.new(**arguments) }
       @ffmpeg_available = ffmpeg_available || -> { RtspsSnapshot.ffmpeg_available? }
+      @live = live == true
+      @sleeper = sleeper || ->(seconds) { sleep(seconds) }
       @interval = Float(interval)
       @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
       @mutex = Mutex.new
@@ -115,7 +118,9 @@ module BambuCompanion
                     message: "Enable LAN Mode Liveview on the printer")
         return
       end
-      unless @ffmpeg_available.call
+      # Live playback is decoded by the QML video sink straight off the
+      # loopback gateway, so only the still path shells out to ffmpeg.
+      if !@live && !@ffmpeg_available.call
         emit_status("error", code: "ffmpeg_missing",
                     message: "Install ffmpeg to view the camera")
         return
@@ -128,6 +133,7 @@ module BambuCompanion
       )
       @mutex.synchronize { @rtsps = client }
       return if cancelled?
+      return stream_rtsps(client) if @live
 
       client.each_frame(cancelled: method(:cancelled?)) do |jpeg|
         handle_frame(jpeg)
@@ -135,6 +141,21 @@ module BambuCompanion
     ensure
       client&.close
       @mutex.synchronize { @rtsps = nil if @rtsps.equal?(client) }
+    end
+
+    # Publish the gateway's loopback URL and then just hold the session open.
+    # No frame ever crosses this process in live mode; the video sink pulls
+    # RTSP directly, and #stop tears the gateway down via RtspsSnapshot#close.
+    def stream_rtsps(client)
+      url = client.start_stream
+      return if url.to_s.empty? || cancelled?
+
+      @emitter.emit("camera_stream", url: url)
+      emit_status("streaming")
+      @sleeper.call(WAIT_SLICE_SECONDS) until cancelled?
+    ensure
+      client.stop_stream
+      @emitter.emit("camera_stream", url: "")
     end
 
     def handle_frame(jpeg, force: false)

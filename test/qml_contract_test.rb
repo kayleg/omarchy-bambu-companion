@@ -620,9 +620,22 @@ class QmlContractTest < Minitest::Test
     settings = @widget_schema.map { |entry| entry.fetch("key") }
 
     assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments explosionFactor autoRotate showBarSummary
-                    mqttTlsFingerprint ftpsTlsFingerprint], settings
+                    cameraLiveStream mqttTlsFingerprint ftpsTlsFingerprint], settings
     refute(settings.any? { |key| key.match?(/access|code|password|secret/i) })
     settings.each { |key| assert_includes @source, "setting(\"#{key}\"," }
+  end
+
+  # A setting the settings form renders but the daemon never receives silently
+  # does nothing. configuration() and configurationForDraft() build the payload
+  # for the configure command, and are separate from the form draft.
+  def test_daemon_configuration_carries_behavioural_settings
+    %w[configuration configurationForDraft].each do |builder|
+      body = @source[/function #{builder}\(.*?\n  \}/m]
+
+      refute_nil body, "#{builder} not found"
+      assert_includes body, "cameraLiveStream",
+                      "#{builder} must send cameraLiveStream or the toggle does nothing"
+    end
   end
 
   def test_qml_setting_fallbacks_match_manifest_defaults
