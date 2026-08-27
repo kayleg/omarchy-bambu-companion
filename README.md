@@ -114,6 +114,26 @@ Previews need the print file over FTPS. On some H2/P2 firmware, enable
 **Store Sent Files on External Storage** or Image and Route stay empty while
 MQTT telemetry continues.
 
+## Fork notes
+
+This branch is a fork of [ypMrg/omarchy-bambu-companion](https://github.com/ypMrg/omarchy-bambu-companion),
+carrying three changes made against a **Bambu Lab H2D on firmware 01.04.00.00**:
+
+- **G-code entry selection.** H2D reports `gcode_file` as an absolute path in the
+  printer's own filesystem, which is not a valid archive entry name. Upstream
+  raised `entry_not_found` and every print stalled at `PRINT DATA NOT READY YET`.
+- **RTSPS camera.** Three faults kept the chamber camera from ever producing a
+  frame on X1 / H2 / P2 hardware. Sent upstream as
+  [PR #2](https://github.com/ypMrg/omarchy-bambu-companion/pull/2).
+- **Live camera stream** (opt-in, off by default). Upstream deliberately ships
+  stills at about 1 Hz; the "Live camera stream" setting instead hands the
+  gateway's loopback URL to a `MediaPlayer`, so playback is smooth with no
+  per-frame decode, JPEG re-encode or disk write. **This one diverges from
+  upstream on purpose** — a contract test there forbids a video item — so it is
+  not offered as a pull request.
+
+The first two are bug fixes and belong upstream. The third is a preference.
+
 ## Chamber camera
 
 Stills, not live video. About 1 Hz while Camera is actually on screen. Leaving
