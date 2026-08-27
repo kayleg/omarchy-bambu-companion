@@ -28,6 +28,7 @@ Item {
   property bool secretStatusKnown: false
   property bool autoRotate: true
   property bool showBarSummary: true
+  property bool cameraLiveStream: false
   property string validationError: ""
 
   readonly property bool inputActive: hostInput.activeFocus
@@ -65,6 +66,7 @@ Item {
       ? 100 : values.explosionFactor)
     autoRotate = values.autoRotate !== false
     showBarSummary = values.showBarSummary !== false
+    cameraLiveStream = values.cameraLiveStream === true
     validationError = ""
     clearAccessCode()
     resetScroll()
@@ -152,7 +154,8 @@ Item {
       maxSegments: nextSegments,
       explosionFactor: nextExplosionFactor,
       autoRotate: form.autoRotate,
-      showBarSummary: form.showBarSummary
+      showBarSummary: form.showBarSummary,
+      cameraLiveStream: form.cameraLiveStream
     }
     if (trustCertificate === true) {
       trustRequested(draft, String(accessCodeInput.text || ""))
@@ -514,6 +517,21 @@ Item {
               form.showBarSummary = !form.showBarSummary
               form.barSummaryToggled(form.showBarSummary)
             }
+          }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          FieldLabel { text: "LIVE CAMERA" }
+
+          ToggleSwitch {
+            cursorPad: 0
+            anchors.left: parent.left
+            checked: form.cameraLiveStream
+            foreground: form.foreground
+            accent: form.accent
+            onToggled: form.cameraLiveStream = !form.cameraLiveStream
           }
         }
       }

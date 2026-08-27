@@ -10,7 +10,7 @@ module BambuCompanion
 
     def initialize(config:, secret:, store:, emitter:,
                    jpeg_factory: nil, rtsps_factory: nil,
-                   ffmpeg_available: nil,
+                   ffmpeg_available: nil, live: false,
                    interval: 1.0, sleeper: nil, clock: nil)
       @config = config
       @secret = String(secret)
@@ -19,6 +19,7 @@ module BambuCompanion
       @jpeg_factory = jpeg_factory || ->(**arguments) { JpegTcpClient.new(**arguments) }
       @rtsps_factory = rtsps_factory || ->(**arguments) { RtspsSnapshot.new(**arguments) }
       @ffmpeg_available = ffmpeg_available || -> { RtspsSnapshot.ffmpeg_available? }
+      @live = live == true
       @interval = Float(interval)
       @sleeper = sleeper || ->(seconds) { sleep(seconds) }
       @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
@@ -122,14 +123,36 @@ module BambuCompanion
       client = @rtsps_factory.call(
         host: @config.host, port: RtspsSnapshot::PORT,
         username: @config.username, password: @secret,
-        fingerprint: fingerprint
+        fingerprint: fingerprint,
+        cancelled: method(:cancelled?)
       )
+      return stream_rtsps(client) if @live
+
       loop do
         break if cancelled?
 
         handle_frame(client.capture, force: true)
         wait_interval
       end
+    end
+
+    # Publish the gateway's loopback URL and let the UI's video sink pull the
+    # stream directly. Nothing is decoded, re-encoded or written to disk here;
+    # the daemon's only job for the duration is keeping the pinned, authenticated
+    # tunnel open. Registered in @jpeg so #stop closes it like any other client.
+    def stream_rtsps(client)
+      @mutex.synchronize { @jpeg = client }
+      return if cancelled?
+
+      url = client.start_stream
+      return if url.nil? || url.empty?
+
+      @emitter.emit("camera_stream", url: url)
+      emit_status("streaming")
+      @sleeper.call(WAIT_SLICE_SECONDS) until cancelled?
+    ensure
+      client&.close
+      @emitter.emit("camera_stream", url: "") unless cancelled?
     end
 
     def handle_frame(jpeg, force: false)

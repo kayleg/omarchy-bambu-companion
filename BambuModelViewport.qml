@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Effects
+import QtMultimedia
 import qs.Commons
 
 Item {
@@ -36,6 +37,7 @@ Item {
   property string selectedSource: "gcode"
   property url previewSource: ""
   property url cameraFrameSource: ""
+  property string cameraStreamUrl: ""
   property string activeSegmentPath: ""
   property var activeBounds: ({})
   property real zCurrent: NaN
@@ -421,15 +423,100 @@ Item {
       visible: viewport.selectedSource === "preview" && viewport.previewAvailable
     }
 
-    Image {
-      anchors.fill: parent
+    // Two buffers, not one. Repointing a single Image clears it while the new
+    // source decodes, which is an occasional blink at one frame a second and a
+    // strobe once the live stream is delivering twenty. The next frame decodes
+    // in the hidden buffer and is swapped in only once it reports Ready, so a
+    // complete frame is on screen at all times.
+    Item {
+      id: cameraFrames
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: sourceButtons.left
       anchors.margins: Style.space(12)
-      source: viewport.cameraFrameSource
-      fillMode: Image.PreserveAspectFit
-      asynchronous: true
-      cache: false
-      smooth: true
-      visible: viewport.selectedSource === "camera" && viewport.cameraFrameAvailable
+      anchors.rightMargin: Style.space(8)
+      visible: viewport.selectedSource === "camera"
+        && viewport.cameraFrameAvailable && viewport.cameraStreamUrl === ""
+
+      property bool frontIsA: true
+
+      onVisibleChanged: if (!visible) {
+        frameA.source = ""
+        frameB.source = ""
+      }
+
+      Connections {
+        target: viewport
+        function onCameraFrameSourceChanged() {
+          if (!cameraFrames.visible) return
+          var back = cameraFrames.frontIsA ? frameB : frameA
+          back.source = viewport.cameraFrameSource
+        }
+      }
+
+      Image {
+        id: frameA
+        anchors.fill: parent
+        fillMode: Image.PreserveAspectFit
+        asynchronous: true
+        cache: false
+        smooth: true
+        opacity: cameraFrames.frontIsA ? 1 : 0
+        onStatusChanged: {
+          if (status === Image.Ready && !cameraFrames.frontIsA)
+            cameraFrames.frontIsA = true
+        }
+      }
+
+      Image {
+        id: frameB
+        anchors.fill: parent
+        fillMode: Image.PreserveAspectFit
+        asynchronous: true
+        cache: false
+        smooth: true
+        opacity: cameraFrames.frontIsA ? 0 : 1
+        onStatusChanged: {
+          if (status === Image.Ready && cameraFrames.frontIsA)
+            cameraFrames.frontIsA = false
+        }
+      }
+    }
+
+    // Live playback. The daemon hands over a loopback RTSP URL whose tunnel it
+    // still owns -- TLS pinned to the printer's certificate, Digest answered on
+    // our behalf -- so this consumes the same authenticated stream the stills
+    // path does, minus the per-frame decode, JPEG re-encode and disk write that
+    // made the still view flicker and cost ~2 MB/s.
+    Item {
+      id: cameraStream
+      // Stop at the source-button column instead of filling the panel: the
+      // buttons sit at z: 2 over the right edge, so a full-width surface puts
+      // moving video directly under them.
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: sourceButtons.left
+      anchors.margins: Style.space(12)
+      anchors.rightMargin: Style.space(8)
+      visible: viewport.selectedSource === "camera" && viewport.cameraStreamUrl !== ""
+
+      onVisibleChanged: visible ? cameraPlayer.play() : cameraPlayer.stop()
+
+      MediaPlayer {
+        id: cameraPlayer
+        videoOutput: cameraSink
+        source: cameraStream.visible
+          ? Qt.resolvedUrl(viewport.cameraStreamUrl) : ""
+        onSourceChanged: if (cameraStream.visible && String(source) !== "") play()
+      }
+
+      VideoOutput {
+        id: cameraSink
+        anchors.fill: parent
+        fillMode: VideoOutput.PreserveAspectFit
+      }
     }
 
     Item {
@@ -790,7 +877,7 @@ Item {
       visible: viewport.selectedSource === "preview"
         ? !viewport.previewAvailable
         : (viewport.selectedSource === "camera"
-          ? !viewport.cameraFrameAvailable
+          ? (!viewport.cameraFrameAvailable && viewport.cameraStreamUrl === "")
           : (viewport.rendererStatus !== "ready" || !viewport.gcodeAvailable))
 
       Row {

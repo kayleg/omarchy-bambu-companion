@@ -84,7 +84,8 @@ module BambuCompanion
     end
 
     def initialize(host:, username:, password:, fingerprint:,
-                   port: PORT, timeout: TIMEOUT, runner: nil)
+                   port: PORT, timeout: TIMEOUT, runner: nil,
+                   cancelled: nil)
       @host = String(host)
       @port = Integer(port)
       @username = String(username)
@@ -92,6 +93,63 @@ module BambuCompanion
       @fingerprint = fingerprint
       @timeout = timeout
       @runner = runner
+      @cancelled = cancelled || -> { false }
+      @stream_mutex = Mutex.new
+    end
+
+    # Hold one RTSP session open and yield every frame, instead of paying a
+    # fresh TCP + TLS + DESCRIBE + Digest + SETUP + PLAY + TEARDOWN round trip
+    # per still. That handshake, not any deliberate throttle, is what limits
+    # #capture to roughly a frame a second. Mirrors JpegTcpClient#each_frame so
+    # CameraSession can drive either transport the same way.
+    def each_frame(&block)
+      gateway = LoopbackGateway.new(
+        host: @host, port: @port, username: @username, password: @password,
+        fingerprint: @fingerprint, timeout: @timeout
+      )
+      input = gateway.start
+      begin
+        stream_frames(stream_argv(input), &block)
+      ensure
+        gateway.stop
+      end
+    end
+
+    # Live playback without ffmpeg: hand the caller a plain-RTSP loopback URL and
+    # let a real video sink consume it. The gateway still terminates TLS against
+    # the pinned certificate and answers the Digest challenge, so the printer is
+    # reached exactly as it is for stills -- there is simply no decode, JPEG
+    # re-encode or disk round trip in between.
+    def start_stream
+      @stream_mutex.synchronize do
+        return @stream_url if @stream_gateway
+
+        gateway = LoopbackGateway.new(
+          host: @host, port: @port, username: @username, password: @password,
+          fingerprint: @fingerprint, timeout: @timeout
+        )
+        @stream_url = gateway.start
+        @stream_gateway = gateway
+        @stream_url
+      end
+    end
+
+    def stop_stream
+      gateway = @stream_mutex.synchronize do
+        current = @stream_gateway
+        @stream_gateway = nil
+        @stream_url = nil
+        current
+      end
+      gateway&.stop
+      nil
+    end
+
+    def close
+      stop_stream
+      pid = @stream_mutex.synchronize { @stream_pid }
+      kill_group(pid) if pid
+      nil
     end
 
     def capture
@@ -133,6 +191,66 @@ module BambuCompanion
         "-vf", "scale='min(960,iw)':-2",
         "-f", "image2", "-q:v", "5", "pipe:1"
       ]
+    end
+
+    # image2pipe + mjpeg emits a bare concatenation of JPEGs, so frames are cut
+    # on the SOI/EOI markers rather than by any container framing.
+    def stream_argv(input_url)
+      [
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+        "-rtsp_transport", "tcp", "-timeout", "5000000",
+        "-threads", "1", "-an",
+        "-i", input_url,
+        "-vf", "scale='min(960,iw)':-2",
+        "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "5", "pipe:1"
+      ]
+    end
+
+    def stream_frames(argv)
+      stdin, stdout, stderr, waiter = Open3.popen3(*argv, pgroup: true)
+      @stream_mutex.synchronize { @stream_pid = waiter.pid }
+      stdin.close
+      drain = Thread.new { self.class.read_capped(stderr, 4096, overflow: :truncate) }
+      drain.report_on_exception = false
+      buffer = String.new(encoding: Encoding::BINARY)
+      until @cancelled.call
+        begin
+          buffer << stdout.readpartial(READ_CHUNK_BYTES)
+        rescue EOFError
+          break
+        end
+        # A frame whose terminator never arrives must not grow without bound.
+        if buffer.bytesize > CameraStore::MAX_JPEG_BYTES * 2
+          start = buffer.rindex(CameraStore::JPEG_SOI)
+          buffer = start ? buffer.byteslice(start..) : String.new(encoding: Encoding::BINARY)
+        end
+        while (frame = take_frame(buffer))
+          yield frame
+          break if @cancelled.call
+        end
+      end
+    ensure
+      pid = @stream_mutex.synchronize do
+        current = @stream_pid
+        @stream_pid = nil
+        current
+      end
+      kill_group(pid) if pid
+      [stdin, stdout, stderr].each { |io| io.close if io && !io.closed? }
+      drain&.kill
+      waiter&.join(1)
+    end
+
+    def take_frame(buffer)
+      start = buffer.index(CameraStore::JPEG_SOI)
+      return nil unless start
+
+      finish = buffer.index(CameraStore::JPEG_EOI, start + 2)
+      return nil unless finish
+
+      frame = buffer.byteslice(start, finish + 2 - start)
+      buffer.slice!(0, finish + 2)
+      frame
     end
 
     def public_url

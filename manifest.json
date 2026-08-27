@@ -6,7 +6,11 @@
   "author": "Matthieu G.C.",
   "license": "MIT",
   "description": "Local Bambu Lab monitoring with 2D, G-code, and chamber camera previews",
-  "kinds": ["service", "bar-widget", "panel"],
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel"
+  ],
   "entryPoints": {
     "service": "BambuService.qml",
     "barWidget": "BambuWidget.qml",
@@ -30,21 +34,99 @@
       "autoRotate": true,
       "showBarSummary": true,
       "mqttTlsFingerprint": "",
-      "ftpsTlsFingerprint": ""
+      "ftpsTlsFingerprint": "",
+      "cameraLiveStream": false
     },
     "schema": [
-      { "key": "printerName", "type": "string", "label": "Printer name", "defaultValue": "3D Printer" },
-      { "key": "host", "type": "string", "label": "Printer address", "defaultValue": "" },
-      { "key": "mqttPort", "type": "integer", "label": "MQTT TLS port", "min": 1, "max": 65535, "defaultValue": 8883 },
-      { "key": "ftpsPort", "type": "integer", "label": "Implicit FTPS port", "min": 1, "max": 65535, "defaultValue": 990 },
-      { "key": "serial", "type": "string", "label": "Printer serial", "defaultValue": "" },
-      { "key": "username", "type": "string", "label": "LAN username", "defaultValue": "bblp" },
-      { "key": "maxSegments", "type": "integer", "label": "Wireframe segment limit", "min": 1000, "max": 1000000, "step": 10000, "defaultValue": 500000 },
-      { "key": "explosionFactor", "type": "integer", "label": "Explode factor", "min": 0, "max": 500, "step": 1, "defaultValue": 100 },
-      { "key": "autoRotate", "type": "boolean", "label": "Auto-rotate by default", "defaultValue": true },
-      { "key": "showBarSummary", "type": "boolean", "label": "Show bar summary", "defaultValue": true },
-      { "key": "mqttTlsFingerprint", "type": "string", "label": "Trusted MQTT certificate fingerprint", "defaultValue": "" },
-      { "key": "ftpsTlsFingerprint", "type": "string", "label": "Trusted FTPS certificate fingerprint", "defaultValue": "" }
+      {
+        "key": "printerName",
+        "type": "string",
+        "label": "Printer name",
+        "defaultValue": "3D Printer"
+      },
+      {
+        "key": "host",
+        "type": "string",
+        "label": "Printer address",
+        "defaultValue": ""
+      },
+      {
+        "key": "mqttPort",
+        "type": "integer",
+        "label": "MQTT TLS port",
+        "min": 1,
+        "max": 65535,
+        "defaultValue": 8883
+      },
+      {
+        "key": "ftpsPort",
+        "type": "integer",
+        "label": "Implicit FTPS port",
+        "min": 1,
+        "max": 65535,
+        "defaultValue": 990
+      },
+      {
+        "key": "serial",
+        "type": "string",
+        "label": "Printer serial",
+        "defaultValue": ""
+      },
+      {
+        "key": "username",
+        "type": "string",
+        "label": "LAN username",
+        "defaultValue": "bblp"
+      },
+      {
+        "key": "maxSegments",
+        "type": "integer",
+        "label": "Wireframe segment limit",
+        "min": 1000,
+        "max": 1000000,
+        "step": 10000,
+        "defaultValue": 500000
+      },
+      {
+        "key": "explosionFactor",
+        "type": "integer",
+        "label": "Explode factor",
+        "min": 0,
+        "max": 500,
+        "step": 1,
+        "defaultValue": 100
+      },
+      {
+        "key": "autoRotate",
+        "type": "boolean",
+        "label": "Auto-rotate by default",
+        "defaultValue": true
+      },
+      {
+        "key": "showBarSummary",
+        "type": "boolean",
+        "label": "Show bar summary",
+        "defaultValue": true
+      },
+      {
+        "key": "cameraLiveStream",
+        "type": "boolean",
+        "label": "Live camera stream",
+        "defaultValue": false,
+        "description": "Hold one camera session open and show frames as they arrive, instead of a still about once a second. Smoother, but it decodes video continuously while the Camera view is open and keeps a steady stream running over the network."
+      },
+      {
+        "key": "mqttTlsFingerprint",
+        "type": "string",
+        "label": "Trusted MQTT certificate fingerprint",
+        "defaultValue": ""
+      },
+      {
+        "key": "ftpsTlsFingerprint",
+        "type": "string",
+        "label": "Trusted FTPS certificate fingerprint",
+        "defaultValue": ""
+      }
     ]
   }
 }

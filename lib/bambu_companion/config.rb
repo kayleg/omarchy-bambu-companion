@@ -8,11 +8,13 @@ module BambuCompanion
       "mqttPort" => 8883,
       "ftpsPort" => 990,
       "username" => "bblp",
-      "maxSegments" => 500_000
+      "maxSegments" => 500_000,
+      "cameraLiveStream" => false
     }.freeze
 
     attr_reader :host, :mqtt_port, :ftps_port, :serial, :username,
-                :max_segments, :mqtt_tls_fingerprint, :ftps_tls_fingerprint
+                :max_segments, :mqtt_tls_fingerprint, :ftps_tls_fingerprint,
+                :camera_live_stream
 
     def self.from_h(raw)
       raise ConfigError, "config must be an object" unless raw.is_a?(Hash)
@@ -24,7 +26,8 @@ module BambuCompanion
         ftps_port: values["ftpsPort"], serial: values["serial"],
         username: values["username"], max_segments: values["maxSegments"],
         mqtt_tls_fingerprint: values["mqttTlsFingerprint"],
-        ftps_tls_fingerprint: values["ftpsTlsFingerprint"]
+        ftps_tls_fingerprint: values["ftpsTlsFingerprint"],
+        camera_live_stream: values["cameraLiveStream"]
       )
     rescue ArgumentError, TypeError => error
       raise error if error.is_a?(ConfigError)
@@ -33,7 +36,7 @@ module BambuCompanion
 
     def initialize(host:, mqtt_port:, ftps_port:, serial:, username:,
                    max_segments:, mqtt_tls_fingerprint: nil,
-                   ftps_tls_fingerprint: nil)
+                   ftps_tls_fingerprint: nil, camera_live_stream: false)
       @host = clean_host(host)
       @mqtt_port = bounded_integer(mqtt_port, "mqttPort", 1..65_535)
       @ftps_port = bounded_integer(ftps_port, "ftpsPort", 1..65_535)
@@ -46,6 +49,7 @@ module BambuCompanion
       @ftps_tls_fingerprint = clean_fingerprint(
         ftps_tls_fingerprint, "ftpsTlsFingerprint"
       )
+      @camera_live_stream = clean_boolean(camera_live_stream, "cameraLiveStream")
       freeze
     end
 
@@ -76,6 +80,13 @@ module BambuCompanion
       number = Integer(value)
       raise ConfigError, "#{name} is outside #{range}" unless range.cover?(number)
       number
+    end
+
+    def clean_boolean(value, name)
+      return false if value.nil?
+      return value if [true, false].include?(value)
+
+      raise ConfigError, "#{name} must be boolean"
     end
 
     def clean_fingerprint(value, name)

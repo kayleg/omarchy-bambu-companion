@@ -339,6 +339,7 @@ Item {
             previewSource: root.service.previewAvailable
               ? root.service.geometryBundle.preview.url : ""
             cameraFrameSource: root.service.cameraFrameSource
+            cameraStreamUrl: root.service.cameraStreamUrl
             activeSegmentPath: root.service.activeSegmentPath
             activeBounds: root.service.activeBounds
             zCurrent: root.service.zCurrent

@@ -107,6 +107,7 @@ Item {
   property string cameraStatusCode: ""
   property string cameraStatusMessage: ""
   property string cameraFramePath: ""
+  property string cameraStreamUrl: ""
   property int cameraFrameGeneration: 0
   property bool cameraSessionRequested: false
   readonly property bool cameraSelectable: !root.demoActive && root.connected
@@ -148,6 +149,7 @@ Item {
     Math.round(finiteNumber(Number(setting("explosionFactor", 100)), 100))))
   readonly property bool autoRotate: setting("autoRotate", true) !== false
   readonly property bool showBarSummary: setting("showBarSummary", true) !== false
+  readonly property bool cameraLiveStream: setting("cameraLiveStream", false) === true
   readonly property string mqttTlsFingerprint:
     String(setting("mqttTlsFingerprint", ""))
   readonly property string ftpsTlsFingerprint:
@@ -210,6 +212,7 @@ Item {
       explosionFactor: root.explosionFactor,
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
+      cameraLiveStream: root.cameraLiveStream,
       mqttTlsFingerprint: root.mqttTlsFingerprint,
       ftpsTlsFingerprint: root.ftpsTlsFingerprint
     }
@@ -273,6 +276,7 @@ Item {
     entry.explosionFactor = draft.explosionFactor
     entry.autoRotate = draft.autoRotate
     entry.showBarSummary = draft.showBarSummary
+    entry.cameraLiveStream = draft.cameraLiveStream === true
     entry.mqttTlsFingerprint = String(draft.mqttTlsFingerprint || "")
     entry.ftpsTlsFingerprint = String(draft.ftpsTlsFingerprint || "")
     entry.installationId = draft.installationId === undefined
@@ -524,6 +528,13 @@ Item {
     root.cameraSessionRequested = false
   }
 
+  // Only a loopback RTSP endpoint, and only the gateway's own path. The daemon
+  // is trusted, but this value ends up driving a media backend, so it is worth
+  // refusing anything that is not the local tunnel.
+  function validCameraStreamUrl(url) {
+    return /^rtsp:\/\/127\.0\.0\.1:\d{1,5}\/streaming\/live\/1$/.test(String(url || ""))
+  }
+
   function validCameraPath(path) {
     return path === root.cameraDirectory + "/snapshot.jpg"
   }
@@ -625,6 +636,7 @@ Item {
       "host": root.host, "mqttPort": root.mqttPort,
       "ftpsPort": root.ftpsPort, "serial": root.serial,
       "username": root.username, "maxSegments": root.segmentLimit(),
+      "cameraLiveStream": root.cameraLiveStream,
       "mqttTlsFingerprint": root.mqttTlsFingerprint,
       "ftpsTlsFingerprint": root.ftpsTlsFingerprint
     }
@@ -635,6 +647,7 @@ Item {
       "host": String(draft.host || ""), "mqttPort": Number(draft.mqttPort),
       "ftpsPort": Number(draft.ftpsPort), "serial": String(draft.serial || ""),
       "username": String(draft.username || ""), "maxSegments": Number(draft.maxSegments),
+      "cameraLiveStream": draft.cameraLiveStream === true,
       "mqttTlsFingerprint": String(draft.mqttTlsFingerprint || ""),
       "ftpsTlsFingerprint": String(draft.ftpsTlsFingerprint || "")
     }
@@ -718,6 +731,7 @@ Item {
       explosionFactor: root.explosionFactor,
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
+      cameraLiveStream: root.cameraLiveStream,
       mqttTlsFingerprint: "",
       ftpsTlsFingerprint: "",
       installationId: ""
@@ -920,6 +934,7 @@ Item {
     cameraStatusCode = ""
     cameraStatusMessage = ""
     cameraFramePath = ""
+    cameraStreamUrl = ""
     cameraFrameGeneration = 0
     if (root.cameraSessionRequested) {
       root.writeCommand({ "op": "camera_stop" })
@@ -1003,6 +1018,10 @@ Item {
       cameraFrameGeneration = isNonNegativeInteger(message.generation)
         ? message.generation : root.cameraFrameGeneration + 1
       cameraStatus = "streaming"
+    } else if (message.event === "camera_stream") {
+      var streamUrl = String(message.url || "")
+      cameraStreamUrl = root.validCameraStreamUrl(streamUrl) ? streamUrl : ""
+      if (cameraStreamUrl !== "") cameraStatus = "streaming"
     } else if (message.event === "camera_status") {
       cameraStatus = String(message.state || "idle")
       cameraStatusCode = String(message.code || "")
