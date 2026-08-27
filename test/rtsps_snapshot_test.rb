@@ -54,6 +54,59 @@ class RtspsSnapshotTest < Minitest::Test
     refute_includes argv.join(" "), SECRET
   end
 
+  def test_rewrite_leaves_the_authorization_header_alone
+    from = "rtsp://127.0.0.1:9"
+    to = "rtsps://192.168.1.50:322"
+    message = "DESCRIBE #{from}/streaming/live/1 RTSP/1.0\r\n" +
+              "CSeq: 2\r\n" +
+              "Authorization: Digest username=\"bblp\", " +
+              "uri=\"#{from}/streaming/live/1\", response=\"deadbeef\"\r\n\r\n"
+
+    rewritten = BambuCompanion::RtspsSnapshot.rewrite_rtsp(message, from, to)
+
+    assert_includes rewritten, "DESCRIBE #{to}/streaming/live/1 RTSP/1.0"
+    # Digest hashes the uri, so rewriting it inside the header invalidates the
+    # response the client already computed and the server answers 401 forever.
+    assert_includes rewritten, "uri=\"#{from}/streaming/live/1\""
+  end
+
+  def test_rewrite_ignores_responses_and_interleaved_data
+    from = "rtsp://127.0.0.1:9"
+    to = "rtsps://192.168.1.50:322"
+    response = "RTSP/1.0 200 OK\r\nContent-Base: #{from}/streaming/live/1/\r\n\r\n"
+    interleaved = "$\x00\x00\x04data".b
+
+    assert_equal response, BambuCompanion::RtspsSnapshot.rewrite_rtsp(response, from, to)
+    assert_equal interleaved, BambuCompanion::RtspsSnapshot.rewrite_rtsp(interleaved, from, to)
+  end
+
+  def test_gateway_answers_a_digest_challenge_without_exposing_the_password
+    gateway = BambuCompanion::RtspsSnapshot::LoopbackGateway.new(
+      host: "192.168.1.50", port: 322, username: "bblp", password: SECRET,
+      fingerprint: "AA" * 32, timeout: 0.2
+    )
+    unauthorized = "RTSP/1.0 401 Unauthorized\r\nCSeq: 2\r\n" +
+                   "WWW-Authenticate: Digest realm=\"LIVE555 Streaming Media\", " +
+                   "nonce=\"abc123\"\r\n\r\n"
+    challenge = gateway.send(:parse_challenge, unauthorized)
+
+    assert_equal({ realm: "LIVE555 Streaming Media", nonce: "abc123" }, challenge)
+
+    gateway.instance_variable_set(:@challenge, challenge)
+    uri = "rtsps://192.168.1.50:322/streaming/live/1"
+    authorized = gateway.send(:authorize, "DESCRIBE #{uri} RTSP/1.0\r\nCSeq: 2\r\n\r\n")
+
+    ha1 = Digest::MD5.hexdigest("bblp:LIVE555 Streaming Media:#{SECRET}")
+    ha2 = Digest::MD5.hexdigest("DESCRIBE:#{uri}")
+    expected = Digest::MD5.hexdigest("#{ha1}:abc123:#{ha2}")
+
+    assert_includes authorized, "response=\"#{expected}\""
+    assert_includes authorized, "uri=\"#{uri}\""
+    # The point of answering the challenge here: the secret is hashed, so it
+    # never reaches the client, nor ffmpeg's command line.
+    refute_includes authorized, SECRET
+  end
+
   def test_capped_stderr_truncates_instead_of_buffering_forever
     huge = StringIO.new("e" * 20_000)
     text = BambuCompanion::RtspsSnapshot.read_capped(huge, 4096, overflow: :truncate)

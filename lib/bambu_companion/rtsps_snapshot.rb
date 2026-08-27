@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "cgi"
+require "digest"
 require "open3"
 require "socket"
 require "timeout"
@@ -58,8 +59,28 @@ module BambuCompanion
       buffer
     end
 
+    RTSP_METHODS = %w[
+      OPTIONS DESCRIBE ANNOUNCE SETUP PLAY PAUSE TEARDOWN
+      GET_PARAMETER SET_PARAMETER RECORD REDIRECT
+    ].freeze
+
+    def self.request?(bytes)
+      RTSP_METHODS.any? { |method| bytes.start_with?("#{method} ") }
+    end
+
+    # Substitute in the request line only. The previous whole-message gsub also
+    # rewrote the uri="..." inside an Authorization header; RTSP Digest hashes
+    # that value, so altering it guaranteed a mismatch and a 401 that no
+    # credential could satisfy. Leaving the remainder untouched also preserves
+    # the printer's own absolute URLs once it has redirected the client.
     def self.rewrite_rtsp(data, from_prefix, to_prefix)
-      String(data).b.gsub(from_prefix.b, to_prefix.b)
+      bytes = String(data).b
+      return bytes unless request?(bytes)
+
+      head, separator, rest = bytes.partition("\r\n".b)
+      return bytes if separator.empty?
+
+      head.gsub(from_prefix.b, to_prefix.b) + separator + rest
     end
 
     def initialize(host:, username:, password:, fingerprint:,
@@ -215,8 +236,12 @@ module BambuCompanion
           host: @host, port: @port, fingerprint: @fingerprint,
           connect_timeout: @timeout
         )
+        # The upstream URL carries no userinfo: LIVE555 (the RTSP server on X1
+        # and H2 hardware) answers with a Digest challenge, which credentials in
+        # the request line do not satisfy. This gateway answers the challenge on
+        # the client's behalf, so the password still never reaches ffmpeg's argv.
         from = "rtsp://127.0.0.1:#{@local_port}"
-        to = "rtsp://#{@username}:#{CGI.escape(@password)}@#{@host}:#{@port}"
+        to = "rtsps://#{@host}:#{@port}"
         loop do
           break if @stop
 
@@ -225,7 +250,7 @@ module BambuCompanion
 
           closed = false
           ready.each do |socket|
-            data = socket.recv_nonblock(READ_CHUNK_BYTES, exception: false)
+            data = socket.read_nonblock(READ_CHUNK_BYTES, exception: false)
             if data.nil? || data.empty?
               closed = true
               break
@@ -233,15 +258,79 @@ module BambuCompanion
             next if data == :wait_readable
 
             if socket.equal?(@local)
-              @remote.write(RtspsSnapshot.rewrite_rtsp(data, from, to))
+              forward_request(RtspsSnapshot.rewrite_rtsp(data, from, to))
             else
-              @local.write(data)
+              closed = true unless forward_response(data)
             end
           end
           break if closed
         end
       rescue IOError, SystemCallError, OpenSSL::SSL::SSLError, TlsCertificateError
         nil
+      end
+
+      # Send a request upstream, carrying an Authorization header once a
+      # challenge has been seen. The request is retained so a 401 can be
+      # answered by replaying it rather than surfacing the failure to ffmpeg,
+      # which has no credentials of its own by design.
+      def forward_request(bytes)
+        if RtspsSnapshot.request?(bytes)
+          @pending = bytes
+          @retried = false
+          bytes = authorize(bytes) if @challenge
+        end
+        @remote.write(bytes)
+        true
+      end
+
+      # Returns false when the caller should treat the connection as finished.
+      def forward_response(bytes)
+        if !@retried && @pending && bytes.start_with?("RTSP/".b)
+          challenge = parse_challenge(bytes)
+          if challenge
+            @challenge = challenge
+            @retried = true
+            @remote.write(authorize(@pending))
+            return true
+          end
+        end
+        @local.write(bytes)
+        true
+      end
+
+      def parse_challenge(bytes)
+        return nil unless bytes[/\ARTSP\/\d\.\d 401\b/]
+
+        header = bytes[/^WWW-Authenticate:\s*Digest\s*(.+)$/i, 1]
+        return nil unless header
+
+        realm = header[/realm="([^"]*)"/i, 1]
+        nonce = header[/nonce="([^"]*)"/i, 1]
+        return nil unless realm && nonce
+
+        { realm: realm, nonce: nonce }
+      end
+
+      def authorize(bytes)
+        head, separator, rest = bytes.partition("\r\n\r\n".b)
+        return bytes if separator.empty?
+
+        line, _, headers = head.partition("\r\n".b)
+        method, uri = line.split(" ", 3)
+        return bytes if method.nil? || uri.nil?
+
+        headers = headers.gsub(/^Authorization:.*\r\n?/i, "")
+        headers += "\r\n" unless headers.empty? || headers.end_with?("\r\n")
+        "#{line}\r\n#{headers}#{authorization(method, uri)}\r\n#{separator}#{rest}"
+      end
+
+      def authorization(method, uri)
+        ha1 = Digest::MD5.hexdigest("#{@username}:#{@challenge[:realm]}:#{@password}")
+        ha2 = Digest::MD5.hexdigest("#{method}:#{uri}")
+        response = Digest::MD5.hexdigest("#{ha1}:#{@challenge[:nonce]}:#{ha2}")
+        %(Authorization: Digest username="#{@username}", ) +
+          %(realm="#{@challenge[:realm]}", nonce="#{@challenge[:nonce]}", ) +
+          %(uri="#{uri}", response="#{response}")
       end
 
       def local_peer?(socket)
