@@ -140,9 +140,52 @@ module BambuCompanion
         found = exact_entry(candidates, explicit)
         return found if found
 
+        # H2D firmware reports gcode_file as an absolute path in the printer's
+        # own filesystem (/data/Metadata/plate_2.gcode) rather than as a path
+        # inside the archive. The leading slash makes it an unsafe entry name, so
+        # the exact match above can never hit, and raising would strand every
+        # print on that firmware. Its basename still identifies the entry, and is
+        # a better key than plate_idx, which this firmware reports one-based
+        # against the zero-based lookup below.
+        #
+        # Only a plain absolute path earns this fallback. A traversal attempt is
+        # also an unsafe entry name and must keep raising, so the two cannot be
+        # collapsed into one "unsafe" test.
+        if printer_absolute_hint?(explicit)
+          by_basename = entries_named(candidates, File.basename(String(explicit).tr("\\", "/")))
+          return by_basename.first if by_basename.one?
+
+          return select_by_plate(candidates, hints)
+        end
+
         raise SourceError.new("entry_not_found", "Requested G-code entry was not found")
       end
 
+      select_by_plate(candidates, hints)
+    rescue ArgumentError, TypeError
+      raise SourceError.new("entry_not_found", "Invalid plate index")
+    end
+
+    # An absolute path that is otherwise well formed: no empty, "." or ".."
+    # segments. Deliberately narrower than the negation of safe_entry_name?,
+    # which also covers traversal.
+    def printer_absolute_hint?(value)
+      text = String(value).tr("\\", "/")
+      return false unless text.start_with?("/")
+
+      segments = text.delete_prefix("/").split("/")
+      return false if segments.empty?
+
+      segments.none? { |part| part.empty? || part == "." || part == ".." }
+    rescue TypeError
+      false
+    end
+
+    def entries_named(entries, basename)
+      entries.select { |entry| File.basename(entry.name).casecmp?(basename) }
+    end
+
+    def select_by_plate(candidates, hints)
       metadata = candidates.select { |entry| %r{\AMetadata/plate_\d+\.gcode\z}i.match?(entry.name) }
       plate = hints["plate_idx"] || hints[:plate_idx]
       unless plate.nil?
@@ -160,8 +203,6 @@ module BambuCompanion
       return candidates.first if candidates.length == 1
 
       raise SourceError.new("ambiguous_archive", "Archive contains multiple possible G-code entries")
-    rescue ArgumentError, TypeError
-      raise SourceError.new("entry_not_found", "Invalid plate index")
     end
 
     # Bambu MQTT reports use gcode_file for two different things depending on
