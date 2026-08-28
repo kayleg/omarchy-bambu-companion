@@ -892,6 +892,7 @@ Item {
         width: parent.width
         text: viewport.emptyModelDetail()
         visible: text !== ""
+        textFormat: Text.PlainText
         color: viewport.dim
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap

@@ -201,6 +201,8 @@ class ViewportRouteContractTest < Minitest::Test
                  @source)
     assert_includes @source, "CHAMBER CAMERA"
     assert_includes @source, "WAITING FOR CAMERA"
+    assert_match(/text:\s*viewport\.emptyModelDetail\(\).*textFormat:\s*Text\.PlainText/m,
+                 @source)
   end
 
   def test_simulated_nozzle_is_sampled_by_the_native_renderer
