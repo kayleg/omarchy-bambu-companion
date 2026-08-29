@@ -114,6 +114,37 @@ Previews need the print file over FTPS. On some H2/P2 firmware, enable
 **Store Sent Files on External Storage** or Image and Route stay empty while
 MQTT telemetry continues.
 
+## Fork notes
+
+This branch is a fork of [ypMrg/omarchy-bambu-companion](https://github.com/ypMrg/omarchy-bambu-companion),
+tracking upstream `master` plus **one** change, made against a **Bambu Lab H2D on
+firmware 01.04.00.00**:
+
+- **Live camera stream** (opt-in, off by default). Upstream holds one RTSP
+  session open and pipes frames out of ffmpeg, which still decodes and
+  re-encodes every frame in-process. Turning on **Live camera** instead hands
+  the loopback gateway's plain-RTSP URL to a QML `MediaPlayer`, so playback is
+  smooth with no per-frame decode, JPEG re-encode or disk write — and needs no
+  ffmpeg at all. The gateway still terminates TLS against the pinned
+  certificate and answers the Digest challenge, so the printer is reached
+  exactly as it is for stills.
+
+  **This diverges from upstream on purpose** and is not offered as a pull
+  request: upstream's contract tests deliberately forbid a video item in the
+  viewport.
+
+Two earlier fork changes have since been **fixed upstream** and were dropped:
+
+- *G-code entry selection* — H2D reports `gcode_file` as an absolute printer
+  path (`/data/Metadata/plate_2.gcode`), which is not a valid archive entry
+  name. Fixed upstream by `PrintFileHints.internal_gcode_entry`
+  ([issue #1](https://github.com/ypMrg/omarchy-bambu-companion/issues/1)).
+- *RTSPS camera* — the loopback gateway could not complete Digest auth against
+  LIVE555. Fixed upstream, more thoroughly than
+  [PR #2](https://github.com/ypMrg/omarchy-bambu-companion/pull/2) did, as part
+  of the X2D work: it also maps CSeq across the preflight and handles
+  interleaved frames.
+
 ## Chamber camera
 
 Stills, not live video. About 1 Hz while Camera is actually on screen. RTSP
