@@ -6,7 +6,8 @@ require "tempfile"
 module BambuCompanion
   class GeometryStore
     PLUGIN_DATA_NAME = "io.github.ypmrg.bambu-companion"
-    OWNED_FILE = /\Aroute-\d+\.f32\z/
+    ROLE_SUFFIX = ".roles"
+    OWNED_FILE = /\Aroute-\d+\.f32(?:\.roles)?\z/
 
     def self.default_directory
       root = ENV["BAMBU_NATIVE_DATA_ROOT"]
@@ -23,7 +24,7 @@ module BambuCompanion
       raise ArgumentError, "geometry directory cannot be the filesystem root" if @directory == "/"
     end
 
-    def write(generation:, segments:, cancelled: -> { false })
+    def write(generation:, segments:, roles: nil, cancelled: -> { false })
       prepare_directory
       name = "route-#{Integer(generation)}.f32"
       destination = File.join(@directory, name)
@@ -33,6 +34,9 @@ module BambuCompanion
         next unless completed && !cancelled.call
 
         file.close
+        # The sidecar lands first so the renderer never sees geometry whose
+        # roles have not arrived yet and paints a frame in the wrong colours.
+        write_roles(name, roles, segments)
         File.rename(file.path, destination)
         remove_stale_files(except: name)
         destination
@@ -61,6 +65,25 @@ module BambuCompanion
       result != false
     end
 
+    # One byte per segment, in the same order as the packed floats. Absent or
+    # mis-sized, the renderer treats every segment as an outer wall, which is
+    # exactly what it drew before roles existed -- so an older compiled
+    # renderer degrades to the previous view instead of rejecting the file.
+    def write_roles(name, roles, segments)
+      role_path = File.join(@directory, "#{name}#{ROLE_SUFFIX}")
+      if roles.nil? || roles.length != segments.length
+        FileUtils.rm_f(role_path)
+        return nil
+      end
+
+      Tempfile.create([".roles-", ".tmp"], @directory, mode: 0o600, binmode: true) do |file|
+        roles.each_slice(8192) { |slice| file.write(slice.pack("C*")) }
+        file.close
+        File.rename(file.path, role_path)
+      end
+      role_path
+    end
+
     def packed_segment(segment)
       unless segment.respond_to?(:length) && segment.length == 6
         raise ArgumentError, "invalid G-code segment"
@@ -76,7 +99,7 @@ module BambuCompanion
 
     def remove_stale_files(except:)
       Dir.children(@directory).each do |name|
-        next if name == except || !OWNED_FILE.match?(name)
+        next if name == except || name == "#{except}#{ROLE_SUFFIX}" || !OWNED_FILE.match?(name)
 
         File.delete(File.join(@directory, name))
       rescue Errno::ENOENT

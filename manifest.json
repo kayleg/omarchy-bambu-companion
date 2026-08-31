@@ -31,7 +31,8 @@
       "showBarSummary": true,
       "mqttTlsFingerprint": "",
       "ftpsTlsFingerprint": "",
-      "cameraLiveStream": false
+      "cameraLiveStream": false,
+      "fullToolpath": false
     },
     "schema": [
       { "key": "printerName", "type": "string", "label": "Printer name", "defaultValue": "3D Printer" },
@@ -45,6 +46,7 @@
       { "key": "autoRotate", "type": "boolean", "label": "Auto-rotate by default", "defaultValue": true },
       { "key": "showBarSummary", "type": "boolean", "label": "Show bar summary", "defaultValue": true },
       { "key": "cameraLiveStream", "type": "boolean", "label": "Live camera", "defaultValue": false },
+      { "key": "fullToolpath", "type": "boolean", "label": "Full toolpath", "defaultValue": false },
       { "key": "mqttTlsFingerprint", "type": "string", "label": "Trusted MQTT certificate fingerprint", "defaultValue": "" },
       { "key": "ftpsTlsFingerprint", "type": "string", "label": "Trusted FTPS certificate fingerprint", "defaultValue": "" }
     ]

@@ -164,6 +164,7 @@ Item {
   readonly property bool multimediaAvailable: root.probeMultimedia()
   readonly property bool cameraLiveStream:
     root.cameraLiveStreamSetting && root.multimediaAvailable
+  readonly property bool fullToolpath: setting("fullToolpath", false) === true
   readonly property string mqttTlsFingerprint:
     String(setting("mqttTlsFingerprint", ""))
   readonly property string ftpsTlsFingerprint:
@@ -227,6 +228,7 @@ Item {
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
       cameraLiveStream: root.cameraLiveStreamSetting,
+      fullToolpath: root.fullToolpath,
       mqttTlsFingerprint: root.mqttTlsFingerprint,
       ftpsTlsFingerprint: root.ftpsTlsFingerprint
     }
@@ -297,6 +299,7 @@ Item {
     entry.autoRotate = draft.autoRotate
     entry.showBarSummary = draft.showBarSummary
     entry.cameraLiveStream = draft.cameraLiveStream === true
+    entry.fullToolpath = draft.fullToolpath === true
     entry.mqttTlsFingerprint = String(draft.mqttTlsFingerprint || "")
     entry.ftpsTlsFingerprint = String(draft.ftpsTlsFingerprint || "")
     entry.installationId = draft.installationId === undefined
@@ -684,6 +687,7 @@ Item {
       "ftpsPort": root.ftpsPort, "serial": root.serial,
       "username": root.username, "maxSegments": root.segmentLimit(),
       "cameraLiveStream": root.cameraLiveStream,
+      "fullToolpath": root.fullToolpath,
       "mqttTlsFingerprint": root.mqttTlsFingerprint,
       "ftpsTlsFingerprint": root.ftpsTlsFingerprint
     }
@@ -695,6 +699,7 @@ Item {
       "ftpsPort": Number(draft.ftpsPort), "serial": String(draft.serial || ""),
       "username": String(draft.username || ""), "maxSegments": Number(draft.maxSegments),
       "cameraLiveStream": draft.cameraLiveStream === true && root.multimediaAvailable,
+      "fullToolpath": draft.fullToolpath === true,
       "mqttTlsFingerprint": String(draft.mqttTlsFingerprint || ""),
       "ftpsTlsFingerprint": String(draft.ftpsTlsFingerprint || "")
     }
@@ -794,6 +799,7 @@ Item {
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
       cameraLiveStream: root.cameraLiveStreamSetting,
+      fullToolpath: root.fullToolpath,
       mqttTlsFingerprint: "",
       ftpsTlsFingerprint: "",
       installationId: ""

@@ -345,6 +345,7 @@ Item {
             cameraFrameSource: root.service.cameraFrameSource
             cameraStreamUrl: root.service.cameraStreamUrl
             activeSegmentPath: root.service.activeSegmentPath
+            fullToolpath: root.service.fullToolpath
             activeBounds: root.service.activeBounds
             zCurrent: root.service.zCurrent
             autoRotateDefault: root.service.autoRotate

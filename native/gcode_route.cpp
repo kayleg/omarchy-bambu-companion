@@ -23,7 +23,10 @@ constexpr float kPlateLineWidth = 0.75f;
 constexpr int kPlateDivisions = 8;
 constexpr int kMaxSegments = 1'000'000;
 constexpr size_t kNozzleSegmentBudget = 4096;
-constexpr int kUniformFloats = 16 + 29;
+constexpr int kRoleCount = 5;
+// 29 shared floats, then the role-colour block: one enable flag plus RGB per
+// role. Must stay in step with the uniform block in both shaders.
+constexpr int kUniformFloats = 16 + 29 + 1 + kRoleCount * 3;
 constexpr int kUniformBytes = kUniformFloats * int(sizeof(float));
 
 struct RouteVertex {
@@ -37,6 +40,7 @@ struct RouteVertex {
   float endp;
   float posX;
   float posY;
+  float role;
 };
 
 // World mm stays in non-position attrs. Dummy item-space position is the
@@ -48,14 +52,15 @@ const QSGGeometry::AttributeSet &routeAttributeSet() {
       QSGGeometry::Attribute::create(2, 1, QSGGeometry::FloatType, false),
       QSGGeometry::Attribute::create(3, 1, QSGGeometry::FloatType, false),
       QSGGeometry::Attribute::create(4, 2, QSGGeometry::FloatType, true),
+      QSGGeometry::Attribute::create(5, 1, QSGGeometry::FloatType, false),
   };
   static const QSGGeometry::AttributeSet attributeSet = {
-      5, int(sizeof(RouteVertex)), attributes};
+      6, int(sizeof(RouteVertex)), attributes};
   return attributeSet;
 }
 
 void writeSegment(RouteVertex *verts, float x0, float y0, float z0, float x1,
-                  float y1, float z1) {
+                  float y1, float z1, float role = 0.0f) {
   static const float kSides[6] = {-1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f};
   static const float kEnds[6] = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
   constexpr float kCullMax = 65535.0f;
@@ -70,20 +75,26 @@ void writeSegment(RouteVertex *verts, float x0, float y0, float z0, float x1,
     verts[i].endp = kEnds[i];
     verts[i].posX = (kSides[i] < 0.0f) ? 0.0f : kCullMax;
     verts[i].posY = (kEnds[i] < 0.5f) ? 0.0f : kCullMax;
+    verts[i].role = role;
   }
 }
 
-void fillSegments(QSGGeometry *geometry, const std::vector<float> &packed) {
+void fillSegments(QSGGeometry *geometry, const std::vector<float> &packed,
+                  const std::vector<unsigned char> &roles) {
   const int segmentCount = int(packed.size() / 6);
   geometry->allocate(segmentCount * 6);
   if (segmentCount == 0)
     return;
+  // An absent or mis-sized sidecar leaves every segment at role 0, which is
+  // what an outer-wall-only capture is anyway.
+  const bool haveRoles = roles.size() == size_t(segmentCount);
   auto *verts = static_cast<RouteVertex *>(geometry->vertexData());
   for (size_t i = 0; i < size_t(segmentCount); ++i) {
     const size_t base = i * 6;
+    const float role = haveRoles ? float(roles[i]) : 0.0f;
     writeSegment(verts + i * 6, packed[base], packed[base + 1],
                  packed[base + 2], packed[base + 3], packed[base + 4],
-                 packed[base + 5]);
+                 packed[base + 5], role);
   }
   geometry->markVertexDataDirty();
 }
@@ -187,6 +198,12 @@ public:
     m_remaining = remaining;
   }
 
+  void setRoleColors(bool enabled, const QColor *colors) {
+    m_roleColoring = enabled ? 1.0f : 0.0f;
+    for (int i = 0; i < kRoleCount; ++i)
+      m_roleColors[i] = colors[i];
+  }
+
   Bambu::Projection m_proj{};
   float m_lineWidth = kRouteLineWidth;
   float m_cutoff = 0.0f;
@@ -194,6 +211,10 @@ public:
   float m_maxZ = 1.0f;
   QColor m_printed{255, 153, 51, qRound(0.74 * 255)};
   QColor m_remaining{255, 255, 255, qRound(0.10 * 255)};
+  float m_roleColoring = 0.0f;
+  QColor m_roleColors[kRoleCount] = {
+      QColor(255, 153, 51), QColor(120, 190, 255), QColor(140, 235, 190),
+      QColor(200, 140, 235), QColor(150, 150, 150)};
 };
 
 void writeColor(float *out, const QColor &color) {
@@ -228,7 +249,7 @@ bool RouteMaterialShader::updateUniformData(RenderState &state,
   const Bambu::Projection &p = mat->m_proj;
   const float dpr =
       state.devicePixelRatio() > 0.0f ? state.devicePixelRatio() : 1.0f;
-  float tail[29] = {
+  float tail[29 + 1 + kRoleCount * 3] = {
       opacity,
       p.yaw_cos,
       p.yaw_sin,
@@ -261,6 +282,13 @@ bool RouteMaterialShader::updateUniformData(RenderState &state,
   };
   writeColor(tail + 21, mat->m_printed);
   writeColor(tail + 25, mat->m_remaining);
+  tail[29] = mat->m_roleColoring;
+  for (int i = 0; i < kRoleCount; ++i) {
+    const QColor &c = mat->m_roleColors[i];
+    tail[30 + i * 3] = float(c.redF());
+    tail[31 + i * 3] = float(c.greenF());
+    tail[32 + i * 3] = float(c.blueF());
+  }
   std::memcpy(data + 64, tail, sizeof(tail));
   return true;
 }
@@ -281,6 +309,41 @@ QVariant GcodeRoute::bounds() const {
       {QStringLiteral("minZ"), m_bounds.min_z},
       {QStringLiteral("maxZ"), m_bounds.max_z},
   };
+}
+
+QString GcodeRoute::roleSidecarPath(const QString &path) {
+  return path.isEmpty() ? QString() : path + QStringLiteral(".roles");
+}
+
+void GcodeRoute::setRoleColoring(bool enabled) {
+  if (enabled == m_roleColoringEnabled)
+    return;
+  m_roleColoringEnabled = enabled;
+  emit roleColoringChanged();
+  update();
+}
+
+void GcodeRoute::setRoleColors(const QVariantList &colors) {
+  bool changed = false;
+  for (int i = 0; i < kRoleCount && i < colors.size(); ++i) {
+    const QColor next = colors.at(i).value<QColor>();
+    if (!next.isValid() || next == m_roleColors[i])
+      continue;
+    m_roleColors[i] = next;
+    changed = true;
+  }
+  if (!changed)
+    return;
+  emit roleColorsChanged();
+  update();
+}
+
+QVariantList GcodeRoute::roleColors() const {
+  QVariantList out;
+  out.reserve(kRoleCount);
+  for (int i = 0; i < kRoleCount; ++i)
+    out.append(m_roleColors[i]);
+  return out;
 }
 
 void GcodeRoute::setSegmentPath(const QString &path) {
@@ -306,10 +369,29 @@ void GcodeRoute::setSegmentPath(const QString &path) {
   if (!loaded && !path.isEmpty())
     qWarning() << "bambu-route: rejected packed geometry" << path;
   const QString nextPath = loaded ? path : QString();
-  if (nextPath == m_segmentPath && next == m_segments)
+
+  // Optional: written beside the geometry by a daemon that classifies feature
+  // types. Missing simply means every segment is drawn as an outer wall.
+  std::vector<unsigned char> nextRoles;
+  if (loaded) {
+    const size_t segmentCount = next.size() / 6;
+    QFile roleFile(roleSidecarPath(nextPath));
+    if (roleFile.exists() && roleFile.open(QIODevice::ReadOnly) &&
+        roleFile.size() == qint64(segmentCount)) {
+      const QByteArray bytes = roleFile.readAll();
+      if (!Bambu::unpack_segment_roles(
+              reinterpret_cast<const unsigned char *>(bytes.constData()),
+              size_t(bytes.size()), segmentCount, size_t(kRoleCount),
+              &nextRoles))
+        nextRoles.clear();
+    }
+  }
+
+  if (nextPath == m_segmentPath && next == m_segments && nextRoles == m_roles)
     return;
   m_segmentPath = nextPath;
   m_segments = std::move(next);
+  m_roles = std::move(nextRoles);
   if (!m_haveExplicitBounds)
     m_bounds = derivedBounds();
   invalidateNozzlePath();
@@ -610,7 +692,7 @@ QSGNode *GcodeRoute::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) {
   QSGGeometryNode *routeNode = root->routeNode;
 
   if (m_geometryDirty) {
-    fillSegments(ensureGeometry(routeNode), m_segments);
+    fillSegments(ensureGeometry(routeNode), m_segments, m_roles);
     routeNode->markDirty(QSGNode::DirtyGeometry);
     m_geometryDirty = false;
     m_plateDirty = true;
@@ -628,6 +710,9 @@ QSGNode *GcodeRoute::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) {
   routeMat->setLineWidth(kRouteLineWidth);
   routeMat->setCutoff(m_cutoffZ, m_bounds.max_z);
   routeMat->setColors(m_printedColor, m_remainingColor);
+  // The plate grid keeps its own colour: role tinting is for extrusions only.
+  routeMat->setRoleColors(m_roleColoringEnabled && !m_roles.empty(),
+                          m_roleColors);
   routeNode->markDirty(QSGNode::DirtyMaterial);
 
   auto *plateMat = static_cast<RouteMaterial *>(plateNode->material());

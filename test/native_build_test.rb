@@ -92,6 +92,45 @@ class NativeBuildTest < Minitest::Test
     end
   end
 
+  # The C++ packs a flat float array straight into the uniform buffer, so its
+  # count and the shaders' std140 block must agree exactly. A mismatch is not a
+  # compile error -- it silently shifts every colour and projection value.
+  def test_uniform_block_matches_the_packed_float_count
+    root = File.expand_path("../native", __dir__)
+    cpp = File.read(File.join(root, "gcode_route.cpp"))
+
+    role_count = cpp[/constexpr int kRoleCount = (\d+);/, 1]
+    refute_nil role_count, "kRoleCount not found"
+    expression = cpp[/constexpr int kUniformFloats = ([^;]+);/, 1]
+    refute_nil expression, "kUniformFloats not found"
+    expected = eval(expression.gsub("kRoleCount", role_count)) # rubocop:disable Security/Eval
+
+    %w[gcode_route.vert gcode_route.frag].each do |name|
+      source = File.read(File.join(root, name))
+      body = source[/layout\(std140, binding = 0\) uniform buf \{(.*?)\} ubuf;/m, 1]
+      refute_nil body, "#{name} has no std140 uniform block"
+      floats = body.scan(/\b(mat4|vec4|vec3|vec2|float)\s+\w+/).flatten
+      sizes = { "mat4" => 16, "vec4" => 4, "vec3" => 3, "vec2" => 2, "float" => 1 }
+      total = floats.sum { |type| sizes.fetch(type) }
+
+      assert_equal expected, total,
+                   "#{name} declares #{total} floats but the C++ packs #{expected}"
+    end
+  end
+
+  # The role channel is a vertex attribute, so its shader location and the
+  # index the C++ registers have to be the same number.
+  def test_role_attribute_location_agrees_between_cpp_and_shader
+    root = File.expand_path("../native", __dir__)
+    cpp = File.read(File.join(root, "gcode_route.cpp"))
+    vert = File.read(File.join(root, "gcode_route.vert"))
+
+    location = vert[/layout\(location = (\d+)\) in float aRole;/, 1]
+    refute_nil location, "aRole input not declared"
+    assert_match(/QSGGeometry::Attribute::create\(#{location}, 1, QSGGeometry::FloatType, false\)/,
+                 cpp, "the C++ must register the role attribute at location #{location}")
+  end
+
   def test_cmakelists_declares_qml_module_and_shaders
     lists = File.join(ROOT, "native/CMakeLists.txt")
     assert File.file?(lists), "native/CMakeLists.txt is required for the GPU module"

@@ -16,6 +16,89 @@ class GcodeParserTest < Minitest::Test
     def read(*) = raise("parser attempted a whole-file read")
   end
 
+  ROLE_GCODE = <<~GCODE
+    ;FEATURE: Outer wall
+    G1 X0 Y0 Z0.2 E0
+    G1 X10 Y0 Z0.2 E1
+    ;FEATURE: Inner wall
+    G1 X10 Y5 Z0.2 E2
+    ;FEATURE: Sparse infill
+    G1 X10 Y9 Z0.2 E3
+    ;FEATURE: Internal solid infill
+    G1 X10 Y12 Z0.2 E4
+    ;FEATURE: Prime tower
+    G1 X10 Y15 Z0.2 E5
+  GCODE
+
+  # Outer-wall-only is the default and must keep behaving exactly as it did
+  # before roles existed: walls only, and every stored role uniform, so the
+  # sidecar the store writes cannot change what the renderer draws.
+  def test_default_mode_still_keeps_outer_walls_only
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 100)
+                                          .parse(StringIO.new(ROLE_GCODE))
+
+    assert_equal 1, geometry.segments.length
+    assert_equal [BambuCompanion::GcodeParser::ROLE_OUTER], geometry.roles
+  end
+
+  def test_full_toolpath_keeps_every_extrusion_tagged_by_feature
+    parser = BambuCompanion::GcodeParser.new(max_segments: 100,
+                                             include_all_roles: true)
+    geometry = parser.parse(StringIO.new(ROLE_GCODE))
+    p = BambuCompanion::GcodeParser
+
+    assert_equal 5, geometry.segments.length
+    assert_equal geometry.segments.length, geometry.roles.length
+    assert_equal [p::ROLE_OUTER, p::ROLE_INNER, p::ROLE_INFILL,
+                  p::ROLE_SHELL, p::ROLE_OTHER], geometry.roles
+  end
+
+  # Connected segments are merged to stay inside the budget. Merging across a
+  # feature change would paint half an infill run in the wall colour, so a role
+  # change has to break the run even when the coordinates are continuous.
+  def test_full_toolpath_never_merges_across_a_role_change
+    gcode = <<~GCODE
+      ;FEATURE: Outer wall
+      G1 X0 Y0 Z0.2 E0
+      G1 X5 Y0 Z0.2 E1
+      G1 X10 Y0 Z0.2 E2
+      ;FEATURE: Sparse infill
+      G1 X15 Y0 Z0.2 E3
+      G1 X20 Y0 Z0.2 E4
+    GCODE
+    parser = BambuCompanion::GcodeParser.new(max_segments: 2,
+                                             include_all_roles: true)
+    geometry = parser.parse(StringIO.new(gcode))
+    p = BambuCompanion::GcodeParser
+
+    assert_equal geometry.segments.length, geometry.roles.length
+    refute_empty geometry.roles
+    boundary = geometry.segments.zip(geometry.roles).find do |_, role|
+      role == p::ROLE_INFILL
+    end
+    refute_nil boundary, "the infill run must survive compaction as its own segment"
+    assert_operator boundary.first.fetch(0), :>=, 10.0,
+                    "an infill segment must not start inside the wall run"
+  end
+
+  def test_full_toolpath_reports_a_file_with_no_extrusions
+    error = assert_raises(BambuCompanion::GcodeError) do
+      BambuCompanion::GcodeParser.new(max_segments: 10, include_all_roles: true)
+                                 .parse(StringIO.new("G1 X1 Y1 Z0.2\n"))
+    end
+
+    assert_equal "no_extrusions", error.code
+  end
+
+  def test_unknown_features_are_drawn_rather_than_dropped
+    gcode = ";FEATURE: Something the slicer invented\nG1 X0 Y0 Z0.2 E0\nG1 X4 Y0 Z0.2 E1\n"
+    geometry = BambuCompanion::GcodeParser.new(max_segments: 10,
+                                               include_all_roles: true)
+                                          .parse(StringIO.new(gcode))
+
+    assert_equal [BambuCompanion::GcodeParser::ROLE_OTHER], geometry.roles
+  end
+
   def test_parses_three_outer_wall_dialects_and_coordinate_modes
     parser = BambuCompanion::GcodeParser.new(max_segments: 100)
     path = File.join(__dir__, "fixtures", "outer-walls.gcode")

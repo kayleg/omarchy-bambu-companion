@@ -9,12 +9,13 @@ module BambuCompanion
       "ftpsPort" => 990,
       "username" => "bblp",
       "maxSegments" => 500_000,
-      "cameraLiveStream" => false
+      "cameraLiveStream" => false,
+      "fullToolpath" => false
     }.freeze
 
     attr_reader :host, :mqtt_port, :ftps_port, :serial, :username,
                 :max_segments, :mqtt_tls_fingerprint, :ftps_tls_fingerprint,
-                :camera_live_stream
+                :camera_live_stream, :full_toolpath
 
     def self.from_h(raw)
       raise ConfigError, "config must be an object" unless raw.is_a?(Hash)
@@ -27,7 +28,8 @@ module BambuCompanion
         username: values["username"], max_segments: values["maxSegments"],
         mqtt_tls_fingerprint: values["mqttTlsFingerprint"],
         ftps_tls_fingerprint: values["ftpsTlsFingerprint"],
-        camera_live_stream: values["cameraLiveStream"]
+        camera_live_stream: values["cameraLiveStream"],
+        full_toolpath: values["fullToolpath"]
       )
     rescue ArgumentError, TypeError => error
       raise error if error.is_a?(ConfigError)
@@ -36,7 +38,8 @@ module BambuCompanion
 
     def initialize(host:, mqtt_port:, ftps_port:, serial:, username:,
                    max_segments:, mqtt_tls_fingerprint: nil,
-                   ftps_tls_fingerprint: nil, camera_live_stream: false)
+                   ftps_tls_fingerprint: nil, camera_live_stream: false,
+                   full_toolpath: false)
       @host = clean_host(host)
       @mqtt_port = bounded_integer(mqtt_port, "mqttPort", 1..65_535)
       @ftps_port = bounded_integer(ftps_port, "ftpsPort", 1..65_535)
@@ -50,6 +53,7 @@ module BambuCompanion
         ftps_tls_fingerprint, "ftpsTlsFingerprint"
       )
       @camera_live_stream = clean_boolean(camera_live_stream, "cameraLiveStream")
+      @full_toolpath = clean_boolean(full_toolpath, "fullToolpath")
       freeze
     end
 

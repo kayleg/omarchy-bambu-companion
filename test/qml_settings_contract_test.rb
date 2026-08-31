@@ -250,6 +250,17 @@ class QmlSettingsContractTest < Minitest::Test
                     "the dashboard must pass the capability through to the form"
   end
 
+  def test_full_toolpath_toggle_round_trips_through_the_form
+    source = File.read(@path)
+
+    assert_includes source, "property bool fullToolpath: false"
+    assert_includes source, "fullToolpath = values.fullToolpath === true"
+    assert_includes source, "fullToolpath: form.fullToolpath"
+    row = source[/Column\s*\{[^}]*?FieldLabel \{ text: "FULL TOOLPATH" \}.*?\n        \}/m]
+    refute_nil row, "FULL TOOLPATH row not found"
+    assert_includes row, "checked: form.fullToolpath"
+  end
+
   def test_settings_copy_and_controls_are_width_bound
     source = settings_source
 

@@ -151,4 +151,15 @@ class ConfigTest < Minitest::Test
   def secret_key?(key)
     key&.match?(/\A(access_?code|password|passcode|secret)\z/i)
   end
+
+  def test_full_toolpath_defaults_off_and_must_be_boolean
+    assert_equal false, config_fixture.full_toolpath
+    assert_equal true, config_fixture("fullToolpath" => true).full_toolpath
+
+    error = assert_raises(BambuCompanion::ConfigError) do
+      config_fixture("fullToolpath" => "yes")
+    end
+    assert_match(/fullToolpath/, error.message)
+  end
+
 end

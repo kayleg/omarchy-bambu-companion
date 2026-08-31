@@ -620,7 +620,7 @@ class QmlContractTest < Minitest::Test
     settings = @widget_schema.map { |entry| entry.fetch("key") }
 
     assert_equal %w[printerName host mqttPort ftpsPort serial username maxSegments explosionFactor autoRotate showBarSummary
-                    cameraLiveStream mqttTlsFingerprint ftpsTlsFingerprint], settings
+                    cameraLiveStream fullToolpath mqttTlsFingerprint ftpsTlsFingerprint], settings
     refute(settings.any? { |key| key.match?(/access|code|password|secret/i) })
     settings.each { |key| assert_includes @source, "setting(\"#{key}\"," }
   end
@@ -633,8 +633,10 @@ class QmlContractTest < Minitest::Test
       body = @source[/function #{builder}\(.*?\n  \}/m]
 
       refute_nil body, "#{builder} not found"
-      assert_includes body, "cameraLiveStream",
-                      "#{builder} must send cameraLiveStream or the toggle does nothing"
+      %w[cameraLiveStream fullToolpath].each do |key|
+        assert_includes body, key,
+                        "#{builder} must send #{key} or the toggle does nothing"
+      end
     end
   end
 
@@ -661,6 +663,28 @@ class QmlContractTest < Minitest::Test
     form = @source[/function settingsDraft\(.*?\n  \}/m]
     assert_includes form, "cameraLiveStream: root.cameraLiveStreamSetting",
                     "the form must round-trip the stored preference, not the gated value"
+  end
+
+  # Full toolpath changes what the daemon parses, not just how it is drawn, so
+  # the service has to carry it and the viewport has to be told.
+  def test_full_toolpath_reaches_both_the_daemon_and_the_renderer
+    assert_match(/readonly property bool fullToolpath: setting\("fullToolpath", false\) === true/,
+                 @service_source)
+    assert_includes @dashboard_source, "fullToolpath: root.service.fullToolpath",
+                    "the dashboard must pass the setting to the viewport"
+    assert_includes @viewport_source, "item.roleColoring = viewport.fullToolpath"
+    assert_includes @viewport_source, "item.roleColors = viewport.roleColors"
+  end
+
+  # A renderer compiled before roles existed has no roleColoring property, and
+  # assigning to a property that does not exist is a hard QML error -- it would
+  # take the whole route view down rather than just losing the colours.
+  def test_role_colouring_is_guarded_against_an_older_renderer
+    guard = @viewport_source[/if \(viewport\.objectMember\(item, "roleColoring"\) !== undefined\) \{.*?\n    \}/m]
+
+    refute_nil guard, "role assignment must be guarded on property existence"
+    assert_includes guard, "item.roleColoring ="
+    assert_includes guard, "item.roleColors ="
   end
 
   def test_qml_setting_fallbacks_match_manifest_defaults

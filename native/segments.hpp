@@ -39,4 +39,23 @@ inline bool unpack_little_endian_segments(const unsigned char *bytes,
   return true;
 }
 
+// One byte per segment, written beside the packed floats. Anything the
+// renderer does not recognise collapses to role 0 so a newer daemon cannot
+// index past the colour table of an older build.
+inline bool unpack_segment_roles(const unsigned char *bytes, size_t byte_count,
+                                 size_t segment_count, size_t role_count,
+                                 std::vector<unsigned char> *roles) {
+  if (!roles)
+    return false;
+  if (!bytes || byte_count != segment_count)
+    return false;
+
+  std::vector<unsigned char> next;
+  next.reserve(segment_count);
+  for (size_t i = 0; i < byte_count; ++i)
+    next.push_back(bytes[i] < role_count ? bytes[i] : 0);
+  *roles = std::move(next);
+  return true;
+}
+
 } // namespace Bambu

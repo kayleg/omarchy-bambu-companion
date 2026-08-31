@@ -12,7 +12,14 @@ module BambuCompanion
     end
   end
 
-  Geometry = Data.define(:segments, :bounds, :layer_z, :layer_z_exact)
+  # roles defaults to empty: a geometry carrying none is legitimate, and the
+  # store then omits the sidecar so the renderer paints every segment as an
+  # outer wall -- the view it had before roles existed.
+  Geometry = Data.define(:segments, :bounds, :layer_z, :layer_z_exact, :roles) do
+    def initialize(roles: [], **rest)
+      super(roles: roles, **rest)
+    end
+  end
 
   class GcodeParser
     DEFAULT_MAX_SEGMENTS = 500_000
@@ -26,6 +33,44 @@ module BambuCompanion
       /\ATYPE:\s*WALL-OUTER\z/i
     ].freeze
     FEATURE_MARKER = /\A(?:FEATURE|TYPE):/i
+    ROLE_OUTER = 0
+    ROLE_INNER = 1
+    ROLE_SHELL = 2
+    ROLE_INFILL = 3
+    ROLE_OTHER = 4
+    ROLE_COUNT = 5
+    # Feature names are matched exactly, lowercased, rather than by pattern.
+    # Bambu Studio and Orca emit "; FEATURE:", PrusaSlicer and Cura "; TYPE:",
+    # and the three disagree on names -- but a loose /fill/ would drop "Gap
+    # infill" into the solid-surface bucket and /wall/ would merge the outer
+    # wall into the inner one, so every spelling is listed instead. Anything
+    # unlisted (support, skirt, prime tower, purge) is still drawn, as OTHER:
+    # it is real toolhead motion.
+    ROLE_BY_FEATURE = {
+      "outer wall" => ROLE_OUTER,
+      "external perimeter" => ROLE_OUTER,
+      "wall-outer" => ROLE_OUTER,
+      "inner wall" => ROLE_INNER,
+      "perimeter" => ROLE_INNER,
+      "wall-inner" => ROLE_INNER,
+      "overhang wall" => ROLE_INNER,
+      "overhang perimeter" => ROLE_INNER,
+      "internal solid infill" => ROLE_SHELL,
+      "solid infill" => ROLE_SHELL,
+      "top solid infill" => ROLE_SHELL,
+      "top surface" => ROLE_SHELL,
+      "bottom surface" => ROLE_SHELL,
+      "bridge" => ROLE_SHELL,
+      "bridge infill" => ROLE_SHELL,
+      "internal bridge infill" => ROLE_SHELL,
+      "floating vertical shell" => ROLE_SHELL,
+      "skin" => ROLE_SHELL,
+      "sparse infill" => ROLE_INFILL,
+      "internal infill" => ROLE_INFILL,
+      "gap infill" => ROLE_INFILL,
+      "gap fill" => ROLE_INFILL,
+      "fill" => ROLE_INFILL
+    }.freeze
     NUMBER = /-?(?:\d{1,#{MAX_NUMBER_DIGITS}}(?:\.\d{0,#{MAX_NUMBER_DIGITS}})?|\.\d{1,#{MAX_NUMBER_DIGITS}})(?:[eE][+-]?\d{1,4})?/
     PARAMETER = /([XYZEIJRH])\s*(#{NUMBER})(?![\d.eE+-])/
     ZERO = BigDecimal("0")
@@ -37,9 +82,11 @@ module BambuCompanion
     ARC_RADIUS_TOLERANCE_MM = 0.05
     TWO_PI = 2 * Math::PI
 
-    def initialize(max_segments: DEFAULT_MAX_SEGMENTS)
+    def initialize(max_segments: DEFAULT_MAX_SEGMENTS, include_all_roles: false)
       @max_segments = Integer(max_segments)
       raise ArgumentError, "max_segments must be positive" unless @max_segments.positive?
+
+      @include_all_roles = include_all_roles == true
     end
 
     def parse(io, cancelled: -> { false })
@@ -56,14 +103,15 @@ module BambuCompanion
         parse_line(raw_line)
       end
       if @source_count.zero?
-        raise GcodeError.new("no_outer_walls", "No supported outer-wall markers were found")
+        raise no_geometry_error
       end
 
       Geometry.new(
         segments: @segments.map { |segment| segment.map(&:to_f).freeze }.freeze,
         bounds: @bounds.transform_values(&:to_f).freeze,
         layer_z: layer_values.freeze,
-        layer_z_exact: @layer_z_exact
+        layer_z_exact: @layer_z_exact,
+        roles: @segment_roles.freeze
       )
     end
 
@@ -79,6 +127,9 @@ module BambuCompanion
       @tool_extrusion = { 0 => ZERO }
       @position = { "X" => ZERO, "Y" => ZERO, "Z" => ZERO, "E" => ZERO }
       @segments = []
+      @segment_roles = []
+      @role = ROLE_OTHER
+      @last_source_role = nil
       @source_count = 0
       @sample_stride = 1
       @last_source_segment = nil
@@ -159,7 +210,22 @@ module BambuCompanion
       return unless FEATURE_MARKER.match?(comment)
 
       @outer = OUTER_MARKERS.any? { |marker| marker.match?(comment) }
+      name = comment.sub(FEATURE_MARKER, "").strip.downcase
+      @role = ROLE_BY_FEATURE.fetch(name, ROLE_OTHER)
     end
+
+    def no_geometry_error
+      if @include_all_roles
+        GcodeError.new("no_extrusions", "No extrusion moves were found")
+      else
+        GcodeError.new("no_outer_walls", "No supported outer-wall markers were found")
+      end
+    end
+
+    # Outer-wall-only mode keeps every stored segment at ROLE_OUTER so the
+    # packed sidecar stays uniform and the renderer colours it exactly as it
+    # did before roles existed.
+    def active_role = @include_all_roles ? @role : ROLE_OUTER
 
     def move(command, parameters)
       before = @position.dup
@@ -181,20 +247,22 @@ module BambuCompanion
 
       moved_xy = (before["X"] - @position["X"]).abs > EPSILON ||
                  (before["Y"] - @position["Y"]).abs > EPSILON
-      return unless @outer && extrusion_delta > EPSILON
+      return unless extrusion_delta > EPSILON
+      return unless @include_all_roles || @outer
 
+      role = active_role
       case command
       when "G1", "G01"
         return unless moved_xy
 
         record([before["X"], before["Y"], before["Z"],
-                @position["X"], @position["Y"], @position["Z"]])
+                @position["X"], @position["Y"], @position["Z"]], role)
       when "G2", "G02", "G3", "G03"
         return unless @plane == :xy
 
         clockwise = command == "G2" || command == "G02"
         arc_segments(before, @position, parameters, clockwise: clockwise).each do |segment|
-          record(segment)
+          record(segment, role)
         end
       end
     end
@@ -311,7 +379,7 @@ module BambuCompanion
       %w[X Y Z].map { |axis| position.fetch(axis).to_f }
     end
 
-    def record(segment)
+    def record(segment, role = ROLE_OUTER)
       @source_count += 1
       update_bounds(segment)
       record_layer(segment[2])
@@ -320,41 +388,56 @@ module BambuCompanion
       if @segments.length >= @max_segments
         reduced = compact_connected_segments
         unless reduced
-          if connected_segments?(@last_source_segment, segment) &&
-             connected_segments?(@segments.last, segment)
+          if continues_source?(segment, role) && mergeable?(segment, role)
             @segments[-1] = merge_segments(@segments.last, segment)
           end
           @last_source_segment = segment
+          @last_source_role = role
           return
         end
       end
 
-      continues_path = connected_segments?(@last_source_segment, segment)
-      if (source_index % @sample_stride).zero? || !continues_path
+      if (source_index % @sample_stride).zero? || !continues_source?(segment, role)
         @segments << segment
-      elsif connected_segments?(@segments.last, segment)
+        @segment_roles << role
+      elsif mergeable?(segment, role)
         @segments[-1] = merge_segments(@segments.last, segment)
       end
       @last_source_segment = segment
+      @last_source_role = role
+    end
+
+    # A role change always starts a new stored segment: merging across one
+    # would paint half an infill run in the wall colour.
+    def continues_source?(segment, role)
+      @last_source_role == role && connected_segments?(@last_source_segment, segment)
+    end
+
+    def mergeable?(segment, role)
+      @segment_roles.last == role && connected_segments?(@segments.last, segment)
     end
 
     def compact_connected_segments
       compacted = []
+      roles = []
       index = 0
       while index < @segments.length
         first = @segments[index]
         second = @segments[index + 1]
-        if second && connected_segments?(first, second)
+        role = @segment_roles[index]
+        if second && @segment_roles[index + 1] == role && connected_segments?(first, second)
           compacted << merge_segments(first, second)
           index += 2
         else
           compacted << first
           index += 1
         end
+        roles << role
       end
       return false unless compacted.length < @segments.length
 
       @segments = compacted
+      @segment_roles = roles
       @sample_stride *= 2
       true
     end

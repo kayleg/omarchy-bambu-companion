@@ -15,7 +15,8 @@ module BambuCompanion
       preview = @bundle.preview
       encoded_preview = preview && [preview.data].pack("m0")
       packed_path = gcode && @geometry_store.write(
-        generation: @generation, segments: gcode.segments, cancelled: cancelled
+        generation: @generation, segments: gcode.segments, roles: gcode.roles,
+        cancelled: cancelled
       )
       return false if gcode && !packed_path
       return false unless yield("geometry_begin", begin_payload(gcode, preview, packed_path,

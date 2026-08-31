@@ -29,6 +29,7 @@ Item {
   property bool autoRotate: true
   property bool showBarSummary: true
   property bool cameraLiveStream: false
+  property bool fullToolpath: false
   // Offering a toggle that cannot take effect is worse than not offering it:
   // without QtMultimedia there is no sink for the stream, so the row is hidden
   // and the stored preference is left untouched.
@@ -71,6 +72,7 @@ Item {
     autoRotate = values.autoRotate !== false
     showBarSummary = values.showBarSummary !== false
     cameraLiveStream = values.cameraLiveStream === true
+    fullToolpath = values.fullToolpath === true
     validationError = ""
     clearAccessCode()
     resetScroll()
@@ -159,7 +161,8 @@ Item {
       explosionFactor: nextExplosionFactor,
       autoRotate: form.autoRotate,
       showBarSummary: form.showBarSummary,
-      cameraLiveStream: form.cameraLiveStream
+      cameraLiveStream: form.cameraLiveStream,
+      fullToolpath: form.fullToolpath
     }
     if (trustCertificate === true) {
       trustRequested(draft, String(accessCodeInput.text || ""))
@@ -521,6 +524,21 @@ Item {
               form.showBarSummary = !form.showBarSummary
               form.barSummaryToggled(form.showBarSummary)
             }
+          }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          FieldLabel { text: "FULL TOOLPATH" }
+
+          ToggleSwitch {
+            cursorPad: 0
+            anchors.left: parent.left
+            checked: form.fullToolpath
+            foreground: form.foreground
+            accent: form.accent
+            onToggled: form.fullToolpath = !form.fullToolpath
           }
         }
 

@@ -83,6 +83,9 @@ module BambuCompanion
 
     Job = Data.define(:generation, :hints, :local_path)
     ProgressGeometry = Data.define(:bounds, :layer_z, :layer_z_exact)
+    # Mirrors kMaxSegments in native/gcode_route.cpp; the renderer rejects a
+    # packed file larger than this outright.
+    NATIVE_MAX_SEGMENTS = 1_000_000
     STOP = Object.new.freeze
     STOP_JOIN_SECONDS = 0.25
 
@@ -107,12 +110,22 @@ module BambuCompanion
         ftps_client: archive_client,
         loader: PrintPreviewLoader.new(
           source: GcodeSource.new,
-          gcode_parser: GcodeParser.new(max_segments: config.max_segments),
+          gcode_parser: GcodeParser.new(
+            max_segments: full_toolpath_segment_budget(config),
+            include_all_roles: config.full_toolpath
+          ),
           preview_source: ThreeMfPreview.new
         ),
         emitter: emitter,
         on_status: on_status
       )
+    end
+
+    # Showing every extrusion is roughly three times the geometry of outer
+    # walls alone, so the wall-only budget would start sampling and thin the
+    # walls too. Full mode gets the renderer's own ceiling instead.
+    def self.full_toolpath_segment_budget(config)
+      config.full_toolpath ? NATIVE_MAX_SEGMENTS : config.max_segments
     end
 
     def self.for_local(max_segments:, emitter:, on_status:)

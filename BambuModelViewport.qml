@@ -49,6 +49,18 @@ Item {
   property real modelTotalBytes: 0
   property string rendererStatus: "compiling"
   property url nativeRouteUrl: ""
+  // Off: outer walls only, one colour, exactly as before. On: every extrusion,
+  // tinted by feature type.
+  property bool fullToolpath: false
+  // Outer keeps the accent so the familiar view is unchanged; the rest are
+  // fixed hues chosen to stay apart from each other and from the accent.
+  readonly property var roleColors: [
+    viewport.errorActive ? viewport.errorColor : viewport.accent,
+    Qt.rgba(0.47, 0.75, 1.0, 1.0),
+    Qt.rgba(0.55, 0.92, 0.75, 1.0),
+    Qt.rgba(0.78, 0.55, 0.92, 1.0),
+    Qt.rgba(0.59, 0.59, 0.59, 1.0)
+  ]
   readonly property real routeYaw: routeCamera.yaw
   readonly property bool routeItemReady: !!routeLoader.item
 
@@ -177,6 +189,12 @@ Item {
                                   viewport.foreground.b, 0.10)
     item.plateColor = Qt.rgba(viewport.foreground.r, viewport.foreground.g,
                               viewport.foreground.b, 0.07)
+    // Guarded: a renderer compiled before roles existed has no such property,
+    // and assigning to a missing one is a hard QML error.
+    if (viewport.objectMember(item, "roleColoring") !== undefined) {
+      item.roleColoring = viewport.fullToolpath
+      item.roleColors = viewport.roleColors
+    }
     syncNozzleMarker()
   }
 

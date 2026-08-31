@@ -7,6 +7,7 @@
 #include <QQuickItem>
 #include <QString>
 #include <QVariant>
+#include <QVariantList>
 #include <cstddef>
 #include <limits>
 #include <vector>
@@ -29,6 +30,10 @@ class GcodeRoute : public QQuickItem {
                  printedColorChanged)
   Q_PROPERTY(QColor remainingColor READ remainingColor WRITE setRemainingColor
                  NOTIFY remainingColorChanged)
+  Q_PROPERTY(bool roleColoring READ roleColoring WRITE setRoleColoring NOTIFY
+                 roleColoringChanged)
+  Q_PROPERTY(QVariantList roleColors READ roleColors WRITE setRoleColors NOTIFY
+                 roleColorsChanged)
   Q_PROPERTY(QColor plateColor READ plateColor WRITE setPlateColor NOTIFY
                  plateColorChanged)
 
@@ -38,6 +43,7 @@ public:
   QString segmentPath() const { return m_segmentPath; }
   QVariant bounds() const;
   void setSegmentPath(const QString &path);
+  static QString roleSidecarPath(const QString &path);
   void setBounds(const QVariant &value);
 
   qreal yaw() const { return m_yaw; }
@@ -50,6 +56,8 @@ public:
   QColor printedColor() const { return m_printedColor; }
   QColor remainingColor() const { return m_remainingColor; }
   QColor plateColor() const { return m_plateColor; }
+  bool roleColoring() const { return m_roleColoringEnabled; }
+  QVariantList roleColors() const;
 
   void setYaw(qreal yaw);
   void setPitch(qreal pitch);
@@ -61,6 +69,8 @@ public:
   void setPrintedColor(const QColor &color);
   void setRemainingColor(const QColor &color);
   void setPlateColor(const QColor &color);
+  void setRoleColoring(bool enabled);
+  void setRoleColors(const QVariantList &colors);
 
   Q_INVOKABLE QPointF mapToView(qreal x, qreal y, qreal z) const;
   Q_INVOKABLE QVariantList sampleNozzle(qreal z, qreal distance) const;
@@ -76,6 +86,8 @@ signals:
   void printedColorChanged();
   void remainingColorChanged();
   void plateColorChanged();
+  void roleColoringChanged();
+  void roleColorsChanged();
 
 protected:
   QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;
@@ -105,6 +117,12 @@ private:
   qreal m_explosionFactor = 0.0;
   qreal m_cutoffZ = std::numeric_limits<qreal>::quiet_NaN();
   qreal m_padding = 0.0;
+  bool m_roleColoringEnabled = false;
+  std::vector<unsigned char> m_roles;
+  // Wall, inner wall, solid/shell surface, infill, everything else.
+  QColor m_roleColors[5] = {QColor(255, 153, 51), QColor(120, 190, 255),
+                            QColor(140, 235, 190), QColor(200, 140, 235),
+                            QColor(150, 150, 150)};
   QColor m_printedColor{255, 153, 51, qRound(0.74 * 255)};
   QColor m_remainingColor{255, 255, 255, qRound(0.10 * 255)};
   QColor m_plateColor{255, 255, 255, qRound(0.07 * 255)};

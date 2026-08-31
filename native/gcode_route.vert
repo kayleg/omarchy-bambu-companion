@@ -4,11 +4,13 @@ layout(location = 0) in vec3 aStart;
 layout(location = 1) in vec3 aEnd;
 layout(location = 2) in float aSide;
 layout(location = 3) in float aEndParam;
+layout(location = 5) in float aRole;
 
 layout(location = 0) out float vWorldZ;
 layout(location = 1) out float vEnd;
 layout(location = 2) out float vSide;
 layout(location = 3) out float vLineLength;
+layout(location = 4) out float vRole;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
@@ -41,6 +43,12 @@ layout(std140, binding = 0) uniform buf {
     float remainingG;
     float remainingB;
     float remainingA;
+    float roleColoring;
+    float role0R; float role0G; float role0B;
+    float role1R; float role1G; float role1B;
+    float role2R; float role2G; float role2B;
+    float role3R; float role3G; float role3B;
+    float role4R; float role4G; float role4B;
 } ubuf;
 
 out gl_PerVertex { vec4 gl_Position; };
@@ -95,4 +103,5 @@ void main()
     vEnd = aEndParam * lineLenPx + (aEndParam * 2.0 - 1.0) * expandPx;
     vSide = aSide * expandPx;
     vLineLength = lineLenPx;
+    vRole = aRole;
 }
