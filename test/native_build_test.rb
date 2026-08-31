@@ -131,6 +131,24 @@ class NativeBuildTest < Minitest::Test
                  cpp, "the C++ must register the role attribute at location #{location}")
   end
 
+  # The sidecar reader is the one place a malformed or newer-than-us roles file
+  # reaches the renderer, so it is exercised directly rather than through Qt.
+  def test_role_sidecar_unpacking_rejects_and_clamps
+    root = File.expand_path("..", __dir__)
+    Dir.mktmpdir("bambu-roles") do |dir|
+      binary = File.join(dir, "segments_role_test")
+      _out, error, status = Open3.capture3(
+        "g++", "-std=c++17", "-O0", "-I", File.join(root, "native"),
+        File.join(root, "test/native/segments_role_test.cpp"), "-o", binary
+      )
+      assert status.success?, "g++ failed: #{error}"
+
+      output, error, status = Open3.capture3(binary)
+      assert status.success?, "role fixture failed: #{output} #{error}"
+      assert_equal "OK", output.strip
+    end
+  end
+
   def test_cmakelists_declares_qml_module_and_shaders
     lists = File.join(ROOT, "native/CMakeLists.txt")
     assert File.file?(lists), "native/CMakeLists.txt is required for the GPU module"
