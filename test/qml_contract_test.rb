@@ -687,6 +687,31 @@ class QmlContractTest < Minitest::Test
     assert_includes guard, "item.roleColors ="
   end
 
+  # The daemon parses full toolpath against NATIVE_MAX_SEGMENTS, not the
+  # wall-only maxSegments. BambuGeometryAssembler drops any geometry_begin whose
+  # segmentCount exceeds its own ceiling -- silently, with no error event -- so a
+  # lower ceiling in QML means a full-detail print parses and publishes and is
+  # then discarded on arrival, leaving the viewport on "WAITING FOR PRINT DATA"
+  # forever. Observed with 568,217 segments against a 500,000 ceiling.
+  def test_assembler_ceiling_matches_the_daemon_full_toolpath_budget
+    native = File.read(File.expand_path("../lib/bambu_companion/model_worker.rb", __dir__))
+    budget = native[/NATIVE_MAX_SEGMENTS\s*=\s*([\d_]+)/, 1]
+    refute_nil budget, "NATIVE_MAX_SEGMENTS not found"
+
+    ceiling = @source[/readonly property int nativeSegmentCeiling:\s*(\d+)/, 1]
+    refute_nil ceiling, "nativeSegmentCeiling not found"
+    assert_equal budget.delete("_").to_i, ceiling.to_i,
+                 "the QML ceiling must equal ModelWorker::NATIVE_MAX_SEGMENTS"
+
+    limit = @source[/function assemblerSegmentLimit\(\) \{.*?\n  \}/m]
+    refute_nil limit, "assemblerSegmentLimit not found"
+    assert_includes limit, "root.fullToolpath ? root.nativeSegmentCeiling : root.segmentLimit()"
+
+    assert_match(/BambuGeometryAssembler\s*\{[^}]*maxSegments: root\.assemblerSegmentLimit\(\)/m,
+                 @source,
+                 "the assembler must use the full-toolpath-aware ceiling")
+  end
+
   def test_qml_setting_fallbacks_match_manifest_defaults
     @widget_defaults.each do |key, value|
       literal = value.is_a?(String) ? value.inspect : value.to_s

@@ -149,6 +149,8 @@ Item {
   readonly property string serial: String(setting("serial", ""))
   readonly property string username: String(setting("username", "bblp"))
   readonly property int maxSegments: Number(setting("maxSegments", 500000))
+  // Must equal ModelWorker::NATIVE_MAX_SEGMENTS.
+  readonly property int nativeSegmentCeiling: 1000000
   readonly property int explosionFactor: Math.max(0, Math.min(500,
     Math.round(finiteNumber(Number(setting("explosionFactor", 100)), 100))))
   readonly property bool autoRotate: setting("autoRotate", true) !== false
@@ -585,6 +587,17 @@ Item {
   function segmentLimit() {
     var configured = finiteNumber(root.maxSegments, 500000)
     return Math.max(0, Math.min(1000000, Math.floor(configured)))
+  }
+
+  // Mirrors ModelWorker.full_toolpath_segment_budget. Showing every extrusion
+  // is roughly three times the geometry of outer walls alone, so the daemon
+  // parses full toolpath against the renderer's own ceiling rather than the
+  // wall-only budget. The assembler validates segmentCount against its own
+  // ceiling and silently drops anything above it, so the two must agree: a
+  // lower ceiling here means a full-detail print parses, publishes, and is then
+  // discarded on arrival, leaving the viewport empty with no error to show.
+  function assemblerSegmentLimit() {
+    return root.fullToolpath ? root.nativeSegmentCeiling : root.segmentLimit()
   }
 
   function markRendererReady() {
@@ -1177,7 +1190,7 @@ Item {
 
   BambuGeometryAssembler {
     id: geometryAssembler
-    maxSegments: root.segmentLimit()
+    maxSegments: root.assemblerSegmentLimit()
     segmentDirectory: root.geometryDirectory
     onSelectedGeometrySourceChanged: {
       if (root.selectedViewportSource !== "camera")
