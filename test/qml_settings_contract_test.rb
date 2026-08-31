@@ -234,6 +234,22 @@ class QmlSettingsContractTest < Minitest::Test
                  source)
   end
 
+  # Showing a toggle that cannot take effect is worse than not showing it, so
+  # the row is hidden where QtMultimedia is missing. Column skips invisible
+  # children, so no gap is left behind.
+  def test_live_camera_toggle_is_hidden_without_multimedia
+    source = File.read(@path)
+
+    assert_includes source, "property bool multimediaAvailable: true"
+    row = source[/Column\s*\{[^}]*?FieldLabel \{ text: "LIVE CAMERA" \}.*?\n        \}/m]
+    refute_nil row, "LIVE CAMERA row not found"
+    assert_includes row, "visible: form.multimediaAvailable"
+
+    dashboard = File.read(File.join(@root, "BambuDashboard.qml"))
+    assert_includes dashboard, "multimediaAvailable: root.service.multimediaAvailable",
+                    "the dashboard must pass the capability through to the form"
+  end
+
   def test_settings_copy_and_controls_are_width_bound
     source = settings_source
 

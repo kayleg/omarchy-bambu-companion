@@ -153,7 +153,17 @@ Item {
     Math.round(finiteNumber(Number(setting("explosionFactor", 100)), 100))))
   readonly property bool autoRotate: setting("autoRotate", true) !== false
   readonly property bool showBarSummary: setting("showBarSummary", true) !== false
-  readonly property bool cameraLiveStream: setting("cameraLiveStream", false) === true
+  // What the user asked for, kept verbatim so the preference survives a save on
+  // a machine that cannot honour it.
+  readonly property bool cameraLiveStreamSetting:
+    setting("cameraLiveStream", false) === true
+  // What the daemon is actually told to do. A QML document whose import is
+  // missing fails to load outright, so QtMultimedia is quarantined in
+  // BambuCameraStream.qml and probed here; without it the live stream has no
+  // sink and the still path stays in charge.
+  readonly property bool multimediaAvailable: root.probeMultimedia()
+  readonly property bool cameraLiveStream:
+    root.cameraLiveStreamSetting && root.multimediaAvailable
   readonly property string mqttTlsFingerprint:
     String(setting("mqttTlsFingerprint", ""))
   readonly property string ftpsTlsFingerprint:
@@ -216,10 +226,15 @@ Item {
       explosionFactor: root.explosionFactor,
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
-      cameraLiveStream: root.cameraLiveStream,
+      cameraLiveStream: root.cameraLiveStreamSetting,
       mqttTlsFingerprint: root.mqttTlsFingerprint,
       ftpsTlsFingerprint: root.ftpsTlsFingerprint
     }
+  }
+
+  function probeMultimedia() {
+    var probe = Qt.createComponent(Qt.resolvedUrl("BambuCameraStream.qml"))
+    return probe !== null && probe.status !== Component.Error
   }
 
   function setting(name, fallback) {
@@ -679,7 +694,7 @@ Item {
       "host": String(draft.host || ""), "mqttPort": Number(draft.mqttPort),
       "ftpsPort": Number(draft.ftpsPort), "serial": String(draft.serial || ""),
       "username": String(draft.username || ""), "maxSegments": Number(draft.maxSegments),
-      "cameraLiveStream": draft.cameraLiveStream === true,
+      "cameraLiveStream": draft.cameraLiveStream === true && root.multimediaAvailable,
       "mqttTlsFingerprint": String(draft.mqttTlsFingerprint || ""),
       "ftpsTlsFingerprint": String(draft.ftpsTlsFingerprint || "")
     }
@@ -778,7 +793,7 @@ Item {
       explosionFactor: root.explosionFactor,
       autoRotate: root.autoRotate,
       showBarSummary: root.showBarSummary,
-      cameraLiveStream: root.cameraLiveStream,
+      cameraLiveStream: root.cameraLiveStreamSetting,
       mqttTlsFingerprint: "",
       ftpsTlsFingerprint: "",
       installationId: ""

@@ -414,6 +414,7 @@ Item {
           secretRequired: root.service.secretRequired
           secretStored: root.service.secretStored
           secretStatusKnown: root.service.secretStatusKnown
+          multimediaAvailable: root.service.multimediaAvailable
           onBackRequested: {
             root.backToStatus()
           }

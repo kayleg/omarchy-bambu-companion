@@ -21,6 +21,38 @@ class ViewportRouteContractTest < Minitest::Test
     assert_includes @source, 'id: routeCamera'
   end
 
+  # A QML document whose import cannot be resolved fails to load in its
+  # entirety. Importing QtMultimedia here would therefore cost the whole
+  # viewport -- route view, stills, controls -- on a machine without
+  # qt6-multimedia, rather than just the live stream. The import belongs in the
+  # separately-loaded component and nowhere else.
+  def test_multimedia_import_is_quarantined_from_the_viewport
+    refute_match(/^\s*import QtMultimedia/, @source,
+                 "the viewport must not hard-import QtMultimedia")
+
+    root = File.expand_path("..", __dir__)
+    importers = Dir[File.join(root, "*.qml")].select do |file|
+      File.read(file).match?(/^\s*import QtMultimedia/)
+    end.map { |file| File.basename(file) }
+
+    assert_equal ["BambuCameraStream.qml"], importers
+
+    stream = File.read(File.join(root, "BambuCameraStream.qml"))
+    assert_match(/MediaPlayer\s*\{\s*id: player/m, stream)
+    assert_match(/VideoOutput\s*\{\s*id: sink/m, stream)
+  end
+
+  # The Loader must be allowed to fail on its own: if it is force-shown or the
+  # stream URL is bound without a null guard, a missing module turns into a
+  # blank panel and QML warnings instead of a clean fall back to stills.
+  def test_camera_stream_loader_tolerates_a_missing_module
+    block = @source[/Loader\s*\{\s*id: cameraStream.*?\n    \}/m]
+
+    refute_nil block, "cameraStream Loader not found"
+    assert_match(/visible: cameraStream\.active && cameraStream\.status === Loader\.Ready/, block)
+    assert_match(/when: cameraStream\.item !== null/, block)
+  end
+
   def test_renderer_empty_states_replace_the_software_fallback
     assert_includes @source, '"COMPILING ROUTE RENDERER"'
     assert_includes @source, '"ROUTE RENDERER UNAVAILABLE"'
@@ -201,9 +233,8 @@ class ViewportRouteContractTest < Minitest::Test
   # and disk write behind both the flicker and roughly 2 MB/s of I/O. The still
   # path is unchanged and remains the default, so both must be present.
   def test_camera_supports_a_video_sink_and_still_buffers
-    assert_match(/import QtMultimedia/, @source)
-    assert_match(/MediaPlayer\s*\{\s*id: cameraPlayer/m, @source)
-    assert_match(/VideoOutput\s*\{\s*id: cameraSink/m, @source)
+    assert_match(/Loader\s*\{\s*id: cameraStream/m, @source)
+    assert_match(/source: Qt\.resolvedUrl\("BambuCameraStream\.qml"\)/, @source)
     # the still path stays the fallback whenever no stream is on offer
     assert_match(/viewport\.cameraFrameAvailable && viewport\.cameraStreamUrl === ""/, @source)
     assert_match(/Item\s*\{\s*id: cameraFrames.*visible:\s*viewport\.selectedSource === "camera"/m,

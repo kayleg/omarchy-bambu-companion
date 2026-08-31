@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Effects
-import QtMultimedia
 import qs.Commons
 
 Item {
@@ -491,7 +490,12 @@ Item {
     // our behalf -- so this consumes the same authenticated stream the stills
     // path does, minus the per-frame decode, JPEG re-encode and disk write that
     // made the still view flicker and cost ~2 MB/s.
-    Item {
+    // Loaded rather than declared inline so QtMultimedia stays out of this
+    // document's imports: without qt6-multimedia the Loader fails on its own
+    // and the still path below carries on, instead of the whole viewport
+    // failing to load. The daemon only offers a stream URL when the setting is
+    // on, which BambuService already gates on the same module being present.
+    Loader {
       id: cameraStream
       // Stop at the source-button column instead of filling the panel: the
       // buttons sit at z: 2 over the right edge, so a full-width surface puts
@@ -502,22 +506,15 @@ Item {
       anchors.right: sourceButtons.left
       anchors.margins: Style.space(12)
       anchors.rightMargin: Style.space(8)
-      visible: viewport.selectedSource === "camera" && viewport.cameraStreamUrl !== ""
+      active: viewport.selectedSource === "camera" && viewport.cameraStreamUrl !== ""
+      visible: cameraStream.active && cameraStream.status === Loader.Ready
+      source: Qt.resolvedUrl("BambuCameraStream.qml")
 
-      onVisibleChanged: visible ? cameraPlayer.play() : cameraPlayer.stop()
-
-      MediaPlayer {
-        id: cameraPlayer
-        videoOutput: cameraSink
-        source: cameraStream.visible
-          ? Qt.resolvedUrl(viewport.cameraStreamUrl) : ""
-        onSourceChanged: if (cameraStream.visible && String(source) !== "") play()
-      }
-
-      VideoOutput {
-        id: cameraSink
-        anchors.fill: parent
-        fillMode: VideoOutput.PreserveAspectFit
+      Binding {
+        target: cameraStream.item
+        property: "streamUrl"
+        value: Qt.resolvedUrl(viewport.cameraStreamUrl)
+        when: cameraStream.item !== null
       }
     }
 

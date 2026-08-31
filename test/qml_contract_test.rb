@@ -638,6 +638,31 @@ class QmlContractTest < Minitest::Test
     end
   end
 
+  # The live stream needs a QtMultimedia sink. Where the module is absent the
+  # daemon must not be told to stream, or it opens a gateway nothing consumes
+  # and the camera panel stays empty. The stored preference is deliberately
+  # kept raw so it survives a save on a machine that cannot honour it.
+  def test_live_stream_is_gated_on_multimedia_availability
+    assert_match(/readonly property bool cameraLiveStreamSetting:\s*setting\("cameraLiveStream", false\) === true/m,
+                 @source)
+    assert_match(/readonly property bool cameraLiveStream:\s*root\.cameraLiveStreamSetting && root\.multimediaAvailable/m,
+                 @source)
+    assert_match(/readonly property bool multimediaAvailable: root\.probeMultimedia\(\)/, @source)
+
+    probe = @source[/function probeMultimedia\(\) \{.*?\n  \}/m]
+    refute_nil probe, "probeMultimedia not found"
+    assert_includes probe, 'Qt.createComponent(Qt.resolvedUrl("BambuCameraStream.qml"))'
+    assert_includes probe, "Component.Error"
+
+    draft = @source[/function configurationForDraft\(.*?\n  \}/m]
+    assert_includes draft, "draft.cameraLiveStream === true && root.multimediaAvailable",
+                    "a saved draft must be gated too, not just the stored setting"
+
+    form = @source[/function settingsDraft\(.*?\n  \}/m]
+    assert_includes form, "cameraLiveStream: root.cameraLiveStreamSetting",
+                    "the form must round-trip the stored preference, not the gated value"
+  end
+
   def test_qml_setting_fallbacks_match_manifest_defaults
     @widget_defaults.each do |key, value|
       literal = value.is_a?(String) ? value.inspect : value.to_s

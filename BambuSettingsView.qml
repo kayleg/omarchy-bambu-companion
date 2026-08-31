@@ -29,6 +29,10 @@ Item {
   property bool autoRotate: true
   property bool showBarSummary: true
   property bool cameraLiveStream: false
+  // Offering a toggle that cannot take effect is worse than not offering it:
+  // without QtMultimedia there is no sink for the stream, so the row is hidden
+  // and the stored preference is left untouched.
+  property bool multimediaAvailable: true
   property string validationError: ""
 
   readonly property bool inputActive: hostInput.activeFocus
@@ -523,6 +527,7 @@ Item {
         Column {
           width: parent.width
           spacing: Style.space(4)
+          visible: form.multimediaAvailable
           FieldLabel { text: "LIVE CAMERA" }
 
           ToggleSwitch {
