@@ -140,13 +140,40 @@ class QmlGeometryTransactionTest < Minitest::Test
     assert result.fetch("previousPreserved")
   end
 
+  # The daemon parses full toolpath against NATIVE_MAX_SEGMENTS, so it can
+  # legitimately publish more segments than the wall-only maxSegments. Whatever
+  # ceiling the assembler is given, anything above it is dropped by
+  # clearPending() with no error event -- the print silently never renders.
+  # 568,217 is the count observed on an H2D full-toolpath print.
+  def test_full_toolpath_segment_count_is_dropped_by_a_wall_only_ceiling
+    body = <<~JAVASCRIPT
+      beginGeometry({ segmentCount: 568217,
+        gcode: { segmentCount: 568217, bounds: { minZ: 0.2, maxZ: 42 },
+          path: "/tmp/bambu/geometry/route-1.f32" }, preview: null }, 4)
+      console.log(JSON.stringify({
+        accepted: Object.keys(pendingGeometry).length > 0,
+        bundleUntouched: geometryBundle.previous === true
+      }))
+    JAVASCRIPT
+
+    rejected = run_transaction(body, max_segments: 500_000)
+    refute rejected.fetch("accepted"),
+           "a 500,000 ceiling must drop the 568,217-segment publish"
+    assert rejected.fetch("bundleUntouched"),
+           "the rejection leaves the previous bundle in place, so the view stays empty"
+
+    accepted = run_transaction(body, max_segments: 1_000_000)
+    assert accepted.fetch("accepted"),
+           "the full-toolpath ceiling must accept what the daemon is allowed to send"
+  end
+
   private
 
-  def run_transaction(body)
+  def run_transaction(body, max_segments: 1_000_000)
     functions = FUNCTIONS.map { |name| extract_function(name) }.join("\n")
     script = <<~JAVASCRIPT
       var assembler = {
-        maxSegments: 1000000,
+        maxSegments: #{max_segments},
         maxPreviewBytes: 524288,
         maxPreviewPixels: 4194304,
         maxPreviewChunkChars: 49152,
